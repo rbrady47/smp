@@ -160,6 +160,14 @@ a {
     font-weight: 500;
 }
 
+.inventory-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
 .node-form {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -219,6 +227,13 @@ a {
     font: inherit;
     font-weight: 700;
     cursor: pointer;
+}
+
+.button-primary:disabled,
+.button-secondary:disabled,
+.button-danger:disabled {
+    opacity: 0.65;
+    cursor: wait;
 }
 
 .button-primary {
@@ -290,9 +305,59 @@ a {
     background: #fef3f2;
 }
 
+.status-badge.degraded {
+    color: #b54708;
+    background: #fffaeb;
+}
+
 .status-badge.disabled {
     color: #475467;
     background: #f2f4f7;
+}
+
+.status-stack {
+    display: grid;
+    gap: 0.25rem;
+}
+
+.status-meta {
+    color: var(--muted);
+    font-size: 0.83rem;
+    font-weight: 600;
+}
+
+.service-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.service-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    padding: 0.35rem 0.65rem;
+    background: transparent;
+    font: inherit;
+    font-size: 0.85rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.service-link.ok {
+    color: #067647;
+    background: #ecfdf3;
+}
+
+.service-link.down {
+    color: #b42318;
+    background: #fef3f2;
+}
+
+.service-icon {
+    font-size: 0.95rem;
 }
 
 .action-cell {
@@ -305,6 +370,15 @@ a {
 
 .action-button:last-child {
     margin-right: 0;
+}
+
+.row-editing {
+    background: rgba(15, 108, 189, 0.08);
+}
+
+.status-feedback {
+    margin-top: 1rem;
+    color: #067647;
 }
 
 @media (max-width: 700px) {
@@ -320,5 +394,9 @@ a {
 
     .checkbox-field {
         padding-top: 0;
+    }
+
+    .inventory-header {
+        flex-direction: column;
     }
 }

@@ -77,28 +77,34 @@
         </section>
 
         <section class="card">
-            <h2>Node Inventory</h2>
+            <div class="inventory-header">
+                <div>
+                    <h2>Node Inventory</h2>
+                    <p class="section-copy">Run a fresh health check across all enabled nodes or take actions directly from the table.</p>
+                </div>
+                <button type="button" class="button-primary" id="refresh-nodes-button">Refresh All</button>
+            </div>
             <div class="table-wrap">
                 <table class="data-table">
                     <thead>
                         <tr>
                             <th>Name</th>
                             <th>Host</th>
-                            <th>Web Port</th>
-                            <th>SSH Port</th>
                             <th>Location</th>
+                            <th>Services</th>
                             <th>Status</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody id="nodes-table-body">
                         <tr>
-                            <td colspan="7" class="table-message">Loading nodes...</td>
+                            <td colspan="6" class="table-message">Loading nodes...</td>
                         </tr>
                     </tbody>
                 </table>
             </div>
             <p id="nodes-error" class="status-error" hidden>Unable to load node inventory</p>
+            <p id="nodes-feedback" class="status-feedback" hidden></p>
         </section>
     </main>
 

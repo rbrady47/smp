@@ -38,10 +38,92 @@ async function loadPlatformStatus() {
 }
 
 let currentNodes = [];
+let currentEditNodeId = null;
 
-function statusBadge(status, latencyMs) {
-    const latencyText = typeof latencyMs === "number" ? ` (${latencyMs} ms)` : "";
-    return `<span class="status-badge ${status}">${status}${latencyText}</span>`;
+const statusPriority = {
+    online: 0,
+    degraded: 1,
+    offline: 2,
+    disabled: 3,
+};
+
+function sortNodesForDisplay(nodes) {
+    return [...nodes].sort((left, right) => {
+        const leftPriority = statusPriority[left.status] ?? 99;
+        const rightPriority = statusPriority[right.status] ?? 99;
+
+        if (leftPriority !== rightPriority) {
+            return leftPriority - rightPriority;
+        }
+
+        return left.name.localeCompare(right.name);
+    });
+}
+
+function formatLastChecked(timestamp) {
+    if (!timestamp) {
+        return "Not checked";
+    }
+
+    return new Date(timestamp).toLocaleTimeString();
+}
+
+function statusCell(node) {
+    const latencyText = typeof node.latency_ms === "number" ? `${node.latency_ms} ms` : "No latency";
+    return `
+        <div class="status-stack">
+            <span class="status-badge ${node.status}">${node.status}</span>
+            <span class="status-meta">${latencyText}</span>
+            <span class="status-meta">${formatLastChecked(node.last_checked)}</span>
+        </div>
+    `;
+}
+
+function serviceItem(label, icon, isOk, action, nodeId) {
+    const stateClass = isOk ? "ok" : "down";
+    return `
+        <button
+            type="button"
+            class="service-link ${stateClass}"
+            data-action="${action}"
+            data-id="${nodeId}"
+            title="${label}"
+        >
+            <span class="service-icon">${icon}</span>
+            <span>${label}</span>
+        </button>
+    `;
+}
+
+function servicesCell(node) {
+    return `
+        <div class="service-list">
+            ${serviceItem("Web", "\uD83C\uDF10", node.web_ok, "open-web", node.id)}
+            ${serviceItem("SSH", "\uD83D\uDD10", node.ssh_ok, "ssh", node.id)}
+        </div>
+    `;
+}
+
+function showFeedback(message) {
+    const feedback = document.getElementById("nodes-feedback");
+
+    if (!feedback) {
+        return;
+    }
+
+    feedback.textContent = message;
+    feedback.hidden = false;
+}
+
+function clearFeedback() {
+    const feedback = document.getElementById("nodes-feedback");
+
+    if (!feedback) {
+        return;
+    }
+
+    feedback.hidden = true;
+    feedback.textContent = "";
 }
 
 function resetNodeForm() {
@@ -56,6 +138,7 @@ function resetNodeForm() {
     }
 
     form.reset();
+    currentEditNodeId = null;
     document.getElementById("node-id").value = "";
     document.getElementById("node-web-port").value = "443";
     document.getElementById("node-ssh-port").value = "22";
@@ -85,6 +168,8 @@ function populateNodeForm(nodeId) {
     document.getElementById("node-submit-button").textContent = "Save Changes";
     document.getElementById("node-cancel-button").hidden = false;
     document.getElementById("node-form-error").hidden = true;
+    currentEditNodeId = node.id;
+    renderNodesTable(currentNodes);
 }
 
 function renderNodesTable(nodes) {
@@ -97,7 +182,7 @@ function renderNodesTable(nodes) {
     if (nodes.length === 0) {
         tableBody.innerHTML = `
             <tr>
-                <td colspan="7" class="table-message">No nodes have been added yet.</td>
+                <td colspan="6" class="table-message">No nodes have been added yet.</td>
             </tr>
         `;
         return;
@@ -106,13 +191,12 @@ function renderNodesTable(nodes) {
     tableBody.innerHTML = nodes
         .map(
             (node) => `
-                <tr>
+                <tr class="${currentEditNodeId === node.id ? "row-editing" : ""}">
                     <td>${node.name}</td>
                     <td>${node.host}</td>
-                    <td>${node.web_port}</td>
-                    <td>${node.ssh_port}</td>
                     <td>${node.location}</td>
-                    <td>${statusBadge(node.status, node.latency_ms)}</td>
+                    <td>${servicesCell(node)}</td>
+                    <td>${statusCell(node)}</td>
                     <td class="action-cell">
                         <button type="button" class="button-secondary action-button" data-action="edit" data-id="${node.id}">Edit</button>
                         <button type="button" class="button-danger action-button" data-action="delete" data-id="${node.id}">Delete</button>
@@ -163,14 +247,15 @@ async function loadNodes() {
 
     try {
         // Fetch the node list from the backend API and store it for edit actions.
-        currentNodes = await apiRequest("/api/nodes");
+        currentNodes = sortNodesForDisplay(await apiRequest("/api/nodes"));
         renderNodesTable(currentNodes);
         nodesError.hidden = true;
+        clearFeedback();
     } catch (error) {
         // If the fetch fails, keep the table simple and show a clear error message.
         tableBody.innerHTML = `
             <tr>
-                <td colspan="7" class="table-message">Unable to load node inventory</td>
+                <td colspan="6" class="table-message">Unable to load node inventory</td>
             </tr>
         `;
         nodesError.hidden = false;
@@ -206,14 +291,44 @@ async function handleNodeFormSubmit(event) {
         });
         resetNodeForm();
         await loadNodes();
+        showFeedback(nodeId ? "Node updated." : "Node added.");
     } catch (error) {
         formError.textContent = error.message || "Unable to save node";
         formError.hidden = false;
     }
 }
 
+async function refreshAllNodes() {
+    const refreshButton = document.getElementById("refresh-nodes-button");
+
+    if (!refreshButton) {
+        return;
+    }
+
+    refreshButton.disabled = true;
+
+    try {
+        currentNodes = sortNodesForDisplay(await apiRequest("/api/nodes/refresh", { method: "POST" }));
+        renderNodesTable(currentNodes);
+        showFeedback("Health checks refreshed.");
+        document.getElementById("nodes-error").hidden = true;
+    } catch (error) {
+        const nodesError = document.getElementById("nodes-error");
+        nodesError.textContent = error.message || "Unable to refresh nodes";
+        nodesError.hidden = false;
+    } finally {
+        refreshButton.disabled = false;
+    }
+}
+
 async function handleNodeActionClick(event) {
-    const target = event.target;
+    const rawTarget = event.target;
+
+    if (!(rawTarget instanceof HTMLElement)) {
+        return;
+    }
+
+    const target = rawTarget.closest("[data-action]");
 
     if (!(target instanceof HTMLElement)) {
         return;
@@ -221,17 +336,44 @@ async function handleNodeActionClick(event) {
 
     const action = target.dataset.action;
     const nodeId = Number(target.dataset.id);
+    const node = currentNodes.find((entry) => entry.id === nodeId);
 
     if (action === "edit") {
         populateNodeForm(nodeId);
         return;
     }
 
+    if (action === "open-web" && node) {
+        window.open(`https://${node.host}:${node.web_port}`, "_blank", "noopener");
+        return;
+    }
+
+    if (action === "ssh" && node) {
+        const sshCommand = `ssh ${node.host}`;
+
+        try {
+            // Copy the SSH command so the operator can paste it into a terminal quickly.
+            await navigator.clipboard.writeText(sshCommand);
+            showFeedback("SSH command copied");
+        } catch (error) {
+            const nodesError = document.getElementById("nodes-error");
+            nodesError.textContent = "Unable to copy SSH command";
+            nodesError.hidden = false;
+        }
+
+        return;
+    }
+
     if (action === "delete") {
+        if (!window.confirm("Delete this node?")) {
+            return;
+        }
+
         try {
             await apiRequest(`/api/nodes/${nodeId}`, { method: "DELETE" });
             resetNodeForm();
             await loadNodes();
+            showFeedback("Node deleted.");
         } catch (error) {
             const nodesError = document.getElementById("nodes-error");
             nodesError.textContent = error.message || "Unable to delete node";
@@ -247,6 +389,7 @@ window.addEventListener("DOMContentLoaded", () => {
     const nodeForm = document.getElementById("node-form");
     const nodesTableBody = document.getElementById("nodes-table-body");
     const cancelButton = document.getElementById("node-cancel-button");
+    const refreshButton = document.getElementById("refresh-nodes-button");
 
     if (nodeForm) {
         nodeForm.addEventListener("submit", handleNodeFormSubmit);
@@ -259,5 +402,9 @@ window.addEventListener("DOMContentLoaded", () => {
 
     if (cancelButton) {
         cancelButton.addEventListener("click", resetNodeForm);
+    }
+
+    if (refreshButton) {
+        refreshButton.addEventListener("click", refreshAllNodes);
     }
 });
