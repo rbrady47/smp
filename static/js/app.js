@@ -220,8 +220,9 @@ function openNode(nodeId) {
 
 window.openNode = openNode;
 
-async function copySshCommand(host) {
-    const sshCommand = `ssh ${host}`;
+async function copySshCommand(host, username = "") {
+    const sshTarget = username ? `${username}@${host}` : host;
+    const sshCommand = `ssh ${sshTarget}`;
     await navigator.clipboard.writeText(sshCommand);
 }
 
@@ -308,13 +309,33 @@ function statusCell(node) {
     `;
 }
 
-function dashboardServiceItem(label, icon, isOk, action, node) {
-    const stateClass = isOk ? "ok" : "down";
+function getDashboardServiceIcon(iconName) {
+    if (iconName === "web") {
+        return `
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <circle cx="12" cy="12" r="8.5"></circle>
+                <path d="M3.5 12h17"></path>
+                <path d="M12 3.5a13 13 0 0 1 0 17"></path>
+                <path d="M12 3.5a13 13 0 0 0 0 17"></path>
+            </svg>
+        `;
+    }
+
+    return `
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <rect x="6.5" y="10.5" width="11" height="9" rx="2"></rect>
+            <path d="M9 10.5V8.5a3 3 0 0 1 6 0v2"></path>
+        </svg>
+    `;
+}
+
+function dashboardServiceItem(label, iconName, action, node) {
+    const iconMarkup = getDashboardServiceIcon(iconName);
 
     if (action === "open-web") {
         return `
             <a
-                class="service-link service-link-dashboard ${stateClass}"
+                class="dashboard-service-pill"
                 data-dashboard-link="true"
                 href="${node.web_scheme || "https"}://${node.host}:${node.web_port}"
                 target="_blank"
@@ -322,7 +343,7 @@ function dashboardServiceItem(label, icon, isOk, action, node) {
                 title="${label}"
                 draggable="false"
             >
-                <span class="service-icon">${icon}</span>
+                <span class="dashboard-service-glyph" aria-hidden="true">${iconMarkup}</span>
                 <span>${label}</span>
             </a>
         `;
@@ -331,15 +352,16 @@ function dashboardServiceItem(label, icon, isOk, action, node) {
     return `
         <button
             type="button"
-            class="service-link service-link-dashboard ${stateClass}"
+            class="dashboard-service-pill"
             data-dashboard-action="${action}"
             data-host="${node.host}"
+            data-ssh-username="${node.ssh_username || ""}"
             data-web-port="${node.web_port}"
             data-web-scheme="${node.web_scheme || "https"}"
             title="${label}"
             draggable="false"
         >
-            <span class="service-icon">${icon}</span>
+            <span class="dashboard-service-glyph" aria-hidden="true">${iconMarkup}</span>
             <span>${label}</span>
         </button>
     `;
@@ -579,13 +601,14 @@ function renderDashboard(nodes) {
                     <div class="node-sub">${node.site} · ${node.host}</div>
                 </div>
                 <div class="service-list service-list-dashboard">
-                    ${dashboardServiceItem("Web", "\uD83C\uDF10", node.web_ok, "open-web", node)}
-                    ${dashboardServiceItem("SSH", "\uD83D\uDD10", node.ssh_ok, "ssh", node)}
+                    ${dashboardServiceItem("Web", "web", "open-web", node)}
+                    ${dashboardServiceItem("SSH", "ssh", "ssh", node)}
                 </div>
             </div>
 
             <div class="node-strip">
-                <span class="metric-chip">
+                <span class="metric-chip metric-chip-rtt ping-${node.ping_state || "down"}">
+                    <span class="ping-dot ${node.ping_ok ? "up" : "down"}" title="${node.ping_ok ? "Ping reachable" : "Ping unreachable"}"></span>
                     <span class="metric-chip-label">RTT</span>
                     <span class="metric-chip-value">${node.latency_ms ?? "--"} ms</span>
                 </span>
@@ -631,6 +654,7 @@ function renderDashboard(nodes) {
 
                 const action = button.getAttribute("data-dashboard-action");
                 const host = button.getAttribute("data-host") || "";
+                const sshUsername = button.getAttribute("data-ssh-username") || "";
                 const webPort = Number(button.getAttribute("data-web-port"));
                 const webScheme = button.getAttribute("data-web-scheme") || "https";
 
@@ -640,7 +664,7 @@ function renderDashboard(nodes) {
                 }
 
                 if (action === "ssh") {
-                    copySshCommand(host)
+                    copySshCommand(host, sshUsername)
                         .then(() => {
                             showDashboardFeedback("SSH command copied");
                         })
@@ -857,7 +881,7 @@ async function handleNodeActionClick(event) {
 
     if (action === "ssh" && node) {
         try {
-            await copySshCommand(node.host);
+            await copySshCommand(node.host, node.api_username || "");
             showFeedback("SSH command copied");
         } catch (error) {
             const nodesError = document.getElementById("nodes-error");

@@ -1,7 +1,11 @@
 import asyncio
+from collections import deque
 from datetime import datetime, timezone
 import logging
+import platform
+import re
 import socket
+import subprocess
 import time
 import urllib.parse
 
@@ -13,7 +17,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db import get_db
+from app.db import SessionLocal, get_db
 from app.models import Node
 from app.schemas import NodeCreate, NodeUpdate
 from app.telemetry import normalize_bwv_stats
@@ -39,6 +43,11 @@ DASHBOARD_STATUS_PRIORITY = {
     "offline": 2,
 }
 DASHBOARD_TELEMETRY_TIMEOUT_SECONDS = 3.0
+PING_HISTORY_SECONDS = 60
+PING_INTERVAL_SECONDS = 1.0
+ping_samples_by_node: dict[int, deque[int]] = {}
+ping_snapshot_by_node: dict[int, dict[str, object]] = {}
+ping_monitor_task: asyncio.Task | None = None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -82,6 +91,104 @@ def check_tcp_port(host: str, port: int) -> dict[str, int | bool | None]:
         return {"reachable": False, "latency_ms": None}
 
 
+def ping_host(host: str) -> dict[str, int | bool | None]:
+    system_name = platform.system().lower()
+    if system_name == "windows":
+        command = ["ping", "-n", "1", "-w", "1000", host]
+    else:
+        command = ["ping", "-c", "1", "-W", "1", host]
+
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired):
+        return {"reachable": False, "latency_ms": None}
+
+    output = f"{completed.stdout}\n{completed.stderr}"
+    if completed.returncode != 0:
+        return {"reachable": False, "latency_ms": None}
+
+    patterns = [
+        r"time[=<]\s*(\d+(?:\.\d+)?)\s*ms",
+        r"Average = (\d+)\s*ms",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, output, re.IGNORECASE)
+        if match:
+            try:
+                return {"reachable": True, "latency_ms": round(float(match.group(1)))}
+            except ValueError:
+                break
+
+    return {"reachable": True, "latency_ms": None}
+
+
+def build_ping_snapshot(node_id: int, ping_result: dict[str, int | bool | None]) -> dict[str, object]:
+    samples = ping_samples_by_node.setdefault(node_id, deque(maxlen=PING_HISTORY_SECONDS))
+    ping_ok = bool(ping_result["reachable"])
+    latency_ms = ping_result["latency_ms"] if ping_ok else None
+
+    if ping_ok and latency_ms is not None:
+        samples.append(int(latency_ms))
+
+    average_ms = round(sum(samples) / len(samples)) if samples else None
+
+    if not ping_ok:
+        state = "down"
+    elif average_ms is None or latency_ms is None:
+        state = "good"
+    elif latency_ms <= average_ms * 1.5:
+        state = "good"
+    else:
+        state = "warn"
+
+    snapshot = {
+        "ping_ok": ping_ok,
+        "latency_ms": latency_ms,
+        "avg_latency_ms": average_ms,
+        "state": state,
+        "updated_at": datetime.now(timezone.utc),
+    }
+    ping_snapshot_by_node[node_id] = snapshot
+    return snapshot
+
+
+def get_ping_snapshot(node: Node) -> dict[str, object]:
+    snapshot = ping_snapshot_by_node.get(node.id)
+    if snapshot is not None:
+        return snapshot
+
+    return build_ping_snapshot(node.id, ping_host(node.host))
+
+
+async def ping_monitor_loop() -> None:
+    while True:
+        db = SessionLocal()
+        try:
+            nodes = db.scalars(select(Node).order_by(Node.id)).all()
+        finally:
+            db.close()
+
+        enabled_nodes = [node for node in nodes if node.enabled]
+        if enabled_nodes:
+            ping_results = await asyncio.gather(
+                *(asyncio.to_thread(ping_host, node.host) for node in enabled_nodes),
+                return_exceptions=True,
+            )
+            for node, result in zip(enabled_nodes, ping_results):
+                if isinstance(result, Exception):
+                    build_ping_snapshot(node.id, {"reachable": False, "latency_ms": None})
+                else:
+                    build_ping_snapshot(node.id, result)
+
+        await asyncio.sleep(PING_INTERVAL_SECONDS)
+
+
 async def compute_node_status(node: Node) -> dict[str, object]:
     if not node.enabled:
         return {
@@ -90,9 +197,13 @@ async def compute_node_status(node: Node) -> dict[str, object]:
             "last_checked": node.last_checked,
             "web_ok": False,
             "ssh_ok": False,
+            "ping_ok": False,
+            "ping_state": "down",
+            "ping_avg_ms": None,
         }
 
     checked_at = datetime.now(timezone.utc)
+    ping_snapshot = get_ping_snapshot(node)
     web_check, ssh_check = await asyncio.gather(
         asyncio.to_thread(check_tcp_port, node.host, node.web_port),
         asyncio.to_thread(check_tcp_port, node.host, node.ssh_port),
@@ -106,13 +217,7 @@ async def compute_node_status(node: Node) -> dict[str, object]:
     else:
         status_value = "offline"
 
-    latency_ms = None
-    if reachable_ports:
-        latency_ms = min(
-            int(result["latency_ms"])
-            for result in reachable_ports
-            if result["latency_ms"] is not None
-        )
+    latency_ms = ping_snapshot["latency_ms"] if ping_snapshot["ping_ok"] else None
 
     return {
         "status": status_value,
@@ -120,6 +225,9 @@ async def compute_node_status(node: Node) -> dict[str, object]:
         "last_checked": checked_at,
         "web_ok": bool(web_check["reachable"]),
         "ssh_ok": bool(ssh_check["reachable"]),
+        "ping_ok": bool(ping_snapshot["ping_ok"]),
+        "ping_state": str(ping_snapshot["state"]),
+        "ping_avg_ms": ping_snapshot["avg_latency_ms"],
     }
 
 
@@ -141,6 +249,9 @@ def serialize_node(node: Node, health: dict[str, object]) -> dict[str, object]:
         "last_checked": node.last_checked.isoformat() if node.last_checked else None,
         "web_ok": health["web_ok"],
         "ssh_ok": health["ssh_ok"],
+        "ping_ok": health["ping_ok"],
+        "ping_state": health["ping_state"],
+        "ping_avg_ms": health["ping_avg_ms"],
     }
 
 
@@ -387,11 +498,15 @@ async def summarize_dashboard_node(node: Node) -> dict[str, object]:
         "web_port": node.web_port,
         "ssh_port": node.ssh_port,
         "web_scheme": "https" if node.api_use_https else "http",
+        "ssh_username": node.api_username,
         "site": node.location,
         "status": build_dashboard_status(str(health["status"]), normalized),
         "web_ok": health["web_ok"],
         "ssh_ok": health["ssh_ok"],
-        "latency_ms": (normalized or {}).get("latency_ms", health.get("latency_ms")),
+        "ping_ok": health["ping_ok"],
+        "ping_state": health["ping_state"],
+        "ping_avg_ms": health["ping_avg_ms"],
+        "latency_ms": health.get("latency_ms"),
         "tx_bps": (normalized or {}).get("tx_bps", 0),
         "rx_bps": (normalized or {}).get("rx_bps", 0),
         "sites_up": sites_up,
@@ -400,6 +515,27 @@ async def summarize_dashboard_node(node: Node) -> dict[str, object]:
         "wan_total": wan_total,
         "last_seen": node.last_checked.isoformat() if node.last_checked else None,
     }
+
+
+@app.on_event("startup")
+async def startup_ping_monitor() -> None:
+    global ping_monitor_task
+
+    if ping_monitor_task is None or ping_monitor_task.done():
+        ping_monitor_task = asyncio.create_task(ping_monitor_loop())
+
+
+@app.on_event("shutdown")
+async def shutdown_ping_monitor() -> None:
+    global ping_monitor_task
+
+    if ping_monitor_task is not None:
+        ping_monitor_task.cancel()
+        try:
+            await ping_monitor_task
+        except asyncio.CancelledError:
+            pass
+        ping_monitor_task = None
 
 
 @app.get("/api/nodes")
