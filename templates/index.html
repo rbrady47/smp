@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page_title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">SMP</div>
+        <nav class="nav">
+            <a href="#dashboard">Dashboard</a>
+            <a href="#nodes">Nodes</a>
+            <a href="#topology">Topology</a>
+            <a href="#health">Health</a>
+            <a href="#admin">Admin</a>
+        </nav>
+    </header>
+
+    <main class="container">
+        <section class="hero">
+            <p class="eyebrow">Prototype UI Shell</p>
+            <h1>Seeker Management Platform</h1>
+            <p class="subtitle">A simple starting point for managing seekers, nodes, topology, and system health.</p>
+        </section>
+
+        <section class="card-grid">
+            <article class="card" id="dashboard">
+                <h2>Dashboard</h2>
+                <p>Under Construction</p>
+            </article>
+
+            <article class="card" id="nodes">
+                <h2>Node Inventory</h2>
+                <p>Under Construction</p>
+            </article>
+
+            <article class="card" id="topology">
+                <h2>Topology View</h2>
+                <p>Under Construction</p>
+            </article>
+
+            <article class="card" id="health">
+                <h2>Health Monitoring</h2>
+                <p>Under Construction</p>
+            </article>
+
+            <article class="card" id="admin">
+                <h2>Administration</h2>
+                <p>Under Construction</p>
+            </article>
+        </section>
+    </main>
+
+    <script src="{{ url_for('static', path='js/app.js') }}"></script>
+</body>
+</html>
