@@ -26,6 +26,17 @@
         </section>
 
         <section class="card-grid">
+            <article class="card" id="platform-status">
+                <h2>Platform Status</h2>
+                <div class="status-list" aria-live="polite">
+                    <p><span class="status-label">App name</span><span id="status-app">Loading...</span></p>
+                    <p><span class="status-label">Version</span><span id="status-version">Loading...</span></p>
+                    <p><span class="status-label">Hostname</span><span id="status-hostname">Loading...</span></p>
+                    <p><span class="status-label">Current time</span><span id="status-time">Loading...</span></p>
+                </div>
+                <p id="status-error" class="status-error" hidden>Unable to load platform status</p>
+            </article>
+
             <article class="card" id="dashboard">
                 <h2>Dashboard</h2>
                 <p>Under Construction</p>

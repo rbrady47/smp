@@ -123,6 +123,30 @@ a {
     font-weight: 600;
 }
 
+.status-list {
+    display: grid;
+    gap: 0.9rem;
+}
+
+.status-list p {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+
+.status-label {
+    color: var(--muted);
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.status-error {
+    margin-top: 1rem;
+    color: #b42318;
+}
+
 @media (max-width: 700px) {
     .topbar {
         flex-direction: column;
