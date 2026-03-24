@@ -22,7 +22,58 @@
         <section class="hero">
             <p class="eyebrow">Node Inventory</p>
             <h1>Managed Nodes</h1>
-            <p class="subtitle">A simple inventory view of prototype seeker nodes returned from the SMP backend.</p>
+            <p class="subtitle">Manage SMP nodes stored in PostgreSQL and check their live reachability from the backend.</p>
+        </section>
+
+        <section class="card node-form-card">
+            <div class="section-heading">
+                <h2 id="node-form-title">Add Node</h2>
+                <p class="section-copy">Create a new node or select Edit from the table to update an existing one.</p>
+            </div>
+            <form id="node-form" class="node-form">
+                <input type="hidden" id="node-id" name="node-id">
+
+                <label>
+                    <span>Name</span>
+                    <input type="text" id="node-name" name="name" required>
+                </label>
+
+                <label>
+                    <span>Host</span>
+                    <input type="text" id="node-host" name="host" placeholder="10.0.0.1 or seeker.example.local" required>
+                </label>
+
+                <label>
+                    <span>Web Port</span>
+                    <input type="number" id="node-web-port" name="web_port" min="1" max="65535" value="443" required>
+                </label>
+
+                <label>
+                    <span>SSH Port</span>
+                    <input type="number" id="node-ssh-port" name="ssh_port" min="1" max="65535" value="22" required>
+                </label>
+
+                <label>
+                    <span>Location</span>
+                    <input type="text" id="node-location" name="location" required>
+                </label>
+
+                <label class="checkbox-field">
+                    <input type="checkbox" id="node-enabled" name="enabled" checked>
+                    <span>Enabled</span>
+                </label>
+
+                <label class="full-width">
+                    <span>Notes</span>
+                    <textarea id="node-notes" name="notes" rows="3" placeholder="Optional notes"></textarea>
+                </label>
+
+                <div class="form-actions full-width">
+                    <button type="submit" class="button-primary" id="node-submit-button">Add Node</button>
+                    <button type="button" class="button-secondary" id="node-cancel-button" hidden>Cancel Edit</button>
+                </div>
+            </form>
+            <p id="node-form-error" class="status-error" hidden>Unable to save node</p>
         </section>
 
         <section class="card">
@@ -32,14 +83,17 @@
                     <thead>
                         <tr>
                             <th>Name</th>
-                            <th>IP Address</th>
+                            <th>Host</th>
+                            <th>Web Port</th>
+                            <th>SSH Port</th>
                             <th>Location</th>
                             <th>Status</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody id="nodes-table-body">
                         <tr>
-                            <td colspan="4" class="table-message">Loading nodes...</td>
+                            <td colspan="7" class="table-message">Loading nodes...</td>
                         </tr>
                     </tbody>
                 </table>

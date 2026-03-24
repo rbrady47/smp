@@ -1,3 +1,6 @@
+alembic
 fastapi
 jinja2
+psycopg[binary]
+sqlalchemy
 uvicorn

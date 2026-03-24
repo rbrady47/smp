@@ -1,0 +1,17 @@
+from sqlalchemy import Boolean, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db import Base
+
+
+class Node(Base):
+    __tablename__ = "nodes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    host: Mapped[str] = mapped_column(String(255), nullable=False)
+    web_port: Mapped[int] = mapped_column(Integer, nullable=False, default=443)
+    ssh_port: Mapped[int] = mapped_column(Integer, nullable=False, default=22)
+    location: Mapped[str] = mapped_column(String(255), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)

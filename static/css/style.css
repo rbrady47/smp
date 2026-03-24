@@ -147,6 +147,95 @@ a {
     color: #b42318;
 }
 
+.node-form-card {
+    margin-bottom: 1.5rem;
+}
+
+.section-heading {
+    margin-bottom: 1rem;
+}
+
+.section-copy {
+    color: var(--muted);
+    font-weight: 500;
+}
+
+.node-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+}
+
+.node-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.node-form input,
+.node-form textarea {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 0.75rem 0.9rem;
+    font: inherit;
+    color: var(--text);
+    background: #fcfdff;
+}
+
+.node-form textarea {
+    resize: vertical;
+}
+
+.full-width {
+    grid-column: 1 / -1;
+}
+
+.checkbox-field {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.7rem;
+    padding-top: 2rem;
+}
+
+.checkbox-field input {
+    width: auto;
+}
+
+.form-actions {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.button-primary,
+.button-secondary,
+.button-danger {
+    border: 0;
+    border-radius: 999px;
+    padding: 0.75rem 1rem;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.button-primary {
+    background: var(--accent);
+    color: #ffffff;
+}
+
+.button-secondary {
+    background: var(--surface-alt);
+    color: var(--text);
+}
+
+.button-danger {
+    background: #fef3f2;
+    color: #b42318;
+}
+
 .table-wrap {
     overflow-x: auto;
 }
@@ -201,6 +290,23 @@ a {
     background: #fef3f2;
 }
 
+.status-badge.disabled {
+    color: #475467;
+    background: #f2f4f7;
+}
+
+.action-cell {
+    white-space: nowrap;
+}
+
+.action-button {
+    margin-right: 0.5rem;
+}
+
+.action-button:last-child {
+    margin-right: 0;
+}
+
 @media (max-width: 700px) {
     .topbar {
         flex-direction: column;
@@ -210,5 +316,9 @@ a {
 
     .container {
         padding: 2rem 1rem 3rem;
+    }
+
+    .checkbox-field {
+        padding-top: 0;
     }
 }
