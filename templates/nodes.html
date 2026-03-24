@@ -68,6 +68,21 @@
                     <textarea id="node-notes" name="notes" rows="3" placeholder="Optional notes"></textarea>
                 </label>
 
+                <label>
+                    <span>API Username</span>
+                    <input type="text" id="node-api-username" name="api_username">
+                </label>
+
+                <label>
+                    <span>API Password</span>
+                    <input type="password" id="node-api-password" name="api_password">
+                </label>
+
+                <label class="checkbox-field">
+                    <input type="checkbox" id="node-api-use-https" name="api_use_https">
+                    <span>API Uses HTTPS</span>
+                </label>
+
                 <div class="form-actions full-width">
                     <button type="submit" class="button-primary" id="node-submit-button">Add Node</button>
                     <button type="button" class="button-secondary" id="node-cancel-button" hidden>Cancel Edit</button>
@@ -105,6 +120,15 @@
             </div>
             <p id="nodes-error" class="status-error" hidden>Unable to load node inventory</p>
             <p id="nodes-feedback" class="status-feedback" hidden></p>
+        </section>
+
+        <section class="card telemetry-card" id="telemetry-panel" hidden>
+            <div class="section-heading">
+                <h2 id="telemetry-title">Telemetry</h2>
+                <p class="section-copy">Normalized Seeker/BV telemetry retrieved through the managed node REST API.</p>
+            </div>
+            <div id="telemetry-summary" class="telemetry-grid"></div>
+            <p id="telemetry-error" class="status-error" hidden>Unable to retrieve telemetry</p>
         </section>
     </main>
 

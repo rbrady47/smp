@@ -1,5 +1,6 @@
 alembic
 fastapi
+httpx
 jinja2
 psycopg[binary]
 sqlalchemy

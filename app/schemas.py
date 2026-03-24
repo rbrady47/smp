@@ -9,6 +9,9 @@ class NodeBase(BaseModel):
     location: str = Field(..., min_length=1, max_length=255)
     enabled: bool = True
     notes: str | None = None
+    api_username: str | None = Field(default=None, max_length=255)
+    api_password: str | None = Field(default=None, max_length=255)
+    api_use_https: bool = False
 
 
 class NodeCreate(NodeBase):

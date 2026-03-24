@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page_title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">SMP</div>
+        <nav class="nav">
+            <a href="/">Dashboard</a>
+            <a href="/nodes">Nodes</a>
+            <a href="#topology">Topology</a>
+            <a href="#health">Health</a>
+            <a href="#admin">Admin</a>
+        </nav>
+    </header>
+
+    <main class="container dashboard-container">
+        <section class="dashboard-toolbar">
+            <div>
+                <p class="eyebrow">Operational Dashboard</p>
+                <h1>Managed Node Overview</h1>
+                <p class="subtitle">Compact Grafana-style panels for quick scanning across transport health, tunnel state, WAN links, and live traffic.</p>
+            </div>
+            <div class="dashboard-toolbar-actions">
+                <a href="/nodes" class="button-secondary">Manage Nodes</a>
+            </div>
+        </section>
+
+        <section class="card dashboard-meta">
+            <div>
+                <span class="dashboard-meta-label">Auto Refresh</span>
+                <div class="dashboard-refresh-control">
+                    <button type="button" class="button-secondary dashboard-refresh-button" id="dashboard-refresh-button">10 seconds</button>
+                    <div class="dashboard-refresh-menu" id="dashboard-refresh-menu" hidden>
+                        <button type="button" data-seconds="0">Off</button>
+                        <button type="button" data-seconds="10">10 sec</button>
+                        <button type="button" data-seconds="30">30 sec</button>
+                        <button type="button" data-seconds="60">60 sec</button>
+                    </div>
+                </div>
+            </div>
+            <div>
+                <span class="dashboard-meta-label">Last Update</span>
+                <strong id="dashboard-last-updated">Loading...</strong>
+            </div>
+            <div>
+                <span class="dashboard-meta-label">Nodes</span>
+                <strong id="dashboard-node-count">0</strong>
+            </div>
+        </section>
+
+        <section class="node-grid" id="nodeGrid">
+            <article class="node-card">
+                <div class="node-header">
+                    <div class="node-name">Loading nodes...</div>
+                </div>
+            </article>
+        </section>
+
+        <p id="dashboard-error" class="status-error" hidden>Unable to load dashboard nodes</p>
+    </main>
+
+    <script src="{{ url_for('static', path='js/app.js') }}"></script>
+</body>
+</html>
