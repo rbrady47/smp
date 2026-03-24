@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page_title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">SMP</div>
+        <nav class="nav">
+            <a href="/">Dashboard</a>
+            <a href="/nodes">Nodes</a>
+            <a href="#topology">Topology</a>
+            <a href="#health">Health</a>
+            <a href="#admin">Admin</a>
+        </nav>
+    </header>
+
+    <main class="container">
+        <section class="hero">
+            <p class="eyebrow">Node Inventory</p>
+            <h1>Managed Nodes</h1>
+            <p class="subtitle">A simple inventory view of prototype seeker nodes returned from the SMP backend.</p>
+        </section>
+
+        <section class="card">
+            <h2>Node Inventory</h2>
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>IP Address</th>
+                            <th>Location</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="nodes-table-body">
+                        <tr>
+                            <td colspan="4" class="table-message">Loading nodes...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <p id="nodes-error" class="status-error" hidden>Unable to load node inventory</p>
+        </section>
+    </main>
+
+    <script src="{{ url_for('static', path='js/app.js') }}"></script>
+</body>
+</html>

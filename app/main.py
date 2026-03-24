@@ -15,6 +15,28 @@ templates = Jinja2Templates(directory="templates")
 # Static file mounting allows CSS and JavaScript files to be served by FastAPI.
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# Static prototype node data is kept in code until a database is introduced later.
+NODES = [
+    {
+        "name": "Seeker-01",
+        "ip": "10.0.0.1",
+        "location": "CP Alpha",
+        "status": "online",
+    },
+    {
+        "name": "Seeker-02",
+        "ip": "10.0.0.2",
+        "location": "CP Bravo",
+        "status": "offline",
+    },
+    {
+        "name": "Seeker-03",
+        "ip": "10.0.0.3",
+        "location": "CP Charlie",
+        "status": "online",
+    },
+]
+
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request) -> HTMLResponse:
@@ -23,6 +45,16 @@ async def home(request: Request) -> HTMLResponse:
         request=request,
         name="index.html",
         context={"page_title": "Seeker Management Platform"},
+    )
+
+
+@app.get("/nodes", response_class=HTMLResponse)
+async def nodes_page(request: Request) -> HTMLResponse:
+    # Route definition for the node inventory page that renders a separate template.
+    return templates.TemplateResponse(
+        request=request,
+        name="nodes.html",
+        context={"page_title": "Node Inventory | Seeker Management Platform"},
     )
 
 
@@ -35,3 +67,9 @@ async def status() -> dict[str, str]:
         "hostname": socket.gethostname(),
         "time": datetime.now().isoformat(),
     }
+
+
+@app.get("/api/nodes")
+async def nodes() -> list[dict[str, str]]:
+    # Route definition for returning the prototype node inventory as JSON.
+    return NODES

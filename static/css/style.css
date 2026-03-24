@@ -147,6 +147,60 @@ a {
     color: #b42318;
 }
 
+.table-wrap {
+    overflow-x: auto;
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 0.5rem;
+}
+
+.data-table th,
+.data-table td {
+    padding: 0.95rem 1rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+.data-table th {
+    color: var(--muted);
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.data-table td {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.table-message {
+    color: var(--muted);
+}
+
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.3rem 0.7rem;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-transform: capitalize;
+}
+
+.status-badge.online {
+    color: #067647;
+    background: #ecfdf3;
+}
+
+.status-badge.offline {
+    color: #b42318;
+    background: #fef3f2;
+}
+
 @media (max-width: 700px) {
     .topbar {
         flex-direction: column;
