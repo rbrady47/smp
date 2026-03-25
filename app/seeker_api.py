@@ -476,8 +476,6 @@ def extract_mates_from_cfg(data: dict[str, Any]) -> list[dict[str, Any]]:
 
     if raw_mates:
         for index, mate in enumerate(raw_mates):
-            if index in disabled_indexes:
-                continue
             if not isinstance(mate, dict):
                 continue
             mates.append(
@@ -493,6 +491,8 @@ def extract_mates_from_cfg(data: dict[str, Any]) -> list[dict[str, Any]]:
                     or "--",
                     "mode": _stringify(mate.get("mode") or mate.get("txMode") or mate.get("actTxMode")) or "--",
                     "enclave": _stringify(mate.get("enclaveId") or mate.get("l3vpn") or mate.get("notes")) or "--",
+                    "configured_mask": 0b1111,
+                    "disabled": index in disabled_indexes,
                 }
             )
 
@@ -522,8 +522,6 @@ def extract_mates_from_cfg(data: dict[str, Any]) -> list[dict[str, Any]]:
             mate_site_id = parts[1] if len(parts) > 1 else "--"
             enclave = parts[4] if len(parts) > 4 else "--"
             mate_index = 0 if key_text == "mate" else int(key_text[4:])
-            if mate_index in disabled_indexes:
-                continue
             tx_mode_key = "txMode" if key_text == "mate" else f"txMode{key_text[4:]}"
             suffix = "0" if key_text == "mate" else key_text[4:]
             en_tx_key = f"en_tx{suffix}"
@@ -537,6 +535,7 @@ def extract_mates_from_cfg(data: dict[str, Any]) -> list[dict[str, Any]]:
                     "mode": _stringify(owner.get(tx_mode_key)) or "--",
                     "enclave": enclave,
                     "configured_mask": configured_mask,
+                    "disabled": mate_index in disabled_indexes,
                 }
             )
 
@@ -545,8 +544,6 @@ def extract_mates_from_cfg(data: dict[str, Any]) -> list[dict[str, Any]]:
 
     discovered = _find_list(data, ["discSites", "sites"])
     for index, item in enumerate(discovered):
-        if index in disabled_indexes:
-            continue
         parts = _stringify(item).split()
         mate_site_id = parts[0] if parts else "--"
         mate_ip = parts[1] if len(parts) > 1 else "--"
@@ -557,6 +554,8 @@ def extract_mates_from_cfg(data: dict[str, Any]) -> list[dict[str, Any]]:
                 "mate_ip": mate_ip,
                 "mode": "--",
                 "enclave": "--",
+                "configured_mask": 0b1111,
+                "disabled": index in disabled_indexes,
             }
         )
     return mates
@@ -636,6 +635,11 @@ def extract_learnt_routes_from_stats(data: dict[str, Any]) -> list[dict[str, Any
 
 
 def extract_tunnels_from_stats(data: dict[str, Any], mates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    mates_by_index = {
+        _safe_int(mate.get("mate_index")): mate
+        for mate in mates
+        if _safe_int(mate.get("mate_index")) is not None
+    }
     tunnel_count = max(
         len(_as_list(data.get("rxTunnelLock"))),
         len(_as_list(data.get("matePingOk"))),
@@ -650,7 +654,9 @@ def extract_tunnels_from_stats(data: dict[str, Any], mates: list[dict[str, Any]]
     tunnels = []
 
     for index in range(tunnel_count):
-        mate = mates[index] if index < len(mates) else {}
+        mate = mates_by_index.get(index, {})
+        if mate.get("disabled"):
+            continue
         tx_rate = _get_indexed(data.get("txRate"), index)
         rx_rate = _get_indexed(data.get("rxRate"), index)
         ping_up = str(_get_indexed(data.get("matePingOk"), index)) == "1"
@@ -714,6 +720,11 @@ def extract_channels_from_stats(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def extract_active_sites_from_stats(data: dict[str, Any], mates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    mates_by_index = {
+        _safe_int(mate.get("mate_index")): mate
+        for mate in mates
+        if _safe_int(mate.get("mate_index")) is not None
+    }
     discovered_sites = _find_list(data, ["discSites", "sites"])
     discovered_map: dict[str, dict[str, str]] = {}
     for index, item in enumerate(discovered_sites):
@@ -743,7 +754,9 @@ def extract_active_sites_from_stats(data: dict[str, Any], mates: list[dict[str, 
     active_sites: list[dict[str, Any]] = []
 
     for index in range(active_site_count):
-        mate = mates[index] if index < len(mates) else {}
+        mate = mates_by_index.get(index, {})
+        if mate.get("disabled"):
+            continue
         site_id = _stringify(mate.get("mate_site_id")) or _stringify(index)
         discovered = discovered_map.get(site_id, {})
         tx_rate = _get_indexed(data.get("txRate"), index)
@@ -812,7 +825,7 @@ def build_detail_payload(
         "tx_bps": normalized_stats.get("tx_bps", 0),
         "rx_bps": normalized_stats.get("rx_bps", 0),
         "site_count": normalized_stats.get("discovered_sites", len(mates)),
-        "mate_count": len(mates),
+        "mate_count": len([mate for mate in mates if not mate.get("disabled")]),
         "active_site_count": len(active_sites),
         "wan_count": len(channels),
         "health_state": "Healthy" if node_health.get("ping_ok") else "Degraded",

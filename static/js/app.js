@@ -963,6 +963,43 @@ function wireRouteFilter(inputId, bodyId, columns, emptyMessage) {
     handler();
 }
 
+function wireSitesFilter() {
+    const input = document.getElementById("detail-sites-filter");
+    if (!input) {
+        return;
+    }
+
+    const bodyId = "detail-tunnels-body";
+    const columns = ["mate_index", "site_name", "mate_site_id", "mate_ip", "tx_rate", "rx_rate", "rtt_ms", "ping"];
+    const emptyMessage = "No tunnel data available.";
+    const handler = () => {
+        const body = document.getElementById(bodyId);
+        if (!body) {
+            return;
+        }
+        const sourceRows = Array.isArray(body._sourceRows) ? body._sourceRows : [];
+        const query = String(input.value ?? "").trim().toLowerCase();
+        if (!query) {
+            renderDetailTableBody(bodyId, sourceRows, columns, emptyMessage);
+            return;
+        }
+        const filteredRows = sourceRows.filter((row) =>
+            String(row?.mate_site_id ?? "").toLowerCase().includes(query),
+        );
+        renderDetailTableBody(
+            bodyId,
+            filteredRows,
+            columns,
+            `No sites matched "${query}".`,
+            { storeSource: false },
+        );
+    };
+    input.removeEventListener("input", input._sitesFilterHandler);
+    input._sitesFilterHandler = handler;
+    input.addEventListener("input", handler);
+    handler();
+}
+
 function formatDetailCell(column, value) {
     if (column === "tunnel_health" && Array.isArray(value)) {
         return `
@@ -1042,6 +1079,7 @@ async function loadNodeDetailPage() {
             ["mate_index", "site_name", "mate_site_id", "mate_ip", "tunnel_health", "tx_rate", "rx_rate", "rtt_ms", "ping"],
             "No tunnel data available.",
         );
+        wireSitesFilter();
         renderDetailTableBody(
             "detail-channels-body",
             detail.channels ?? [],

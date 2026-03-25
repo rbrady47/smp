@@ -26,7 +26,7 @@
 
 body {
     margin: 0;
-    font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+    font-family: "Aptos", "Segoe UI Variable Text", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
     background:
         radial-gradient(circle at 15% 20%, rgba(32, 168, 216, 0.22), transparent 28%),
         radial-gradient(circle at 80% 12%, rgba(15, 108, 189, 0.16), transparent 24%),
@@ -71,6 +71,7 @@ a {
     font-size: 1.1rem;
     font-weight: 700;
     letter-spacing: 0.08em;
+    font-family: "Aptos Display", "Segoe UI Variable Display", "Bahnschrift", "Aptos", "Segoe UI", sans-serif;
 }
 
 .nav {
@@ -174,6 +175,10 @@ a {
 .dashboard-toolbar h1 {
     margin: 0;
     font-size: clamp(2rem, 4vw, 3rem);
+    font-family: "Aptos Display", "Segoe UI Variable Display", "Bahnschrift", "Aptos", "Segoe UI", sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.035em;
+    line-height: 0.95;
 }
 
 .subtitle {
@@ -744,6 +749,7 @@ a {
     font-size: 0.8rem;
     font-weight: 700;
     letter-spacing: 0.01em;
+    font-family: "Aptos", "Segoe UI Variable Text", "Segoe UI", sans-serif;
 }
 
 .node-status {
@@ -1056,6 +1062,14 @@ a {
     padding: 0 1rem 0.35rem;
     background: color-mix(in srgb, var(--surface-alt) 68%, transparent);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+#detail-tunnels-body {
+    scroll-margin-top: 0;
+}
+
+section.card:has(#detail-tunnels-body) .route-table-wrap {
+    max-height: 21rem;
 }
 
 .route-table-wrap .data-table {
