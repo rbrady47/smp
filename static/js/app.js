@@ -37,6 +37,7 @@ let currentEditNodeId = null;
 let dashboardRefreshTimer = null;
 const dashboardOrderStorageKey = "smp-dashboard-order";
 const dashboardRefreshStorageKey = "smp-dashboard-refresh-seconds";
+const themeModeStorageKey = "smp-theme-mode";
 
 const statusPriority = {
     online: 0,
@@ -44,6 +45,135 @@ const statusPriority = {
     offline: 2,
     disabled: 3,
 };
+
+function getSavedThemeMode() {
+    try {
+        return window.localStorage.getItem(themeModeStorageKey) || "system";
+    } catch (error) {
+        return "system";
+    }
+}
+
+function saveThemeMode(mode) {
+    try {
+        window.localStorage.setItem(themeModeStorageKey, mode);
+    } catch (error) {
+        // Ignore storage failures and keep the app usable.
+    }
+}
+
+function getResolvedTheme(mode) {
+    if (mode === "light" || mode === "dark") {
+        return mode;
+    }
+
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function applyThemeMode(mode = getSavedThemeMode()) {
+    const resolvedTheme = getResolvedTheme(mode);
+    document.documentElement.setAttribute("data-theme", resolvedTheme);
+    document.documentElement.setAttribute("data-theme-mode", mode);
+    updateThemeControlUi(mode);
+}
+
+function updateThemeControlUi(mode = getSavedThemeMode()) {
+    const button = document.getElementById("theme-mode-button");
+    const menu = document.getElementById("theme-mode-menu");
+    if (button) {
+        const label = mode.charAt(0).toUpperCase() + mode.slice(1);
+        button.textContent = `Theme: ${label}`;
+    }
+    if (menu) {
+        menu.querySelectorAll("[data-theme-mode]").forEach((item) => {
+            item.setAttribute("aria-pressed", item.getAttribute("data-theme-mode") === mode ? "true" : "false");
+        });
+    }
+}
+
+function setThemeMenuOpen(open) {
+    const menu = document.getElementById("theme-mode-menu");
+    if (menu) {
+        menu.hidden = !open;
+    }
+}
+
+function mountThemeControl() {
+    const topbar = document.querySelector(".topbar");
+    if (!(topbar instanceof HTMLElement) || topbar.querySelector(".theme-mode-control")) {
+        return;
+    }
+
+    const control = document.createElement("div");
+    control.className = "theme-mode-control";
+    control.innerHTML = `
+        <button type="button" class="button-secondary theme-mode-button" id="theme-mode-button" aria-haspopup="true" aria-expanded="false">
+            Theme: System
+        </button>
+        <div class="theme-mode-menu" id="theme-mode-menu" hidden>
+            <button type="button" data-theme-mode="system">System</button>
+            <button type="button" data-theme-mode="light">Light</button>
+            <button type="button" data-theme-mode="dark">Dark</button>
+        </div>
+    `;
+    topbar.appendChild(control);
+
+    const button = document.getElementById("theme-mode-button");
+    const menu = document.getElementById("theme-mode-menu");
+    if (!button || !menu) {
+        return;
+    }
+
+    button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const open = menu.hidden;
+        setThemeMenuOpen(open);
+        button.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+
+    menu.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) {
+            return;
+        }
+        const mode = target.getAttribute("data-theme-mode");
+        if (!mode) {
+            return;
+        }
+        saveThemeMode(mode);
+        applyThemeMode(mode);
+        setThemeMenuOpen(false);
+        button.setAttribute("aria-expanded", "false");
+    });
+
+    document.addEventListener("pointerdown", (event) => {
+        const target = event.target;
+        if (!(target instanceof Node)) {
+            return;
+        }
+        if (!control.contains(target)) {
+            setThemeMenuOpen(false);
+            button.setAttribute("aria-expanded", "false");
+        }
+    });
+
+    document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+            setThemeMenuOpen(false);
+            button.setAttribute("aria-expanded", "false");
+        }
+    });
+
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    media.addEventListener("change", () => {
+        if (getSavedThemeMode() === "system") {
+            applyThemeMode("system");
+        }
+    });
+
+    applyThemeMode();
+}
 
 function sortNodesForDisplay(nodes) {
     return [...nodes].sort((left, right) => {
@@ -215,7 +345,7 @@ function formatRate(bps) {
 }
 
 function openNode(nodeId) {
-    window.location.href = `/nodes?node=${nodeId}`;
+    window.location.href = `/nodes/${nodeId}`;
 }
 
 window.openNode = openNode;
@@ -614,29 +744,21 @@ function renderDashboard(nodes) {
                 </span>
             </div>
 
-            <div class="node-metrics">
-                <div class="metric-block">
-                    <span class="metric-label">Sites</span>
-                    <strong>${node.sites_up}/${node.sites_total}</strong>
-                </div>
-                <div class="metric-block">
-                    <span class="metric-label">WAN</span>
-                    <strong>${node.wan_up}/${node.wan_total}</strong>
-                </div>
-                <div class="metric-block metric-block-wide">
-                    <span class="metric-label">Tx</span>
-                    <strong>${formatRate(node.tx_bps)}</strong>
-                </div>
-                <div class="metric-block metric-block-wide">
-                    <span class="metric-label">Rx</span>
-                    <strong>${formatRate(node.rx_bps)}</strong>
-                </div>
-            </div>
-        `;
+              <div class="node-metrics">
+                  <div class="metric-block">
+                      <span class="metric-label">Sites</span>
+                      <strong>${node.sites_up}/${node.sites_total}</strong>
+                  </div>
+                  <div class="metric-block metric-block-traffic">
+                      <span class="metric-label">Tx / Rx</span>
+                      <strong>${formatRate(node.tx_bps)} / ${formatRate(node.rx_bps)}</strong>
+                  </div>
+              </div>
+          `;
         card.addEventListener("click", (event) => {
             const target = event.target;
 
-            if (target instanceof Element && target.closest(".service-link, .dashboard-view-button")) {
+            if (target instanceof Element && target.closest(".service-link, .dashboard-service-pill, .dashboard-view-button")) {
                 return;
             }
 
@@ -685,6 +807,284 @@ function renderDashboard(nodes) {
 
     nodeCount.textContent = String(sortedNodes.length);
     lastUpdated.textContent = new Date().toLocaleTimeString();
+}
+
+function renderDetailSummaryGrid(containerId, items) {
+    const container = document.getElementById(containerId);
+    if (!container) {
+        return;
+    }
+
+    container.innerHTML = items
+        .map(
+            ([label, value]) => `
+                <div class="detail-summary-item">
+                    <span class="detail-summary-label">${label}</span>
+                    <strong class="detail-summary-value">${value ?? "--"}</strong>
+                </div>
+            `,
+        )
+        .join("");
+}
+
+function renderNodeSummaryPanel(containerId, summary) {
+    const container = document.getElementById(containerId);
+    if (!container) {
+        return;
+    }
+
+    const txBps = Number(summary.tx_bps ?? 0);
+    const rxBps = Number(summary.rx_bps ?? 0);
+    const rttMs = Number(summary.latency_ms ?? 0);
+    const peakTraffic = Math.max(txBps, rxBps, 1_000_000);
+
+    container.innerHTML = `
+        <div class="node-summary-panel">
+            <div class="node-summary-card">
+                <div class="node-summary-title-row">
+                    <div>
+                        <span class="detail-summary-label">Anchor Node</span>
+                        <h3 class="node-summary-title">${summary.name ?? "--"}</h3>
+                    </div>
+                    <span class="node-summary-health">${summary.health_state ?? "--"}</span>
+                </div>
+                <div class="node-summary-keyline">
+                    <div class="node-summary-primary">${summary.host ?? "--"}</div>
+                    <div class="node-summary-subline">
+                        <span>Status ${summary.status ?? "--"}</span>
+                    </div>
+                </div>
+                <div class="node-summary-stats">
+                    <div class="node-summary-stat">
+                        <span class="detail-summary-label">Active Sites</span>
+                        <strong>${summary.active_site_count ?? 0}</strong>
+                    </div>
+                    <div class="node-summary-stat">
+                        <span class="detail-summary-label">WAN</span>
+                        <strong>${summary.wan_count ?? 0}</strong>
+                    </div>
+                </div>
+            </div>
+            <div class="node-gauge-grid">
+                ${renderMetricGauge("TX", formatRate(txBps), txBps, peakTraffic)}
+                ${renderMetricGauge("RX", formatRate(rxBps), rxBps, peakTraffic)}
+                ${renderMetricGauge("RTT", summary.latency_ms != null ? `${summary.latency_ms} ms` : "--", rttMs, 200)}
+            </div>
+        </div>
+    `;
+}
+
+function renderMetricGauge(label, valueText, rawValue, maxValue) {
+    const safeMax = Math.max(Number(maxValue) || 1, 1);
+    const safeValue = Math.max(Number(rawValue) || 0, 0);
+    const ratio = Math.min(safeValue / safeMax, 1);
+    const degrees = 180 * ratio;
+    return `
+        <div class="metric-gauge-card">
+            <span class="detail-summary-label">${label}</span>
+            <div class="metric-gauge" style="--gauge-deg:${degrees}deg;">
+                <div class="metric-gauge-inner">
+                    <strong class="metric-gauge-value">${valueText}</strong>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderDetailTableBody(bodyId, rows, columns, emptyMessage, options = {}) {
+    const body = document.getElementById(bodyId);
+    if (!body) {
+        return;
+    }
+
+    if (options.storeSource !== false) {
+        body._sourceRows = Array.isArray(rows) ? [...rows] : [];
+    }
+
+    if (!rows || rows.length === 0) {
+        body.innerHTML = `
+            <tr>
+                <td colspan="${columns.length}" class="table-message">${emptyMessage}</td>
+            </tr>
+        `;
+        return;
+    }
+
+    body.innerHTML = rows
+        .map(
+            (row) => `
+                <tr>
+                    ${columns.map((column) => `<td>${formatDetailCell(column, row[column])}</td>`).join("")}
+                </tr>
+            `,
+        )
+        .join("");
+}
+
+function applyRouteFilter(bodyId, columns, emptyMessage, query) {
+    const body = document.getElementById(bodyId);
+    if (!body) {
+        return;
+    }
+
+    const sourceRows = Array.isArray(body._sourceRows) ? body._sourceRows : [];
+    const normalizedQuery = String(query ?? "")
+        .trim()
+        .toLowerCase();
+
+    if (!normalizedQuery) {
+        renderDetailTableBody(bodyId, sourceRows, columns, emptyMessage);
+        return;
+    }
+
+    const filteredRows = sourceRows.filter((row) =>
+        columns.some((column) => String(row?.[column] ?? "").toLowerCase().includes(normalizedQuery)),
+    );
+
+    renderDetailTableBody(
+        bodyId,
+        filteredRows,
+        columns,
+        `No routes matched "${normalizedQuery}".`,
+        { storeSource: false },
+    );
+}
+
+function wireRouteFilter(inputId, bodyId, columns, emptyMessage) {
+    const input = document.getElementById(inputId);
+    if (!input) {
+        return;
+    }
+
+    const handler = () => applyRouteFilter(bodyId, columns, emptyMessage, input.value);
+    input.removeEventListener("input", input._routeFilterHandler);
+    input._routeFilterHandler = handler;
+    input.addEventListener("input", handler);
+    handler();
+}
+
+function formatDetailCell(column, value) {
+    if (column === "tunnel_health" && Array.isArray(value)) {
+        return `
+            <div class="tunnel-health" title="Tun0-3">
+                ${value
+                    .map(
+                        (status, index) => `
+                            <span class="tunnel-dot tunnel-dot-${status}" title="Tun${index}: ${status}"></span>
+                        `,
+                    )
+                    .join("")}
+            </div>
+        `;
+    }
+
+    return value ?? "--";
+}
+
+function setSectionError(id, message) {
+    const element = document.getElementById(id);
+    if (!element) {
+        return;
+    }
+
+    if (message) {
+        element.textContent = message;
+        element.hidden = false;
+    } else {
+        element.hidden = true;
+        element.textContent = "";
+    }
+}
+
+async function loadNodeDetailPage() {
+    const root = document.getElementById("node-detail-root");
+    if (!root) {
+        return;
+    }
+
+    const nodeId = Number(root.getAttribute("data-node-id"));
+    if (!Number.isFinite(nodeId)) {
+        return;
+    }
+
+    try {
+        const detail = await apiRequest(`/api/nodes/${nodeId}/detail`);
+        const node = detail.node ?? {};
+        const summary = detail.node_summary ?? {};
+        const config = detail.config_summary ?? {};
+        const errors = detail.errors ?? {};
+
+        document.getElementById("detail-node-name").textContent = node.name ?? `Node ${nodeId}`;
+        document.getElementById("detail-host").textContent = node.host ?? "--";
+        document.getElementById("detail-location").textContent = node.location ?? "--";
+        document.getElementById("detail-status").textContent = node.status ?? "--";
+        document.getElementById("detail-services").textContent =
+            `Web ${node.web_ok ? "Up" : "Down"} · SSH ${node.ssh_ok ? "Up" : "Down"}`;
+        document.getElementById("detail-last-refresh").textContent = formatDashboardTimestamp(node.last_refresh);
+        document.getElementById("detail-last-telemetry").textContent = formatDashboardTimestamp(node.last_telemetry_pull);
+
+        renderNodeSummaryPanel("detail-summary-grid", summary);
+
+        renderDetailSummaryGrid("detail-config-grid", [
+            ["Site ID", config.site_id ?? "--"],
+            ["Site Name", config.site_name ?? "--"],
+            ["Mgmt IP", config.mgmt_ip ?? "--"],
+            ["Version", config.version ?? "--"],
+            ["License Expiration", config.license_expires ?? "--"],
+            ["Mate Count", config.n_mates ?? 0],
+            ["Enclave", config.enclave_id ?? "--"],
+            ["Platform", config.platform ?? "--"],
+        ]);
+
+        renderDetailTableBody(
+            "detail-tunnels-body",
+            detail.tunnels ?? [],
+            ["mate_index", "site_name", "mate_site_id", "mate_ip", "tunnel_health", "tx_rate", "rx_rate", "rtt_ms", "ping"],
+            "No tunnel data available.",
+        );
+        renderDetailTableBody(
+            "detail-channels-body",
+            detail.channels ?? [],
+            ["channel", "wan_up", "wan_delay_ms", "public_ip", "tx_rate", "rx_rate", "link_state"],
+            "No channel data available.",
+        );
+        renderDetailTableBody(
+            "detail-static-routes-body",
+            detail.static_routes ?? [],
+            ["prefix", "name", "next_hop", "site_id", "type", "metric"],
+            "No static routes available.",
+        );
+        renderDetailTableBody(
+            "detail-learnt-routes-body",
+            detail.learnt_routes ?? [],
+            ["prefix", "name", "next_hop", "site_id", "type", "metric"],
+            "No dynamic routes available.",
+        );
+        wireRouteFilter(
+            "detail-static-routes-filter",
+            "detail-static-routes-body",
+            ["prefix", "name", "next_hop", "site_id", "type", "metric"],
+            "No static routes available.",
+        );
+        wireRouteFilter(
+            "detail-dynamic-routes-filter",
+            "detail-learnt-routes-body",
+            ["prefix", "name", "next_hop", "site_id", "type", "metric"],
+            "No dynamic routes available.",
+        );
+
+        setSectionError("detail-config-error", errors.config);
+        setSectionError("detail-stats-error", errors.stats);
+        setSectionError("detail-routes-error", errors.routes);
+        document.getElementById("detail-raw-data").textContent = JSON.stringify(detail.raw ?? {}, null, 2);
+        document.getElementById("detail-page-error").hidden = true;
+    } catch (error) {
+        const pageError = document.getElementById("detail-page-error");
+        if (pageError) {
+            pageError.textContent = error.message || "Unable to load anchor node detail.";
+            pageError.hidden = false;
+        }
+    }
 }
 
 async function apiRequest(url, options = {}) {
@@ -911,9 +1311,11 @@ async function handleNodeActionClick(event) {
 }
 
 window.addEventListener("DOMContentLoaded", () => {
+    mountThemeControl();
     loadPlatformStatus();
     loadNodes();
     loadDashboard();
+    loadNodeDetailPage();
 
     const nodeForm = document.getElementById("node-form");
     const nodesTableBody = document.getElementById("nodes-table-body");

@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page_title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">SMP</div>
+        <nav class="nav">
+            <a href="/">Dashboard</a>
+            <a href="/nodes">Nodes</a>
+            <a href="#topology">Topology</a>
+            <a href="#health">Health</a>
+            <a href="#admin">Admin</a>
+        </nav>
+    </header>
+
+    <main class="container detail-container" id="node-detail-root" data-node-id="{{ node_id }}">
+        <section class="detail-hero">
+            <div>
+                <p class="eyebrow">Anchor Node Detail</p>
+                <h1 id="detail-node-name">{{ node_name }}</h1>
+                <p class="subtitle">Operational drill-down for one managed Seeker anchor node, including identity, mates, tunnels, channels, and route data.</p>
+            </div>
+            <div class="detail-toolbar">
+                <a href="/" class="button-secondary">Back to Dashboard</a>
+                <a href="/nodes" class="button-secondary">Manage Nodes</a>
+            </div>
+        </section>
+
+        <section class="card detail-header-card">
+            <div class="detail-header-grid">
+                <div>
+                    <span class="dashboard-meta-label">Host</span>
+                    <strong id="detail-host">Loading...</strong>
+                </div>
+                <div>
+                    <span class="dashboard-meta-label">Location</span>
+                    <strong id="detail-location">Loading...</strong>
+                </div>
+                <div>
+                    <span class="dashboard-meta-label">Reachability</span>
+                    <strong id="detail-status">Loading...</strong>
+                </div>
+                <div>
+                    <span class="dashboard-meta-label">Services</span>
+                    <strong id="detail-services">Loading...</strong>
+                </div>
+                <div>
+                    <span class="dashboard-meta-label">Last Refresh</span>
+                    <strong id="detail-last-refresh">Loading...</strong>
+                </div>
+                <div>
+                    <span class="dashboard-meta-label">Last Telemetry Pull</span>
+                    <strong id="detail-last-telemetry">Loading...</strong>
+                </div>
+            </div>
+        </section>
+
+        <p id="detail-page-error" class="status-error" hidden>Unable to load anchor node detail.</p>
+
+        <section class="detail-grid">
+            <article class="card">
+                <div class="section-heading">
+                    <h2>Node Summary</h2>
+                    <p class="section-copy">Operational health, traffic, site count, and WAN count for this anchor node.</p>
+                </div>
+                <div id="detail-summary-grid"></div>
+            </article>
+
+            <article class="card">
+                <div class="section-heading">
+                    <h2>Seeker Identity / Config Summary</h2>
+                    <p class="section-copy">Normalized configuration data from <code>bwvCfg</code>.</p>
+                </div>
+                <div class="detail-summary-grid" id="detail-config-grid"></div>
+                <p id="detail-config-error" class="status-error" hidden></p>
+            </article>
+        </section>
+
+        <section class="card">
+            <div class="section-heading">
+                <h2>Sites &amp; Tunnels</h2>
+                <p class="section-copy">Combined site identity and runtime tunnel state from <code>bwvCfg</code> and <code>bwvStats</code>.</p>
+            </div>
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Index</th>
+                            <th>Site</th>
+                            <th>Site ID</th>
+                            <th>Site IP</th>
+                            <th>Tunnels</th>
+                            <th>Tx Rate</th>
+                            <th>Rx Rate</th>
+                            <th>RTT</th>
+                            <th>Ping</th>
+                        </tr>
+                    </thead>
+                    <tbody id="detail-tunnels-body"></tbody>
+                </table>
+            </div>
+            <p id="detail-stats-error" class="status-error" hidden></p>
+        </section>
+
+        <section class="card">
+            <div class="section-heading">
+                <h2>WAN / Channel Summary</h2>
+                <p class="section-copy">Transport channel state and rates from <code>bwvStats</code>.</p>
+            </div>
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Channel</th>
+                            <th>WAN Up</th>
+                            <th>WAN Delay</th>
+                            <th>Public IP</th>
+                            <th>Tx Rate</th>
+                            <th>Rx Rate</th>
+                            <th>Link State</th>
+                        </tr>
+                    </thead>
+                    <tbody id="detail-channels-body"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="detail-grid">
+            <article class="card">
+                <div class="section-heading">
+                    <h2>Static Routes</h2>
+                    <p class="section-copy">Static route data retrieved from <code>bwvCfg</code>.</p>
+                </div>
+                <div class="route-table-toolbar">
+                    <input
+                        id="detail-static-routes-filter"
+                        class="route-filter-input"
+                        type="search"
+                        placeholder="Filter static routes"
+                        autocomplete="off"
+                    >
+                </div>
+                <div class="table-wrap route-table-wrap">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Prefix / Subnet</th>
+                                <th>Name</th>
+                                <th>Next Hop</th>
+                                <th>Site ID</th>
+                                <th>Type</th>
+                                <th>Metric</th>
+                            </tr>
+                        </thead>
+                        <tbody id="detail-static-routes-body"></tbody>
+                    </table>
+                </div>
+            </article>
+
+            <article class="card">
+                <div class="section-heading">
+                    <h2>Dynamic Routes</h2>
+                    <p class="section-copy">Dynamic route data from <code>bwvStats</code> with <code>learntRoutes=1</code>, correlated with subnet names where available.</p>
+                </div>
+                <div class="route-table-toolbar">
+                    <input
+                        id="detail-dynamic-routes-filter"
+                        class="route-filter-input"
+                        type="search"
+                        placeholder="Filter dynamic routes"
+                        autocomplete="off"
+                    >
+                </div>
+                <div class="table-wrap route-table-wrap">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Prefix / Subnet</th>
+                                <th>Name</th>
+                                <th>Next Hop</th>
+                                <th>Site ID</th>
+                                <th>Type</th>
+                                <th>Metric</th>
+                            </tr>
+                        </thead>
+                        <tbody id="detail-learnt-routes-body"></tbody>
+                    </table>
+                </div>
+                <p id="detail-routes-error" class="status-error" hidden></p>
+            </article>
+        </section>
+
+        <section class="card">
+            <details class="raw-debug">
+                <summary>Raw Seeker API Data</summary>
+                <pre id="detail-raw-data">Loading...</pre>
+            </details>
+        </section>
+    </main>
+
+    <script src="{{ url_for('static', path='js/app.js') }}"></script>
+</body>
+</html>

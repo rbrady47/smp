@@ -7,20 +7,25 @@ import re
 import socket
 import subprocess
 import time
-import urllib.parse
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal, get_db
 from app.models import Node
+from app.seeker_api import (
+    build_detail_payload,
+    get_bwv_cfg,
+    get_bwv_stats,
+    normalize_bwv_stats,
+    extract_learnt_routes_from_stats,
+    extract_static_routes_from_cfg,
+)
 from app.schemas import NodeCreate, NodeUpdate
-from app.telemetry import normalize_bwv_stats
 
 app = FastAPI(title="Seeker Management Platform", version="0.1.0")
 templates = Jinja2Templates(directory="templates")
@@ -28,9 +33,6 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 logger = logging.getLogger(__name__)
 HEALTH_CHECK_TIMEOUT_SECONDS = 1.0
-# Lab-only prototype behavior: Seeker systems often present self-signed TLS
-# certificates, so verification is disabled for these direct API requests.
-SEEKER_API_VERIFY_TLS = False
 STATUS_PRIORITY = {
     "online": 0,
     "degraded": 1,
@@ -45,9 +47,12 @@ DASHBOARD_STATUS_PRIORITY = {
 DASHBOARD_TELEMETRY_TIMEOUT_SECONDS = 3.0
 PING_HISTORY_SECONDS = 60
 PING_INTERVAL_SECONDS = 1.0
+SEEKER_POLL_INTERVAL_SECONDS = 15.0
 ping_samples_by_node: dict[int, deque[int]] = {}
 ping_snapshot_by_node: dict[int, dict[str, object]] = {}
 ping_monitor_task: asyncio.Task | None = None
+seeker_detail_cache: dict[int, dict[str, object]] = {}
+seeker_poll_task: asyncio.Task | None = None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -66,6 +71,25 @@ async def nodes_page(request: Request) -> HTMLResponse:
         name="nodes.html",
         context={"page_title": "Node Inventory | Seeker Management Platform"},
     )
+
+
+@app.get("/nodes/{node_id}", response_class=HTMLResponse)
+async def node_detail_page(node_id: int, request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    node = get_node_or_404(node_id, db)
+    return templates.TemplateResponse(
+        request=request,
+        name="node_detail.html",
+        context={
+            "page_title": f"{node.name} | Anchor Node Detail",
+            "node_id": node.id,
+            "node_name": node.name,
+        },
+    )
+
+
+@app.get("/node/{node_id}", response_class=HTMLResponse)
+async def node_detail_alias(node_id: int, request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    return await node_detail_page(node_id, request, db)
 
 
 @app.get("/api/status")
@@ -323,135 +347,15 @@ def get_node_or_404(node_id: int, db: Session) -> Node:
 
 
 async def request_node_telemetry(node: Node, emit_logs: bool = True) -> dict[str, object]:
-    if not node.api_username or not node.api_password:
+    stats_result = await get_bwv_stats(node, emit_logs=emit_logs)
+    if stats_result.get("status") != "ok":
         return {
             "status": "error",
-            "rc": None,
-            "message": "Node API credentials are not configured",
+            "rc": stats_result.get("rc"),
+            "message": stats_result.get("message", "Unable to retrieve telemetry"),
         }
 
-    scheme = "https" if node.api_use_https else "http"
-    base_url = f"{scheme}://{node.host}:{node.web_port}"
-    login_path = "/acct/login/"
-    telemetry_path = "/acct/"
-    login_headers = {
-        "Content-Type": "application/x-www-form-urlencoded",
-    }
-    telemetry_headers = {
-        "User-Agent": "curl/7.55.1",
-        "Content-Type": "application/x-www-form-urlencoded",
-        "X-Requested-With": "XMLHttpRequest",
-    }
-
-    def log_warning(message: str, *args: object) -> None:
-        if emit_logs:
-            logger.warning(message, *args)
-
-    async with httpx.AsyncClient(
-        base_url=base_url,
-        timeout=10.0,
-        verify=SEEKER_API_VERIFY_TLS,
-    ) as client:
-        try:
-            log_warning("BV login URL for node %s: %s%s", node.name, base_url, login_path)
-            login_body = (
-                f"userName={urllib.parse.quote_plus(str(node.api_username))}"
-                f"&pass={urllib.parse.quote_plus(str(node.api_password))}"
-                f"&isAjaxReq=1"
-            )
-            login_response = await client.post(
-                login_path,
-                headers=login_headers,
-                content=login_body,
-            )
-            login_response.raise_for_status()
-            log_warning("BV login response body for node %s: %s", node.name, login_response.text)
-            login_data = login_response.json()
-            log_warning(
-                "BV login response for node %s: %s",
-                node.name,
-                {
-                    "transId": login_data.get("transId"),
-                    "transIdRefresh": login_data.get("transIdRefresh"),
-                    "rc": login_data.get("rc"),
-                },
-            )
-            log_warning("BV cookies after login for node %s: %s", node.name, dict(client.cookies))
-
-            trans_id = login_data.get("transId")
-            trans_id_refresh = login_data.get("transIdRefresh")
-
-            if not trans_id or not trans_id_refresh:
-                log_warning("Telemetry login missing token fields for node %s", node.name)
-                return {
-                    "status": "error",
-                    "rc": login_data.get("rc"),
-                    "message": "Unable to retrieve telemetry",
-                }
-
-            telemetry_json = '{"reqType":"bwvStats","getTotTunnelUsage":"1","tunnelFragRatio":"1"}'
-            telemetry_body = (
-                "reqType=bwv"
-                f"&data0={urllib.parse.quote_plus(telemetry_json)}"
-                f"&transId={urllib.parse.quote_plus(str(trans_id))}"
-                f"&transIdRefresh={urllib.parse.quote_plus(str(trans_id_refresh))}"
-                f"&userName={urllib.parse.quote_plus(str(node.api_username))}"
-                "&isAjaxReq=1"
-            )
-            log_warning("BV telemetry URL for node %s: %s%s", node.name, base_url, telemetry_path)
-            log_warning("BV telemetry request headers for node %s: %s", node.name, telemetry_headers)
-            log_warning("BV telemetry request body for node %s: %s", node.name, telemetry_body)
-
-            telemetry_response = await client.post(
-                telemetry_path,
-                headers=telemetry_headers,
-                content=telemetry_body,
-            )
-            telemetry_response.raise_for_status()
-            telemetry_response_text = telemetry_response.text
-            log_warning(
-                "BV telemetry final URL for node %s: %s history=%s",
-                node.name,
-                telemetry_response.url,
-                [str(item.status_code) + " " + str(item.url) for item in telemetry_response.history],
-            )
-            log_warning("BV telemetry response body for node %s: %s", node.name, telemetry_response_text)
-
-            try:
-                telemetry_data = telemetry_response.json()
-            except ValueError:
-                log_warning(
-                    "BV telemetry returned non-JSON for node %s content-type=%s body=%s",
-                    node.name,
-                    telemetry_response.headers.get("content-type"),
-                    telemetry_response_text,
-                )
-                return {
-                    "status": "error",
-                    "rc": None,
-                    "message": "Unable to retrieve telemetry",
-                }
-
-            response_code = telemetry_data.get("rc")
-            if response_code not in (None, 0, "0"):
-                log_warning(
-                    "BV telemetry failure for node %s returned body: %s",
-                    node.name,
-                    telemetry_response_text,
-                )
-                return {
-                    "status": "error",
-                    "rc": int(response_code) if str(response_code).lstrip("-").isdigit() else response_code,
-                    "message": f"Telemetry request failed (rc={response_code})",
-                }
-        except httpx.HTTPError as exc:
-            log_warning("Telemetry request failed for node %s: %s", node.name, exc)
-            return {
-                "status": "error",
-                "rc": None,
-                "message": "Unable to retrieve telemetry",
-            }
-
+    telemetry_data = stats_result.get("raw") or {}
     return {
         "status": "ok",
         "rc": 0,
@@ -462,14 +366,95 @@ async def request_node_telemetry(node: Node, emit_logs: bool = True) -> dict[str
     }
 
 
+async def load_node_detail(node: Node) -> dict[str, object]:
+    health = await compute_node_status(node)
+    apply_health_to_node(node, health)
+
+    cfg_result, stats_result, learnt_routes_result = await asyncio.gather(
+        get_bwv_cfg(node),
+        get_bwv_stats(node),
+        get_bwv_stats(node, extra_args={"learntRoutes": "1"}),
+    )
+
+    return build_detail_payload(
+        node,
+        node_health=health,
+        cfg_result=cfg_result,
+        stats_result=stats_result,
+        learnt_routes_result=learnt_routes_result,
+    )
+
+
+async def refresh_seeker_detail_for_node(node: Node) -> dict[str, object]:
+    detail = await load_node_detail(node)
+    detail["cached_at"] = datetime.now(timezone.utc).isoformat()
+    seeker_detail_cache[node.id] = detail
+    return detail
+
+
+async def seeker_polling_loop() -> None:
+    while True:
+        db = SessionLocal()
+        try:
+            nodes = db.scalars(select(Node).order_by(Node.id)).all()
+        finally:
+            db.close()
+
+        enabled_nodes = [node for node in nodes if node.enabled and node.api_username and node.api_password]
+        if enabled_nodes:
+            results = await asyncio.gather(
+                *(refresh_seeker_detail_for_node(node) for node in enabled_nodes),
+                return_exceptions=True,
+            )
+            for node, result in zip(enabled_nodes, results):
+                if isinstance(result, Exception):
+                    cached = seeker_detail_cache.get(node.id, {})
+                    seeker_detail_cache[node.id] = {
+                        **cached,
+                        "node": {
+                            "id": node.id,
+                            "name": node.name,
+                            "host": node.host,
+                            "location": node.location,
+                            "status": "offline",
+                            "web_ok": False,
+                            "ssh_ok": False,
+                            "last_refresh": node.last_checked.isoformat() if node.last_checked else None,
+                            "last_telemetry_pull": None,
+                        },
+                        "node_summary": cached.get("node_summary", {}),
+                        "config_summary": cached.get("config_summary", {}),
+                        "mates": cached.get("mates", []),
+                        "tunnels": cached.get("tunnels", []),
+                        "channels": cached.get("channels", []),
+                        "static_routes": cached.get("static_routes", []),
+                        "learnt_routes": cached.get("learnt_routes", []),
+                        "errors": {
+                            "config": "Polling failed",
+                            "stats": "Polling failed",
+                            "routes": "Polling failed",
+                        },
+                        "raw": cached.get("raw", {}),
+                        "cached_at": datetime.now(timezone.utc).isoformat(),
+                    }
+
+        await asyncio.sleep(SEEKER_POLL_INTERVAL_SECONDS)
+
+
 async def summarize_dashboard_node(node: Node) -> dict[str, object]:
     health = await compute_node_status(node)
     apply_health_to_node(node, health)
 
     normalized = None
     telemetry_data: dict[str, object] = {}
+    cached_detail = seeker_detail_cache.get(node.id)
 
-    if node.enabled and node.api_username and node.api_password:
+    if cached_detail:
+        normalized = normalize_bwv_stats(cached_detail.get("raw", {}).get("bwv_stats", {}) or {})
+        raw_payload = cached_detail.get("raw", {}).get("bwv_stats")
+        if isinstance(raw_payload, dict):
+            telemetry_data = raw_payload
+    elif node.enabled and node.api_username and node.api_password:
         try:
             telemetry_result = await asyncio.wait_for(
                 request_node_telemetry(node, emit_logs=False),
@@ -519,15 +504,17 @@ async def summarize_dashboard_node(node: Node) -> dict[str, object]:
 
 @app.on_event("startup")
 async def startup_ping_monitor() -> None:
-    global ping_monitor_task
+    global ping_monitor_task, seeker_poll_task
 
     if ping_monitor_task is None or ping_monitor_task.done():
         ping_monitor_task = asyncio.create_task(ping_monitor_loop())
+    if seeker_poll_task is None or seeker_poll_task.done():
+        seeker_poll_task = asyncio.create_task(seeker_polling_loop())
 
 
 @app.on_event("shutdown")
 async def shutdown_ping_monitor() -> None:
-    global ping_monitor_task
+    global ping_monitor_task, seeker_poll_task
 
     if ping_monitor_task is not None:
         ping_monitor_task.cancel()
@@ -536,6 +523,13 @@ async def shutdown_ping_monitor() -> None:
         except asyncio.CancelledError:
             pass
         ping_monitor_task = None
+    if seeker_poll_task is not None:
+        seeker_poll_task.cancel()
+        try:
+            await seeker_poll_task
+        except asyncio.CancelledError:
+            pass
+        seeker_poll_task = None
 
 
 @app.get("/api/nodes")
@@ -554,6 +548,79 @@ async def refresh_all_nodes(db: Session = Depends(get_db)) -> list[dict[str, obj
 async def node_telemetry(node_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
     node = get_node_or_404(node_id, db)
     return await request_node_telemetry(node)
+
+
+@app.get("/api/nodes/{node_id}/config")
+async def node_config(node_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+    node = get_node_or_404(node_id, db)
+    detail = seeker_detail_cache.get(node.id)
+    if not detail:
+        return {
+            "status": "error",
+            "message": "Config not available in cache yet",
+            "config_summary": {},
+            "mates": [],
+            "static_routes": [],
+        }
+    return {
+        "status": "ok",
+        "config_summary": detail.get("config_summary", {}),
+        "mates": detail.get("mates", []),
+        "static_routes": detail.get("static_routes", []),
+    }
+
+
+@app.get("/api/nodes/{node_id}/stats")
+async def node_stats(node_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+    node = get_node_or_404(node_id, db)
+    detail = seeker_detail_cache.get(node.id)
+    if not detail:
+        return {
+            "status": "error",
+            "message": "Stats not available in cache yet",
+            "normalized": {},
+            "tunnels": [],
+            "channels": [],
+        }
+    return {
+        "status": "ok",
+        "normalized": normalize_bwv_stats(detail.get("raw", {}).get("bwv_stats", {}) or {}),
+        "active_sites": detail.get("active_sites", []),
+        "tunnels": detail.get("tunnels", []),
+        "channels": detail.get("channels", []),
+    }
+
+
+@app.get("/api/nodes/{node_id}/routes")
+async def node_routes(node_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+    node = get_node_or_404(node_id, db)
+    detail = seeker_detail_cache.get(node.id)
+    if not detail:
+        return {
+            "status": "error",
+            "static_routes": [],
+            "learnt_routes": [],
+            "errors": {
+                "config": "Routes not available in cache yet",
+                "routes": "Routes not available in cache yet",
+            },
+        }
+    return {
+        "status": "ok",
+        "static_routes": detail.get("static_routes", []),
+        "learnt_routes": detail.get("learnt_routes", []),
+        "errors": detail.get("errors", {}),
+    }
+
+
+@app.get("/api/nodes/{node_id}/detail")
+async def node_detail(node_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+    node = get_node_or_404(node_id, db)
+    detail = seeker_detail_cache.get(node.id)
+    if not detail:
+        detail = await refresh_seeker_detail_for_node(node)
+    db.commit()
+    return detail
 
 
 @app.get("/api/dashboard/nodes")
