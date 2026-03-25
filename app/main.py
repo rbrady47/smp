@@ -65,8 +65,26 @@ service_poll_task: asyncio.Task | None = None
 async def home(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request=request,
-        name="dashboard.html",
+        name="main_dashboard.html",
         context={"page_title": "Seeker Management Platform"},
+    )
+
+
+@app.get("/nodes/dashboard", response_class=HTMLResponse)
+async def node_dashboard_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request=request,
+        name="dashboard.html",
+        context={"page_title": "Node Dashboard | Seeker Management Platform"},
+    )
+
+
+@app.get("/services/dashboard", response_class=HTMLResponse)
+async def services_dashboard_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request=request,
+        name="services_dashboard.html",
+        context={"page_title": "Services Dashboard | Seeker Management Platform"},
     )
 
 
@@ -675,10 +693,12 @@ async def summarize_dashboard_node(node: Node) -> dict[str, object]:
 
     normalized = None
     telemetry_data: dict[str, object] = {}
+    cfg_summary: dict[str, object] = {}
     cached_detail = seeker_detail_cache.get(node.id)
 
     if cached_detail:
         normalized = normalize_bwv_stats(cached_detail.get("raw", {}).get("bwv_stats", {}) or {})
+        cfg_summary = dict(cached_detail.get("config_summary") or {})
         raw_payload = cached_detail.get("raw", {}).get("bwv_stats")
         if isinstance(raw_payload, dict):
             telemetry_data = raw_payload
@@ -722,6 +742,8 @@ async def summarize_dashboard_node(node: Node) -> dict[str, object]:
         "latency_ms": health.get("latency_ms"),
         "tx_bps": (normalized or {}).get("tx_bps", 0),
         "rx_bps": (normalized or {}).get("rx_bps", 0),
+        "cpu_avg": (normalized or {}).get("cpu_avg"),
+        "version": cfg_summary.get("version", "--"),
         "sites_up": sites_up,
         "sites_total": sites_total,
         "wan_up": wan_up,

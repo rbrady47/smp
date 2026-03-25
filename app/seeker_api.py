@@ -828,6 +828,8 @@ def build_detail_payload(
         "mate_count": len([mate for mate in mates if not mate.get("disabled")]),
         "active_site_count": len(active_sites),
         "wan_count": len(channels),
+        "cpu_avg": normalized_stats.get("cpu_avg"),
+        "version": cfg_summary.get("version", "--"),
         "health_state": "Healthy" if node_health.get("ping_ok") else "Degraded",
     }
 

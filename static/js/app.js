@@ -39,6 +39,8 @@ let dashboardRefreshTimer = null;
 const dashboardOrderStorageKey = "smp-dashboard-order";
 const dashboardRefreshStorageKey = "smp-dashboard-refresh-seconds";
 const themeModeStorageKey = "smp-theme-mode";
+const pinnedNodesStorageKey = "smp-main-dashboard-node-ids";
+const pinnedServicesStorageKey = "smp-main-dashboard-service-ids";
 
 const statusPriority = {
     online: 0,
@@ -345,6 +347,62 @@ function formatRate(bps) {
     return `${bps} bps`;
 }
 
+function formatCpuPercent(value) {
+    if (typeof value !== "number" || Number.isNaN(value)) {
+        return "--";
+    }
+
+    return `${value.toFixed(1)}%`;
+}
+
+function getPinnedIds(storageKey) {
+    try {
+        const raw = window.localStorage.getItem(storageKey);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed)
+            ? parsed.map((value) => Number(value)).filter((value) => Number.isFinite(value))
+            : [];
+    } catch (error) {
+        return [];
+    }
+}
+
+function savePinnedIds(storageKey, ids) {
+    try {
+        window.localStorage.setItem(storageKey, JSON.stringify(ids));
+    } catch (error) {
+        // Ignore storage failures and keep the app usable.
+    }
+}
+
+function getPinnedNodeIds() {
+    return getPinnedIds(pinnedNodesStorageKey);
+}
+
+function getPinnedServiceIds() {
+    return getPinnedIds(pinnedServicesStorageKey);
+}
+
+function togglePinnedNodeId(nodeId) {
+    const current = new Set(getPinnedNodeIds());
+    if (current.has(nodeId)) {
+        current.delete(nodeId);
+    } else {
+        current.add(nodeId);
+    }
+    savePinnedIds(pinnedNodesStorageKey, Array.from(current));
+}
+
+function togglePinnedServiceId(serviceId) {
+    const current = new Set(getPinnedServiceIds());
+    if (current.has(serviceId)) {
+        current.delete(serviceId);
+    } else {
+        current.add(serviceId);
+    }
+    savePinnedIds(pinnedServicesStorageKey, Array.from(current));
+}
+
 function openNode(nodeId) {
     window.location.href = `/nodes/${nodeId}`;
 }
@@ -425,7 +483,25 @@ function applyDashboardRefreshInterval() {
     setDashboardRefreshMenuOpen(false);
 
     if (seconds > 0 && document.getElementById("nodeGrid")) {
-        dashboardRefreshTimer = window.setInterval(loadDashboard, seconds * 1000);
+        dashboardRefreshTimer = window.setInterval(() => {
+            loadNodeDashboard();
+            loadMainDashboard();
+            loadServicesDashboard();
+        }, seconds * 1000);
+        return;
+    }
+
+    if (seconds > 0 && document.getElementById("mainNodeGrid")) {
+        dashboardRefreshTimer = window.setInterval(() => {
+            loadMainDashboard();
+        }, seconds * 1000);
+        return;
+    }
+
+    if (seconds > 0 && document.getElementById("dashboardServicesBody")) {
+        dashboardRefreshTimer = window.setInterval(() => {
+            loadServicesDashboard();
+        }, seconds * 1000);
     }
 }
 
@@ -711,10 +787,14 @@ function renderNodesTable(nodes) {
         .join("");
 }
 
-function renderDashboard(nodes) {
-    const grid = document.getElementById("nodeGrid");
-    const lastUpdated = document.getElementById("dashboard-last-updated");
-    const nodeCount = document.getElementById("dashboard-node-count");
+function renderDashboard(nodes, options = {}) {
+    const grid = document.getElementById(options.gridId || "nodeGrid");
+    const lastUpdated = document.getElementById(options.lastUpdatedId || "dashboard-last-updated");
+    const nodeCount = document.getElementById(options.countId || "dashboard-node-count");
+    const showPin = options.showPin ?? true;
+    const pinnedIds = new Set(options.pinnedNodeIds ?? getPinnedNodeIds());
+    const emptyTitle = options.emptyTitle || "No nodes configured";
+    const emptySubtitle = options.emptySubtitle || "Add nodes from the inventory page to populate the dashboard.";
 
     if (!grid || !lastUpdated || !nodeCount) {
         return;
@@ -725,9 +805,9 @@ function renderDashboard(nodes) {
         grid.innerHTML = `
             <article class="node-card">
                 <div class="node-header">
-                    <div class="node-name">No nodes configured</div>
+                    <div class="node-name">${emptyTitle}</div>
                 </div>
-                <div class="node-sub">Add nodes from the inventory page to populate the dashboard.</div>
+                <div class="node-sub">${emptySubtitle}</div>
             </article>
         `;
         nodeCount.textContent = "0";
@@ -740,6 +820,7 @@ function renderDashboard(nodes) {
 
     grid.innerHTML = "";
     sortedNodes.forEach((node) => {
+        const isPinned = pinnedIds.has(Number(node.id));
         const card = document.createElement("article");
         card.className = `node-card node-card-${node.status}`;
         card.dataset.nodeId = String(node.id);
@@ -752,10 +833,25 @@ function renderDashboard(nodes) {
                 <div>
                     <div class="node-name">${node.name}</div>
                     <div class="node-sub">${node.site} · ${node.host}</div>
+                    <div class="node-version">${node.version && node.version !== "--" ? node.version : ""}</div>
                 </div>
-                <div class="service-list service-list-dashboard">
-                    ${dashboardServiceItem("Web", "web", "open-web", node)}
-                    ${dashboardServiceItem("SSH", "ssh", "ssh", node)}
+                <div class="node-header-actions">
+                    ${showPin ? `
+                        <button
+                            type="button"
+                            class="dashboard-pin-button ${isPinned ? "pinned" : ""}"
+                            data-dashboard-action="toggle-node-pin"
+                            data-node-id="${node.id}"
+                            title="${isPinned ? "Remove from main dashboard" : "Add to main dashboard"}"
+                            draggable="false"
+                        >
+                            ★
+                        </button>
+                    ` : ""}
+                    <div class="service-list service-list-dashboard">
+                        ${dashboardServiceItem("Web", "web", "open-web", node)}
+                        ${dashboardServiceItem("SSH", "ssh", "ssh", node)}
+                    </div>
                 </div>
             </div>
 
@@ -771,6 +867,10 @@ function renderDashboard(nodes) {
                   <div class="metric-block">
                       <span class="metric-label">Sites</span>
                       <strong>${node.sites_up}/${node.sites_total}</strong>
+                  </div>
+                  <div class="metric-block">
+                      <span class="metric-label">CPU</span>
+                      <strong>${formatCpuPercent(node.cpu_avg)}</strong>
                   </div>
                   <div class="metric-block metric-block-traffic">
                       <span class="metric-label">Tx / Rx</span>
@@ -816,6 +916,16 @@ function renderDashboard(nodes) {
                         .catch(() => {
                             showDashboardFeedback("Unable to copy SSH command");
                         });
+                    return;
+                }
+
+                if (action === "toggle-node-pin") {
+                    togglePinnedNodeId(node.id);
+                    if (document.getElementById("mainNodeGrid")) {
+                        loadMainDashboard();
+                    } else {
+                        loadNodeDashboard();
+                    }
                 }
             });
         });
@@ -848,13 +958,17 @@ function formatServiceLastChecked(timestamp) {
     return new Date(timestamp).toLocaleTimeString();
 }
 
-function renderDashboardServices(payload) {
-    const body = document.getElementById("dashboardServicesBody");
-    const error = document.getElementById("dashboard-services-error");
-    const total = document.getElementById("dashboard-services-total");
-    const healthy = document.getElementById("dashboard-services-healthy");
-    const degraded = document.getElementById("dashboard-services-degraded");
-    const failed = document.getElementById("dashboard-services-failed");
+function renderDashboardServices(payload, options = {}) {
+    const body = document.getElementById(options.bodyId || "dashboardServicesBody");
+    const error = document.getElementById(options.errorId || "dashboard-services-error");
+    const total = document.getElementById(options.totalId || "dashboard-services-total");
+    const healthy = document.getElementById(options.healthyId || "dashboard-services-healthy");
+    const degraded = document.getElementById(options.degradedId || "dashboard-services-degraded");
+    const failed = document.getElementById(options.failedId || "dashboard-services-failed");
+    const showPin = options.showPin ?? false;
+    const pinnedIds = new Set(options.pinnedServiceIds ?? getPinnedServiceIds());
+    const filterPinned = options.filterPinned ?? false;
+    const emptyMessage = options.emptyMessage || "No service checks configured yet.";
 
     if (!body || !error || !total || !healthy || !degraded || !failed) {
         return;
@@ -863,7 +977,7 @@ function renderDashboardServices(payload) {
     if (!payload || !Array.isArray(payload.services) || payload.services.length === 0) {
         body.innerHTML = `
             <tr>
-                <td colspan="7" class="table-message">No service checks configured yet.</td>
+                <td colspan="${showPin ? "8" : "7"}" class="table-message">${emptyMessage}</td>
             </tr>
         `;
         total.textContent = "0";
@@ -889,18 +1003,54 @@ function renderDashboardServices(payload) {
         }
         return String(left.name || "").localeCompare(String(right.name || ""));
     });
+    const visibleServices = filterPinned
+        ? services.filter((service) => pinnedIds.has(Number(service.id)))
+        : services;
 
-    const summary = payload.summary || {};
-    total.textContent = String(summary.total ?? services.length);
-    healthy.textContent = String(summary.healthy ?? 0);
-    degraded.textContent = String(summary.degraded ?? 0);
-    failed.textContent = String((summary.failed ?? 0) + (summary.unknown ?? 0));
+    if (!visibleServices.length) {
+        body.innerHTML = `
+            <tr>
+                <td colspan="${showPin ? "8" : "7"}" class="table-message">${emptyMessage}</td>
+            </tr>
+        `;
+        total.textContent = "0";
+        healthy.textContent = "0";
+        degraded.textContent = "0";
+        failed.textContent = "0";
+        error.hidden = true;
+        return;
+    }
 
-    body.innerHTML = services
+    const summary = {
+        total: visibleServices.length,
+        healthy: visibleServices.filter((service) => service.status === "healthy").length,
+        degraded: visibleServices.filter((service) => service.status === "degraded").length,
+        failed: visibleServices.filter((service) => ["failed", "unknown"].includes(service.status)).length,
+    };
+    total.textContent = String(summary.total);
+    healthy.textContent = String(summary.healthy);
+    degraded.textContent = String(summary.degraded);
+    failed.textContent = String(summary.failed);
+
+    body.innerHTML = visibleServices
         .map((service) => {
             const statusClass = String(service.status || "unknown");
+            const isPinned = pinnedIds.has(Number(service.id));
             return `
                 <tr>
+                    ${showPin ? `
+                        <td>
+                            <button
+                                type="button"
+                                class="dashboard-table-pin ${isPinned ? "pinned" : ""}"
+                                data-dashboard-service-action="toggle-service-pin"
+                                data-service-id="${service.id}"
+                                title="${isPinned ? "Remove from main dashboard" : "Add to main dashboard"}"
+                            >
+                                ★
+                            </button>
+                        </td>
+                    ` : ""}
                     <td>${service.name}</td>
                     <td>${String(service.service_type || "--").toUpperCase()}</td>
                     <td class="service-target-cell">${service.target}</td>
@@ -968,6 +1118,14 @@ function renderNodeSummaryPanel(containerId, summary) {
                     <div class="node-summary-stat">
                         <span class="detail-summary-label">WAN</span>
                         <strong>${summary.wan_count ?? 0}</strong>
+                    </div>
+                    <div class="node-summary-stat">
+                        <span class="detail-summary-label">CPU</span>
+                        <strong>${formatCpuPercent(summary.cpu_avg)}</strong>
+                    </div>
+                    <div class="node-summary-stat">
+                        <span class="detail-summary-label">Version</span>
+                        <strong>${summary.version ?? "--"}</strong>
                     </div>
                 </div>
             </div>
@@ -1315,7 +1473,7 @@ async function loadNodes() {
     }
 }
 
-async function loadDashboard() {
+async function loadNodeDashboard() {
     const grid = document.getElementById("nodeGrid");
     const dashboardError = document.getElementById("dashboard-error");
 
@@ -1323,36 +1481,12 @@ async function loadDashboard() {
         return;
     }
 
-    const [nodesResult, servicesResult] = await Promise.allSettled([
-        apiRequest("/api/dashboard/nodes"),
-        apiRequest("/api/dashboard/services"),
-    ]);
-
-    if (servicesResult.status === "fulfilled") {
-        renderDashboardServices(servicesResult.value);
-    } else {
-        const servicesError = document.getElementById("dashboard-services-error");
-        const body = document.getElementById("dashboardServicesBody");
-        if (body) {
-            body.innerHTML = `
-                <tr>
-                    <td colspan="7" class="table-message">Unable to load service checks.</td>
-                </tr>
-            `;
-        }
-        if (servicesError) {
-            servicesError.textContent = servicesResult.reason?.message || "Unable to load dashboard services";
-            servicesError.hidden = false;
-        }
-    }
-
-    if (nodesResult.status === "fulfilled") {
-        renderDashboard(nodesResult.value);
+    try {
+        const nodes = await apiRequest("/api/dashboard/nodes");
+        renderDashboard(nodes);
         dashboardError.hidden = true;
         return;
-    }
-
-    {
+    } catch (error) {
         grid.innerHTML = `
             <article class="node-card">
                 <div class="node-header">
@@ -1361,8 +1495,111 @@ async function loadDashboard() {
                 <div class="node-sub">Unable to load dashboard nodes</div>
             </article>
         `;
-        dashboardError.textContent = nodesResult.reason?.message || "Unable to load dashboard nodes";
+        dashboardError.textContent = error.message || "Unable to load dashboard nodes";
         dashboardError.hidden = false;
+    }
+}
+
+async function loadServicesDashboard() {
+    const body = document.getElementById("dashboardServicesBody");
+    const error = document.getElementById("dashboard-services-error");
+
+    if (!body || !error || document.getElementById("service-form")) {
+        return;
+    }
+
+    try {
+        const payload = await apiRequest("/api/dashboard/services");
+        renderDashboardServices(payload, { showPin: true });
+        error.hidden = true;
+    } catch (loadError) {
+        body.innerHTML = `
+            <tr>
+                <td colspan="8" class="table-message">Unable to load dashboard services.</td>
+            </tr>
+        `;
+        error.textContent = loadError.message || "Unable to load dashboard services";
+        error.hidden = false;
+    }
+}
+
+async function loadMainDashboard() {
+    const mainNodeGrid = document.getElementById("mainNodeGrid");
+    const mainServicesBody = document.getElementById("mainDashboardServicesBody");
+
+    if (!mainNodeGrid || !mainServicesBody) {
+        return;
+    }
+
+    const [nodesResult, servicesResult] = await Promise.allSettled([
+        apiRequest("/api/dashboard/nodes"),
+        apiRequest("/api/dashboard/services"),
+    ]);
+
+    if (nodesResult.status === "fulfilled") {
+        const pinnedNodeIds = getPinnedNodeIds();
+        const pinnedNodes = nodesResult.value.filter((node) => pinnedNodeIds.includes(Number(node.id)));
+        renderDashboard(pinnedNodes, {
+            gridId: "mainNodeGrid",
+            lastUpdatedId: "main-dashboard-last-updated",
+            countId: "main-dashboard-node-count",
+            showPin: true,
+            pinnedNodeIds,
+            emptyTitle: "No pinned nodes",
+            emptySubtitle: "Pin nodes from the full Node Dashboard to build this watchlist.",
+        });
+        const nodesError = document.getElementById("main-dashboard-nodes-error");
+        if (nodesError) {
+            nodesError.hidden = true;
+        }
+    } else {
+        const nodesError = document.getElementById("main-dashboard-nodes-error");
+        mainNodeGrid.innerHTML = `
+            <article class="node-card">
+                <div class="node-header">
+                    <div class="node-name">Pinned nodes unavailable</div>
+                </div>
+                <div class="node-sub">Unable to load the main dashboard node watchlist.</div>
+            </article>
+        `;
+        if (nodesError) {
+            nodesError.textContent = nodesResult.reason?.message || "Unable to load pinned nodes";
+            nodesError.hidden = false;
+        }
+    }
+
+    if (servicesResult.status === "fulfilled") {
+        const pinnedServiceIds = getPinnedServiceIds();
+        renderDashboardServices(servicesResult.value, {
+            bodyId: "mainDashboardServicesBody",
+            errorId: "main-dashboard-services-error",
+            totalId: "main-dashboard-services-total",
+            healthyId: "main-dashboard-services-healthy",
+            degradedId: "main-dashboard-services-degraded",
+            failedId: "main-dashboard-services-failed",
+            pinnedServiceIds,
+            filterPinned: true,
+            emptyMessage: "No pinned services. Pin checks from the full Services Dashboard to build this watchlist.",
+        });
+        const serviceCount = document.getElementById("main-dashboard-service-count");
+        if (serviceCount) {
+            serviceCount.textContent = String(pinnedServiceIds.length);
+        }
+        const servicesError = document.getElementById("main-dashboard-services-error");
+        if (servicesError) {
+            servicesError.hidden = true;
+        }
+    } else {
+        const servicesError = document.getElementById("main-dashboard-services-error");
+        mainServicesBody.innerHTML = `
+            <tr>
+                <td colspan="7" class="table-message">Unable to load pinned services.</td>
+            </tr>
+        `;
+        if (servicesError) {
+            servicesError.textContent = servicesResult.reason?.message || "Unable to load pinned services";
+            servicesError.hidden = false;
+        }
     }
 }
 
@@ -1502,6 +1739,32 @@ async function handleServiceTableClick(event) {
             servicesError.textContent = error.message || "Unable to delete service check";
             servicesError.hidden = false;
         }
+    }
+}
+
+async function handleDashboardServiceTableClick(event) {
+    const rawTarget = event.target;
+    if (!(rawTarget instanceof HTMLElement)) {
+        return;
+    }
+
+    const target = rawTarget.closest("[data-dashboard-service-action]");
+    if (!(target instanceof HTMLElement)) {
+        return;
+    }
+
+    const action = target.dataset.dashboardServiceAction;
+    const serviceId = Number(target.dataset.serviceId);
+    if (action !== "toggle-service-pin" || !Number.isFinite(serviceId)) {
+        return;
+    }
+
+    togglePinnedServiceId(serviceId);
+
+    if (document.getElementById("mainDashboardServicesBody")) {
+        await loadMainDashboard();
+    } else {
+        await loadServicesDashboard();
     }
 }
 
@@ -1649,7 +1912,9 @@ window.addEventListener("DOMContentLoaded", () => {
     mountThemeControl();
     loadPlatformStatus();
     loadNodes();
-    loadDashboard();
+    loadNodeDashboard();
+    loadServicesDashboard();
+    loadMainDashboard();
     loadServices();
     loadNodeDetailPage();
 
@@ -1657,6 +1922,8 @@ window.addEventListener("DOMContentLoaded", () => {
     const serviceForm = document.getElementById("service-form");
     const nodesTableBody = document.getElementById("nodes-table-body");
     const servicesTableBody = document.getElementById("services-table-body");
+    const dashboardServicesBody = document.getElementById("dashboardServicesBody");
+    const mainDashboardServicesBody = document.getElementById("mainDashboardServicesBody");
     const cancelButton = document.getElementById("node-cancel-button");
     const refreshButton = document.getElementById("refresh-nodes-button");
     const dashboardRefreshButton = document.getElementById("dashboard-refresh-button");
@@ -1678,6 +1945,14 @@ window.addEventListener("DOMContentLoaded", () => {
 
     if (servicesTableBody) {
         servicesTableBody.addEventListener("click", handleServiceTableClick);
+    }
+
+    if (dashboardServicesBody) {
+        dashboardServicesBody.addEventListener("click", handleDashboardServiceTableClick);
+    }
+
+    if (mainDashboardServicesBody) {
+        mainDashboardServicesBody.addEventListener("click", handleDashboardServiceTableClick);
     }
 
     if (cancelButton) {
@@ -1731,7 +2006,7 @@ window.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    if (document.getElementById("nodeGrid")) {
+    if (document.getElementById("nodeGrid") || document.getElementById("mainNodeGrid")) {
         applyDashboardRefreshInterval();
     }
 });

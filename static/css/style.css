@@ -485,6 +485,8 @@ a {
     color: var(--text);
     font-size: 1.35rem;
     font-weight: 800;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
 }
 
 .node-gauge-grid {
@@ -691,6 +693,38 @@ a {
     justify-content: flex-end;
 }
 
+.dashboard-pin-button,
+.dashboard-table-pin {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: #24324a;
+    color: #8ea4c7;
+    font: inherit;
+    font-size: 0.95rem;
+    font-weight: 800;
+    cursor: pointer;
+    transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+
+.dashboard-pin-button:hover,
+.dashboard-table-pin:hover {
+    transform: translateY(-1px);
+    color: #dbe8ff;
+    border-color: rgba(118, 183, 255, 0.28);
+}
+
+.dashboard-pin-button.pinned,
+.dashboard-table-pin.pinned {
+    color: #ffd166;
+    background: rgba(255, 209, 102, 0.14);
+    border-color: rgba(255, 209, 102, 0.28);
+}
+
 .dashboard-service-pill,
 .dashboard-service-pill:visited,
 .dashboard-service-pill:hover,
@@ -744,6 +778,12 @@ a {
     font-weight: 700;
 }
 
+.node-header-actions {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.45rem;
+}
+
 .node-name {
     position: relative;
     z-index: 1;
@@ -783,6 +823,17 @@ a {
     margin-top: 0.25rem;
     color: #9fb0cb;
     font-size: 0.68rem;
+}
+
+.node-version {
+    position: relative;
+    z-index: 1;
+    margin-top: 0.18rem;
+    color: #d8e3f7;
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    opacity: 0.92;
 }
 
 .node-strip {

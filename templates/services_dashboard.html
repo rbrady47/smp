@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page_title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">SMP</div>
+        <nav class="nav">
+            <a href="/">Dashboard</a>
+            <a href="/nodes/dashboard">Node Dashboard</a>
+            <a href="/services/dashboard">Services Dashboard</a>
+            <a href="#topology">Topology</a>
+            <a href="#health">Health</a>
+            <a href="#admin">Admin</a>
+        </nav>
+    </header>
+
+    <main class="container dashboard-container">
+        <section class="dashboard-toolbar">
+            <div>
+                <p class="eyebrow">Backend Checks</p>
+                <h1>Services Dashboard</h1>
+                <p class="subtitle">Full operational view of backend-polled URL and DNS checks. Pin what matters to the main dashboard.</p>
+            </div>
+            <div class="dashboard-toolbar-actions">
+                <a href="/services" class="button-secondary">Manage Services</a>
+            </div>
+        </section>
+
+        <section class="card services-dashboard-card">
+            <div class="inventory-header">
+                <div>
+                    <h2>Services</h2>
+                    <p class="section-copy">Live URL and DNS checks polled by the backend and surfaced here for quick operational review.</p>
+                </div>
+            </div>
+
+            <div class="services-summary" id="dashboardServicesSummary">
+                <div class="services-summary-chip">
+                    <span class="services-summary-label">Total</span>
+                    <strong id="dashboard-services-total">0</strong>
+                </div>
+                <div class="services-summary-chip healthy">
+                    <span class="services-summary-label">Healthy</span>
+                    <strong id="dashboard-services-healthy">0</strong>
+                </div>
+                <div class="services-summary-chip degraded">
+                    <span class="services-summary-label">Degraded</span>
+                    <strong id="dashboard-services-degraded">0</strong>
+                </div>
+                <div class="services-summary-chip failed">
+                    <span class="services-summary-label">Failed</span>
+                    <strong id="dashboard-services-failed">0</strong>
+                </div>
+            </div>
+
+            <div class="table-wrap services-dashboard-wrap">
+                <table class="data-table services-dashboard-table">
+                    <thead>
+                        <tr>
+                            <th>Pin</th>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>Target</th>
+                            <th>Status</th>
+                            <th>Result</th>
+                            <th>Latency</th>
+                            <th>Last Checked</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dashboardServicesBody">
+                        <tr>
+                            <td colspan="8" class="table-message">Loading services...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <p id="dashboard-services-error" class="status-error" hidden>Unable to load dashboard services</p>
+        </section>
+    </main>
+
+    <script src="{{ url_for('static', path='js/app.js') }}"></script>
+</body>
+</html>

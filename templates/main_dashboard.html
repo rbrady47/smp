@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page_title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">SMP</div>
+        <nav class="nav">
+            <a href="/">Dashboard</a>
+            <a href="/nodes/dashboard">Node Dashboard</a>
+            <a href="/services/dashboard">Services Dashboard</a>
+            <a href="#topology">Topology</a>
+            <a href="#health">Health</a>
+            <a href="#admin">Admin</a>
+        </nav>
+    </header>
+
+    <main class="container dashboard-container">
+        <section class="dashboard-toolbar">
+            <div>
+                <p class="eyebrow">Mission Dashboard</p>
+                <h1>Main Dashboard</h1>
+                <p class="subtitle">Pin the nodes and services you care about from the dedicated dashboards and build a focused wallboard for the big screen.</p>
+            </div>
+            <div class="dashboard-toolbar-actions">
+                <a href="/nodes/dashboard" class="button-secondary">Open Node Dashboard</a>
+                <a href="/services/dashboard" class="button-secondary">Open Services Dashboard</a>
+            </div>
+        </section>
+
+        <section class="card dashboard-meta">
+            <div>
+                <span class="dashboard-meta-label">Auto Refresh</span>
+                <div class="dashboard-refresh-control">
+                    <button type="button" class="button-secondary dashboard-refresh-button" id="dashboard-refresh-button">10 seconds</button>
+                    <div class="dashboard-refresh-menu" id="dashboard-refresh-menu" hidden>
+                        <button type="button" data-seconds="0">Off</button>
+                        <button type="button" data-seconds="10">10 sec</button>
+                        <button type="button" data-seconds="30">30 sec</button>
+                        <button type="button" data-seconds="60">60 sec</button>
+                    </div>
+                </div>
+            </div>
+            <div>
+                <span class="dashboard-meta-label">Pinned Nodes</span>
+                <strong id="main-dashboard-node-count">0</strong>
+            </div>
+            <div>
+                <span class="dashboard-meta-label">Pinned Services</span>
+                <strong id="main-dashboard-service-count">0</strong>
+            </div>
+            <div>
+                <span class="dashboard-meta-label">Last Update</span>
+                <strong id="main-dashboard-last-updated">Loading...</strong>
+            </div>
+        </section>
+
+        <section class="card">
+            <div class="inventory-header">
+                <div>
+                    <p class="eyebrow">Pinned Nodes</p>
+                    <h2>Node Watchlist</h2>
+                    <p class="section-copy">These are the nodes pinned from the full Node Dashboard.</p>
+                </div>
+            </div>
+            <section class="node-grid" id="mainNodeGrid">
+                <article class="node-card">
+                    <div class="node-header">
+                        <div class="node-name">Loading nodes...</div>
+                    </div>
+                </article>
+            </section>
+            <p id="main-dashboard-nodes-error" class="status-error" hidden>Unable to load pinned nodes</p>
+        </section>
+
+        <section class="card services-dashboard-card">
+            <div class="inventory-header">
+                <div>
+                    <p class="eyebrow">Pinned Services</p>
+                    <h2>Service Watchlist</h2>
+                    <p class="section-copy">These checks are pinned from the full Services Dashboard.</p>
+                </div>
+            </div>
+
+            <div class="services-summary" id="mainDashboardServicesSummary">
+                <div class="services-summary-chip">
+                    <span class="services-summary-label">Total</span>
+                    <strong id="main-dashboard-services-total">0</strong>
+                </div>
+                <div class="services-summary-chip healthy">
+                    <span class="services-summary-label">Healthy</span>
+                    <strong id="main-dashboard-services-healthy">0</strong>
+                </div>
+                <div class="services-summary-chip degraded">
+                    <span class="services-summary-label">Degraded</span>
+                    <strong id="main-dashboard-services-degraded">0</strong>
+                </div>
+                <div class="services-summary-chip failed">
+                    <span class="services-summary-label">Failed</span>
+                    <strong id="main-dashboard-services-failed">0</strong>
+                </div>
+            </div>
+
+            <div class="table-wrap services-dashboard-wrap">
+                <table class="data-table services-dashboard-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>Target</th>
+                            <th>Status</th>
+                            <th>Result</th>
+                            <th>Latency</th>
+                            <th>Last Checked</th>
+                        </tr>
+                    </thead>
+                    <tbody id="mainDashboardServicesBody">
+                        <tr>
+                            <td colspan="7" class="table-message">Loading services...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <p id="main-dashboard-services-error" class="status-error" hidden>Unable to load pinned services</p>
+        </section>
+    </main>
+
+    <script src="{{ url_for('static', path='js/app.js') }}"></script>
+</body>
+</html>
