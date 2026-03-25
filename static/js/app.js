@@ -928,17 +928,29 @@ function applyRouteFilter(bodyId, columns, emptyMessage, query) {
     }
 
     const sourceRows = Array.isArray(body._sourceRows) ? body._sourceRows : [];
-    const normalizedQuery = String(query ?? "")
-        .trim()
-        .toLowerCase();
+    const normalizedQuery = String(query ?? "").trim();
 
     if (!normalizedQuery) {
         renderDetailTableBody(bodyId, sourceRows, columns, emptyMessage);
         return;
     }
 
+    let regex;
+    try {
+        regex = new RegExp(normalizedQuery, "i");
+    } catch (error) {
+        renderDetailTableBody(
+            bodyId,
+            [],
+            columns,
+            `Invalid regex: ${normalizedQuery}`,
+            { storeSource: false },
+        );
+        return;
+    }
+
     const filteredRows = sourceRows.filter((row) =>
-        columns.some((column) => String(row?.[column] ?? "").toLowerCase().includes(normalizedQuery)),
+        columns.some((column) => regex.test(String(row?.[column] ?? ""))),
     );
 
     renderDetailTableBody(
@@ -970,7 +982,7 @@ function wireSitesFilter() {
     }
 
     const bodyId = "detail-tunnels-body";
-    const columns = ["mate_index", "site_name", "mate_site_id", "mate_ip", "tx_rate", "rx_rate", "rtt_ms", "ping"];
+    const columns = ["mate_index", "site_name", "mate_site_id", "mate_ip", "tunnel_health", "tx_rate", "rx_rate", "rtt_ms", "ping"];
     const emptyMessage = "No tunnel data available.";
     const handler = () => {
         const body = document.getElementById(bodyId);
@@ -978,13 +990,28 @@ function wireSitesFilter() {
             return;
         }
         const sourceRows = Array.isArray(body._sourceRows) ? body._sourceRows : [];
-        const query = String(input.value ?? "").trim().toLowerCase();
+        const query = String(input.value ?? "").trim();
         if (!query) {
             renderDetailTableBody(bodyId, sourceRows, columns, emptyMessage);
             return;
         }
+
+        let regex;
+        try {
+            regex = new RegExp(query, "i");
+        } catch (error) {
+            renderDetailTableBody(
+                bodyId,
+                [],
+                columns,
+                `Invalid regex: ${query}`,
+                { storeSource: false },
+            );
+            return;
+        }
+
         const filteredRows = sourceRows.filter((row) =>
-            String(row?.mate_site_id ?? "").toLowerCase().includes(query),
+            regex.test(String(row?.mate_site_id ?? "")),
         );
         renderDetailTableBody(
             bodyId,
