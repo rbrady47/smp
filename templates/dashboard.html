@@ -12,6 +12,7 @@
         <nav class="nav">
             <a href="/">Dashboard</a>
             <a href="/nodes">Nodes</a>
+            <a href="/services">Services</a>
             <a href="#topology">Topology</a>
             <a href="#health">Health</a>
             <a href="#admin">Admin</a>
@@ -58,6 +59,60 @@
                     <div class="node-name">Loading nodes...</div>
                 </div>
             </article>
+        </section>
+
+        <section class="card services-dashboard-card">
+            <div class="inventory-header">
+                <div>
+                    <p class="eyebrow">Backend Checks</p>
+                    <h2>Services</h2>
+                    <p class="section-copy">Live URL and DNS checks polled by the backend and surfaced here for quick operational review.</p>
+                </div>
+                <div class="dashboard-toolbar-actions">
+                    <a href="/services" class="button-secondary">Manage Services</a>
+                </div>
+            </div>
+
+            <div class="services-summary" id="dashboardServicesSummary">
+                <div class="services-summary-chip">
+                    <span class="services-summary-label">Total</span>
+                    <strong id="dashboard-services-total">0</strong>
+                </div>
+                <div class="services-summary-chip healthy">
+                    <span class="services-summary-label">Healthy</span>
+                    <strong id="dashboard-services-healthy">0</strong>
+                </div>
+                <div class="services-summary-chip degraded">
+                    <span class="services-summary-label">Degraded</span>
+                    <strong id="dashboard-services-degraded">0</strong>
+                </div>
+                <div class="services-summary-chip failed">
+                    <span class="services-summary-label">Failed</span>
+                    <strong id="dashboard-services-failed">0</strong>
+                </div>
+            </div>
+
+            <div class="table-wrap services-dashboard-wrap">
+                <table class="data-table services-dashboard-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>Target</th>
+                            <th>Status</th>
+                            <th>Result</th>
+                            <th>Latency</th>
+                            <th>Last Checked</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dashboardServicesBody">
+                        <tr>
+                            <td colspan="7" class="table-message">Loading services...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <p id="dashboard-services-error" class="status-error" hidden>Unable to load dashboard services</p>
         </section>
 
         <p id="dashboard-error" class="status-error" hidden>Unable to load dashboard nodes</p>

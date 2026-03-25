@@ -7,7 +7,9 @@ import re
 import socket
 import subprocess
 import time
+from urllib.parse import urlparse
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -15,8 +17,8 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db import SessionLocal, get_db
-from app.models import Node
+from app.db import Base, SessionLocal, engine, get_db
+from app.models import Node, ServiceCheck
 from app.seeker_api import (
     build_detail_payload,
     get_bwv_cfg,
@@ -25,7 +27,7 @@ from app.seeker_api import (
     extract_learnt_routes_from_stats,
     extract_static_routes_from_cfg,
 )
-from app.schemas import NodeCreate, NodeUpdate
+from app.schemas import NodeCreate, NodeUpdate, ServiceCheckCreate
 
 app = FastAPI(title="Seeker Management Platform", version="0.1.0")
 templates = Jinja2Templates(directory="templates")
@@ -48,11 +50,15 @@ DASHBOARD_TELEMETRY_TIMEOUT_SECONDS = 3.0
 PING_HISTORY_SECONDS = 60
 PING_INTERVAL_SECONDS = 1.0
 SEEKER_POLL_INTERVAL_SECONDS = 15.0
+SERVICE_POLL_INTERVAL_SECONDS = 30.0
+SERVICE_CHECK_TIMEOUT_SECONDS = 5.0
 ping_samples_by_node: dict[int, deque[int]] = {}
 ping_snapshot_by_node: dict[int, dict[str, object]] = {}
 ping_monitor_task: asyncio.Task | None = None
 seeker_detail_cache: dict[int, dict[str, object]] = {}
 seeker_poll_task: asyncio.Task | None = None
+service_status_cache: dict[int, dict[str, object]] = {}
+service_poll_task: asyncio.Task | None = None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -70,6 +76,15 @@ async def nodes_page(request: Request) -> HTMLResponse:
         request=request,
         name="nodes.html",
         context={"page_title": "Node Inventory | Seeker Management Platform"},
+    )
+
+
+@app.get("/services", response_class=HTMLResponse)
+async def services_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request=request,
+        name="services.html",
+        context={"page_title": "Services | Seeker Management Platform"},
     )
 
 
@@ -441,6 +456,219 @@ async def seeker_polling_loop() -> None:
         await asyncio.sleep(SEEKER_POLL_INTERVAL_SECONDS)
 
 
+def build_service_snapshot(
+    service: ServiceCheck,
+    *,
+    status: str,
+    message: str,
+    latency_ms: int | None = None,
+    http_status: int | None = None,
+    resolved_addresses: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        "id": service.id,
+        "name": service.name,
+        "service_type": service.service_type,
+        "target": service.target,
+        "enabled": service.enabled,
+        "status": status,
+        "message": message,
+        "latency_ms": latency_ms,
+        "http_status": http_status,
+        "resolved_addresses": resolved_addresses or [],
+        "last_checked": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+async def check_url_service(service: ServiceCheck) -> dict[str, object]:
+    target = service.target.strip()
+    if not target:
+        return build_service_snapshot(service, status="failed", message="Missing URL target")
+
+    parsed = urlparse(target)
+    if not parsed.scheme or not parsed.netloc:
+        return build_service_snapshot(service, status="failed", message="Invalid URL")
+
+    start = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            verify=False,
+            timeout=SERVICE_CHECK_TIMEOUT_SECONDS,
+        ) as client:
+            response = await client.get(target)
+    except httpx.TimeoutException:
+        return build_service_snapshot(service, status="failed", message="Timed out")
+    except httpx.HTTPError as exc:
+        return build_service_snapshot(service, status="failed", message=str(exc))
+
+    latency_ms = round((time.perf_counter() - start) * 1000)
+    if response.status_code < 400 or response.status_code == 403:
+        status_value = "healthy"
+        message = f"HTTP {response.status_code}"
+    elif response.status_code < 500:
+        status_value = "degraded"
+        message = f"HTTP {response.status_code}"
+    else:
+        status_value = "failed"
+        message = f"HTTP {response.status_code}"
+
+    return build_service_snapshot(
+        service,
+        status=status_value,
+        message=message,
+        latency_ms=latency_ms,
+        http_status=response.status_code,
+    )
+
+
+async def check_dns_service(service: ServiceCheck) -> dict[str, object]:
+    target = service.target.strip()
+    if not target:
+        return build_service_snapshot(service, status="failed", message="Missing DNS target")
+
+    if "|" in target:
+        dns_server, probe_name = [part.strip() for part in target.split("|", 1)]
+    else:
+        parts = target.split()
+        dns_server = parts[0]
+        probe_name = " ".join(parts[1:]).strip()
+
+    if not dns_server:
+        return build_service_snapshot(service, status="failed", message="Missing DNS server")
+
+    # Default to a root-zone NS lookup so a bare server IP still exercises the resolver directly.
+    lookup_name = probe_name or "."
+
+    start = time.perf_counter()
+    try:
+        completed = await asyncio.to_thread(
+            subprocess.run,
+            ["nslookup", "-type=ns", lookup_name, dns_server],
+            capture_output=True,
+            text=True,
+            timeout=SERVICE_CHECK_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as exc:
+        return build_service_snapshot(service, status="failed", message=str(exc))
+
+    output = f"{completed.stdout}\n{completed.stderr}".strip()
+    latency_ms = round((time.perf_counter() - start) * 1000)
+
+    if completed.returncode != 0:
+        return build_service_snapshot(
+            service,
+            status="failed",
+            message=output or "nslookup failed",
+            latency_ms=latency_ms,
+        )
+
+    failure_markers = ("timed out", "non-existent domain", "server failed", "refused")
+    lowered_output = output.lower()
+    if any(marker in lowered_output for marker in failure_markers):
+        return build_service_snapshot(
+            service,
+            status="failed",
+            message=output or "Resolver did not answer successfully",
+            latency_ms=latency_ms,
+        )
+
+    resolved_lines = [line.strip() for line in output.splitlines() if line.strip().lower().startswith(("address:", "addresses:", "internet address"))]
+    resolved_addresses = []
+    for line in resolved_lines:
+        _, _, raw_value = line.partition(":")
+        if raw_value:
+            resolved_addresses.extend([value.strip() for value in raw_value.split(",") if value.strip()])
+
+    message = f"Resolved {lookup_name} via {dns_server}"
+    if resolved_addresses:
+        message = f"{message} ({', '.join(resolved_addresses[:3])})"
+
+    return build_service_snapshot(
+        service,
+        status="healthy",
+        message=message,
+        latency_ms=latency_ms,
+        resolved_addresses=resolved_addresses,
+    )
+
+
+async def check_service(service: ServiceCheck) -> dict[str, object]:
+    if not service.enabled:
+        return build_service_snapshot(service, status="disabled", message="Check disabled")
+
+    if service.service_type == "dns":
+        return await check_dns_service(service)
+
+    return await check_url_service(service)
+
+
+async def service_polling_loop() -> None:
+    while True:
+        db = SessionLocal()
+        try:
+            services = db.scalars(select(ServiceCheck).order_by(ServiceCheck.service_type, ServiceCheck.name, ServiceCheck.id)).all()
+        finally:
+            db.close()
+
+        if services:
+            results = await asyncio.gather(*(check_service(service) for service in services), return_exceptions=True)
+            for service, result in zip(services, results):
+                if isinstance(result, Exception):
+                    service_status_cache[service.id] = build_service_snapshot(
+                        service,
+                        status="failed",
+                        message="Service check failed",
+                    )
+                else:
+                    service_status_cache[service.id] = result
+
+        await asyncio.sleep(SERVICE_POLL_INTERVAL_SECONDS)
+
+
+def merge_service_payload(service: ServiceCheck) -> dict[str, object]:
+    cached = service_status_cache.get(service.id)
+    payload = {
+        "id": service.id,
+        "name": service.name,
+        "service_type": service.service_type,
+        "target": service.target,
+        "enabled": service.enabled,
+        "notes": service.notes,
+        "created_at": service.created_at.isoformat() if service.created_at else None,
+    }
+    if cached:
+        payload.update(cached)
+    else:
+        payload.update(
+            {
+                "status": "disabled" if not service.enabled else "unknown",
+                "message": "Pending first check" if service.enabled else "Check disabled",
+                "latency_ms": None,
+                "http_status": None,
+                "resolved_addresses": [],
+                "last_checked": None,
+            }
+        )
+    return payload
+
+
+def summarize_service_statuses(services: list[dict[str, object]]) -> dict[str, int]:
+    summary = {
+        "total": len(services),
+        "healthy": 0,
+        "degraded": 0,
+        "failed": 0,
+        "disabled": 0,
+        "unknown": 0,
+    }
+    for service in services:
+        status_value = str(service.get("status") or "unknown")
+        summary[status_value] = summary.get(status_value, 0) + 1
+    return summary
+
+
 async def summarize_dashboard_node(node: Node) -> dict[str, object]:
     health = await compute_node_status(node)
     apply_health_to_node(node, health)
@@ -504,17 +732,20 @@ async def summarize_dashboard_node(node: Node) -> dict[str, object]:
 
 @app.on_event("startup")
 async def startup_ping_monitor() -> None:
-    global ping_monitor_task, seeker_poll_task
+    global ping_monitor_task, seeker_poll_task, service_poll_task
+    Base.metadata.create_all(bind=engine)
 
     if ping_monitor_task is None or ping_monitor_task.done():
         ping_monitor_task = asyncio.create_task(ping_monitor_loop())
     if seeker_poll_task is None or seeker_poll_task.done():
         seeker_poll_task = asyncio.create_task(seeker_polling_loop())
+    if service_poll_task is None or service_poll_task.done():
+        service_poll_task = asyncio.create_task(service_polling_loop())
 
 
 @app.on_event("shutdown")
 async def shutdown_ping_monitor() -> None:
-    global ping_monitor_task, seeker_poll_task
+    global ping_monitor_task, seeker_poll_task, service_poll_task
 
     if ping_monitor_task is not None:
         ping_monitor_task.cancel()
@@ -530,6 +761,13 @@ async def shutdown_ping_monitor() -> None:
         except asyncio.CancelledError:
             pass
         seeker_poll_task = None
+    if service_poll_task is not None:
+        service_poll_task.cancel()
+        try:
+            await service_poll_task
+        except asyncio.CancelledError:
+            pass
+        service_poll_task = None
 
 
 @app.get("/api/nodes")
@@ -635,6 +873,43 @@ async def dashboard_nodes(db: Session = Depends(get_db)) -> list[dict[str, objec
             str(node["name"]).lower(),
         ),
     )
+
+
+@app.get("/api/services")
+async def list_services(db: Session = Depends(get_db)) -> list[dict[str, object]]:
+    services = db.scalars(select(ServiceCheck).order_by(ServiceCheck.service_type, ServiceCheck.name, ServiceCheck.id)).all()
+    return [merge_service_payload(service) for service in services]
+
+
+@app.get("/api/dashboard/services")
+async def dashboard_services(db: Session = Depends(get_db)) -> dict[str, object]:
+    services = db.scalars(select(ServiceCheck).order_by(ServiceCheck.service_type, ServiceCheck.name, ServiceCheck.id)).all()
+    payload = [merge_service_payload(service) for service in services]
+    return {
+        "summary": summarize_service_statuses(payload),
+        "services": payload,
+    }
+
+
+@app.post("/api/services", status_code=status.HTTP_201_CREATED)
+async def create_service(service_data: ServiceCheckCreate, db: Session = Depends(get_db)) -> dict[str, object]:
+    service = ServiceCheck(**service_data.model_dump())
+    db.add(service)
+    db.commit()
+    db.refresh(service)
+    service_status_cache[service.id] = await check_service(service)
+    return merge_service_payload(service)
+
+
+@app.delete("/api/services/{service_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_service(service_id: int, db: Session = Depends(get_db)) -> Response:
+    service = db.get(ServiceCheck, service_id)
+    if service is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service check not found")
+    db.delete(service)
+    db.commit()
+    service_status_cache.pop(service_id, None)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.post("/api/nodes", status_code=status.HTTP_201_CREATED)

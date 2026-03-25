@@ -34,6 +34,7 @@ async function loadPlatformStatus() {
 
 let currentNodes = [];
 let currentEditNodeId = null;
+let currentServices = [];
 let dashboardRefreshTimer = null;
 const dashboardOrderStorageKey = "smp-dashboard-order";
 const dashboardRefreshStorageKey = "smp-dashboard-refresh-seconds";
@@ -544,6 +545,28 @@ function clearFeedback() {
     feedback.textContent = "";
 }
 
+function showServicesFeedback(message) {
+    const feedback = document.getElementById("services-feedback");
+
+    if (!feedback) {
+        return;
+    }
+
+    feedback.textContent = message;
+    feedback.hidden = false;
+}
+
+function clearServicesFeedback() {
+    const feedback = document.getElementById("services-feedback");
+
+    if (!feedback) {
+        return;
+    }
+
+    feedback.hidden = true;
+    feedback.textContent = "";
+}
+
 function renderNormalizedTelemetrySummary(nodeName, normalized, rawTelemetry = null) {
     const panel = document.getElementById("telemetry-panel");
     const title = document.getElementById("telemetry-title");
@@ -807,6 +830,89 @@ function renderDashboard(nodes) {
 
     nodeCount.textContent = String(sortedNodes.length);
     lastUpdated.textContent = new Date().toLocaleTimeString();
+}
+
+function formatServiceLatency(latencyMs) {
+    if (typeof latencyMs !== "number") {
+        return "--";
+    }
+
+    return `${latencyMs} ms`;
+}
+
+function formatServiceLastChecked(timestamp) {
+    if (!timestamp) {
+        return "Pending";
+    }
+
+    return new Date(timestamp).toLocaleTimeString();
+}
+
+function renderDashboardServices(payload) {
+    const body = document.getElementById("dashboardServicesBody");
+    const error = document.getElementById("dashboard-services-error");
+    const total = document.getElementById("dashboard-services-total");
+    const healthy = document.getElementById("dashboard-services-healthy");
+    const degraded = document.getElementById("dashboard-services-degraded");
+    const failed = document.getElementById("dashboard-services-failed");
+
+    if (!body || !error || !total || !healthy || !degraded || !failed) {
+        return;
+    }
+
+    if (!payload || !Array.isArray(payload.services) || payload.services.length === 0) {
+        body.innerHTML = `
+            <tr>
+                <td colspan="7" class="table-message">No service checks configured yet.</td>
+            </tr>
+        `;
+        total.textContent = "0";
+        healthy.textContent = "0";
+        degraded.textContent = "0";
+        failed.textContent = "0";
+        error.hidden = true;
+        return;
+    }
+
+    const services = [...payload.services].sort((left, right) => {
+        const priority = {
+            failed: 0,
+            degraded: 1,
+            healthy: 2,
+            unknown: 3,
+            disabled: 4,
+        };
+        const leftPriority = priority[left.status] ?? 99;
+        const rightPriority = priority[right.status] ?? 99;
+        if (leftPriority !== rightPriority) {
+            return leftPriority - rightPriority;
+        }
+        return String(left.name || "").localeCompare(String(right.name || ""));
+    });
+
+    const summary = payload.summary || {};
+    total.textContent = String(summary.total ?? services.length);
+    healthy.textContent = String(summary.healthy ?? 0);
+    degraded.textContent = String(summary.degraded ?? 0);
+    failed.textContent = String((summary.failed ?? 0) + (summary.unknown ?? 0));
+
+    body.innerHTML = services
+        .map((service) => {
+            const statusClass = String(service.status || "unknown");
+            return `
+                <tr>
+                    <td>${service.name}</td>
+                    <td>${String(service.service_type || "--").toUpperCase()}</td>
+                    <td class="service-target-cell">${service.target}</td>
+                    <td><span class="dashboard-service-status ${statusClass}">${statusClass}</span></td>
+                    <td>${service.message ?? "--"}</td>
+                    <td>${formatServiceLatency(service.latency_ms)}</td>
+                    <td>${formatServiceLastChecked(service.last_checked)}</td>
+                </tr>
+            `;
+        })
+        .join("");
+    error.hidden = true;
 }
 
 function renderDetailSummaryGrid(containerId, items) {
@@ -1217,11 +1323,36 @@ async function loadDashboard() {
         return;
     }
 
-    try {
-        const nodes = await apiRequest("/api/dashboard/nodes");
-        renderDashboard(nodes);
+    const [nodesResult, servicesResult] = await Promise.allSettled([
+        apiRequest("/api/dashboard/nodes"),
+        apiRequest("/api/dashboard/services"),
+    ]);
+
+    if (servicesResult.status === "fulfilled") {
+        renderDashboardServices(servicesResult.value);
+    } else {
+        const servicesError = document.getElementById("dashboard-services-error");
+        const body = document.getElementById("dashboardServicesBody");
+        if (body) {
+            body.innerHTML = `
+                <tr>
+                    <td colspan="7" class="table-message">Unable to load service checks.</td>
+                </tr>
+            `;
+        }
+        if (servicesError) {
+            servicesError.textContent = servicesResult.reason?.message || "Unable to load dashboard services";
+            servicesError.hidden = false;
+        }
+    }
+
+    if (nodesResult.status === "fulfilled") {
+        renderDashboard(nodesResult.value);
         dashboardError.hidden = true;
-    } catch (error) {
+        return;
+    }
+
+    {
         grid.innerHTML = `
             <article class="node-card">
                 <div class="node-header">
@@ -1230,8 +1361,147 @@ async function loadDashboard() {
                 <div class="node-sub">Unable to load dashboard nodes</div>
             </article>
         `;
-        dashboardError.textContent = error.message || "Unable to load dashboard nodes";
+        dashboardError.textContent = nodesResult.reason?.message || "Unable to load dashboard nodes";
         dashboardError.hidden = false;
+    }
+}
+
+function resetServiceForm() {
+    const form = document.getElementById("service-form");
+    const error = document.getElementById("service-form-error");
+
+    if (!form) {
+        return;
+    }
+
+    form.reset();
+    document.getElementById("service-type").value = "url";
+    document.getElementById("service-enabled").checked = true;
+    if (error) {
+        error.hidden = true;
+        error.textContent = "";
+    }
+}
+
+function renderServicesTable(services) {
+    const tableBody = document.getElementById("services-table-body");
+
+    if (!tableBody) {
+        return;
+    }
+
+    if (!services.length) {
+        tableBody.innerHTML = `
+            <tr>
+                <td colspan="6" class="table-message">No service checks configured yet.</td>
+            </tr>
+        `;
+        return;
+    }
+
+    tableBody.innerHTML = services
+        .map(
+            (service) => `
+                <tr>
+                    <td>${service.name}</td>
+                    <td>${String(service.service_type || "--").toUpperCase()}</td>
+                    <td>${service.target}</td>
+                    <td>${service.enabled ? "Yes" : "No"}</td>
+                    <td>${service.notes ?? "--"}</td>
+                    <td>
+                        <button type="button" class="button-danger action-button" data-service-action="delete" data-id="${service.id}">Delete</button>
+                    </td>
+                </tr>
+            `,
+        )
+        .join("");
+}
+
+async function loadServices() {
+    const tableBody = document.getElementById("services-table-body");
+    const servicesError = document.getElementById("services-error");
+
+    if (!tableBody || !servicesError) {
+        return;
+    }
+
+    try {
+        currentServices = await apiRequest("/api/services");
+        renderServicesTable(currentServices);
+        servicesError.hidden = true;
+        clearServicesFeedback();
+    } catch (error) {
+        tableBody.innerHTML = `
+            <tr>
+                <td colspan="6" class="table-message">Unable to load services</td>
+            </tr>
+        `;
+        servicesError.textContent = error.message || "Unable to load services";
+        servicesError.hidden = false;
+    }
+}
+
+function collectServiceFormPayload() {
+    return {
+        name: document.getElementById("service-name").value.trim(),
+        service_type: document.getElementById("service-type").value,
+        target: document.getElementById("service-target").value.trim(),
+        enabled: document.getElementById("service-enabled").checked,
+        notes: document.getElementById("service-notes").value.trim() || null,
+    };
+}
+
+async function handleServiceFormSubmit(event) {
+    event.preventDefault();
+
+    const error = document.getElementById("service-form-error");
+
+    try {
+        await apiRequest("/api/services", {
+            method: "POST",
+            body: JSON.stringify(collectServiceFormPayload()),
+        });
+        resetServiceForm();
+        await loadServices();
+        showServicesFeedback("Service check added.");
+    } catch (requestError) {
+        if (error) {
+            error.textContent = requestError.message || "Unable to save service check";
+            error.hidden = false;
+        }
+    }
+}
+
+async function handleServiceTableClick(event) {
+    const rawTarget = event.target;
+
+    if (!(rawTarget instanceof HTMLElement)) {
+        return;
+    }
+
+    const target = rawTarget.closest("[data-service-action]");
+
+    if (!(target instanceof HTMLElement)) {
+        return;
+    }
+
+    const action = target.dataset.serviceAction;
+    const serviceId = Number(target.dataset.id);
+
+    if (action !== "delete" || !Number.isFinite(serviceId)) {
+        return;
+    }
+
+    try {
+        await apiRequest(`/api/services/${serviceId}`, { method: "DELETE" });
+        await loadServices();
+        showServicesFeedback("Service check deleted.");
+    } catch (error) {
+        const servicesError = document.getElementById("services-error");
+        if (servicesError) {
+            servicesError.textContent = error.message || "Unable to delete service check";
+            servicesError.hidden = false;
+        }
     }
 }
 
@@ -1380,10 +1650,13 @@ window.addEventListener("DOMContentLoaded", () => {
     loadPlatformStatus();
     loadNodes();
     loadDashboard();
+    loadServices();
     loadNodeDetailPage();
 
     const nodeForm = document.getElementById("node-form");
+    const serviceForm = document.getElementById("service-form");
     const nodesTableBody = document.getElementById("nodes-table-body");
+    const servicesTableBody = document.getElementById("services-table-body");
     const cancelButton = document.getElementById("node-cancel-button");
     const refreshButton = document.getElementById("refresh-nodes-button");
     const dashboardRefreshButton = document.getElementById("dashboard-refresh-button");
@@ -1394,8 +1667,17 @@ window.addEventListener("DOMContentLoaded", () => {
         resetNodeForm();
     }
 
+    if (serviceForm) {
+        serviceForm.addEventListener("submit", handleServiceFormSubmit);
+        resetServiceForm();
+    }
+
     if (nodesTableBody) {
         nodesTableBody.addEventListener("click", handleNodeActionClick);
+    }
+
+    if (servicesTableBody) {
+        servicesTableBody.addEventListener("click", handleServiceTableClick);
     }
 
     if (cancelButton) {

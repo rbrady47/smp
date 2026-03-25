@@ -20,3 +20,15 @@ class NodeCreate(NodeBase):
 
 class NodeUpdate(NodeBase):
     pass
+
+
+class ServiceCheckBase(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    service_type: str = Field(default="url", pattern="^(url|dns)$")
+    target: str = Field(..., min_length=1, max_length=512)
+    enabled: bool = True
+    notes: str | None = None
+
+
+class ServiceCheckCreate(ServiceCheckBase):
+    pass

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page_title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">SMP</div>
+        <nav class="nav">
+            <a href="/">Dashboard</a>
+            <a href="/nodes">Nodes</a>
+            <a href="/services">Services</a>
+            <a href="#topology">Topology</a>
+            <a href="#health">Health</a>
+            <a href="#admin">Admin</a>
+        </nav>
+    </header>
+
+    <main class="container">
+        <section class="hero">
+            <p class="eyebrow">Service Inventory</p>
+            <h1>Managed Services</h1>
+            <p class="subtitle">Track critical URL and DNS checks from the backend. Add and remove checks here as your operational needs change.</p>
+        </section>
+
+        <section class="card node-form-card">
+            <div class="section-heading">
+                <h2>Add Service Check</h2>
+                <p class="section-copy">Start with critical URLs now, and leave room for DNS targets as you grow the service view.</p>
+            </div>
+            <form id="service-form" class="node-form">
+                <label>
+                    <span>Name</span>
+                    <input type="text" id="service-name" name="name" placeholder="Cloud AGG Landing Page" required>
+                </label>
+
+                <label>
+                    <span>Type</span>
+                    <select id="service-type" name="service_type">
+                        <option value="url">URL</option>
+                        <option value="dns">DNS</option>
+                    </select>
+                </label>
+
+                <label>
+                    <span>Target</span>
+                    <input type="text" id="service-target" name="target" placeholder="URL or DNS server IP, optionally 8.8.8.8|example.mil" required>
+                </label>
+
+                <label class="checkbox-field">
+                    <input type="checkbox" id="service-enabled" name="enabled" checked>
+                    <span>Enabled</span>
+                </label>
+
+                <label class="full-width">
+                    <span>Notes</span>
+                    <textarea id="service-notes" name="notes" rows="3" placeholder="Optional notes"></textarea>
+                </label>
+
+                <div class="form-actions full-width">
+                    <button type="submit" class="button-primary">Add Service Check</button>
+                </div>
+            </form>
+            <p id="service-form-error" class="status-error" hidden>Unable to save service check</p>
+        </section>
+
+        <section class="card">
+            <div class="inventory-header">
+                <div>
+                    <h2>Service Checks</h2>
+                    <p class="section-copy">Manage the URL and DNS targets you want SMP to monitor from the backend. DNS targets use <code>nslookup</code> against the server IP you specify, and can optionally include a probe name like <code>8.8.8.8|example.mil</code>.</p>
+                </div>
+            </div>
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>Target</th>
+                            <th>Enabled</th>
+                            <th>Notes</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="services-table-body">
+                        <tr>
+                            <td colspan="6" class="table-message">Loading services...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <p id="services-error" class="status-error" hidden>Unable to load services</p>
+            <p id="services-feedback" class="status-feedback" hidden></p>
+        </section>
+    </main>
+
+    <script src="{{ url_for('static', path='js/app.js') }}"></script>
+</body>
+</html>

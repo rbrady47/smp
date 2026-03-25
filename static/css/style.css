@@ -299,6 +299,7 @@ a {
 :root[data-theme="dark"] .node-summary-stat,
 :root[data-theme="dark"] .telemetry-item,
 :root[data-theme="dark"] .node-form input,
+:root[data-theme="dark"] .node-form select,
 :root[data-theme="dark"] .node-form textarea,
 :root[data-theme="dark"] .dashboard-refresh-menu,
 :root[data-theme="dark"] .dashboard-refresh-menu button,
@@ -949,6 +950,7 @@ a {
 }
 
 .node-form input,
+.node-form select,
 .node-form textarea {
     width: 100%;
     border: 1px solid var(--border);
@@ -1081,6 +1083,132 @@ section.card:has(#detail-tunnels-body) .route-table-wrap {
     top: 0;
     z-index: 1;
     background: var(--surface);
+}
+
+.services-dashboard-card {
+    min-height: auto;
+    margin-top: 1rem;
+    padding: 1.2rem;
+}
+
+.services-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+    gap: 0.55rem;
+    margin-top: 0.7rem;
+    margin-bottom: 0.8rem;
+}
+
+.services-summary-chip {
+    display: grid;
+    gap: 0.1rem;
+    padding: 0.55rem 0.75rem;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--surface-alt);
+}
+
+.services-summary-chip strong {
+    font-size: 1.05rem;
+    font-weight: 800;
+    color: var(--text);
+}
+
+.services-summary-label {
+    color: var(--muted);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.services-summary-chip.healthy {
+    border-color: rgba(34, 197, 94, 0.28);
+    box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.05);
+}
+
+.services-summary-chip.degraded {
+    border-color: rgba(245, 158, 11, 0.32);
+    box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.05);
+}
+
+.services-summary-chip.failed {
+    border-color: rgba(239, 68, 68, 0.28);
+    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.05);
+}
+
+.services-dashboard-wrap {
+    max-height: 22rem;
+    overflow: auto;
+    border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--surface-alt) 68%, transparent);
+    padding: 0 0.8rem 0.25rem;
+}
+
+.services-dashboard-table {
+    margin-top: 0;
+}
+
+.services-dashboard-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--surface);
+}
+
+.dashboard-service-status {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.26rem 0.65rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 800;
+    text-transform: capitalize;
+}
+
+.dashboard-service-status.healthy {
+    color: #dffcf0;
+    background: rgba(22, 163, 74, 0.34);
+    border: 1px solid rgba(74, 222, 128, 0.28);
+}
+
+.dashboard-service-status.degraded {
+    color: #b45309;
+    background: rgba(245, 158, 11, 0.18);
+}
+
+.dashboard-service-status.failed,
+.dashboard-service-status.unknown {
+    color: #b42318;
+    background: rgba(239, 68, 68, 0.16);
+}
+
+.dashboard-service-status.disabled {
+    color: var(--muted);
+    background: rgba(148, 163, 184, 0.14);
+}
+
+.service-target-cell {
+    max-width: 28rem;
+    overflow-wrap: anywhere;
+}
+
+.services-dashboard-card .inventory-header {
+    margin-bottom: 0.55rem;
+}
+
+.services-dashboard-card .inventory-header h2 {
+    margin-bottom: 0.15rem;
+}
+
+.services-dashboard-card .section-copy {
+    font-size: 0.94rem;
+    line-height: 1.45;
+}
+
+.services-dashboard-card .button-secondary {
+    padding: 0.6rem 0.9rem;
 }
 
 :root[data-theme="dark"] .route-table-wrap {
