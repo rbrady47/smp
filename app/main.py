@@ -14,7 +14,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.db import Base, SessionLocal, engine, get_db
@@ -28,6 +28,7 @@ from app.seeker_api import (
     extract_static_routes_from_cfg,
 )
 from app.schemas import NodeCreate, NodeUpdate, ServiceCheckCreate
+from app.topology import build_mock_topology_payload, normalize_topology_location
 
 app = FastAPI(title="Seeker Management Platform", version="0.1.0")
 templates = Jinja2Templates(directory="templates")
@@ -85,6 +86,15 @@ async def services_dashboard_page(request: Request) -> HTMLResponse:
         request=request,
         name="services_dashboard.html",
         context={"page_title": "Services Dashboard | Seeker Management Platform"},
+    )
+
+
+@app.get("/topology", response_class=HTMLResponse)
+async def topology_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request=request,
+        name="topology.html",
+        context={"page_title": "Topology | Seeker Management Platform"},
     )
 
 
@@ -296,6 +306,10 @@ def serialize_node(node: Node, health: dict[str, object]) -> dict[str, object]:
         "web_port": node.web_port,
         "ssh_port": node.ssh_port,
         "location": node.location,
+        "include_in_topology": node.include_in_topology,
+        "topology_level": node.topology_level,
+        "topology_unit": node.topology_unit,
+        "topology_location": normalize_topology_location(node.location),
         "enabled": node.enabled,
         "notes": node.notes,
         "api_username": node.api_username,
@@ -310,6 +324,35 @@ def serialize_node(node: Node, health: dict[str, object]) -> dict[str, object]:
         "ping_state": health["ping_state"],
         "ping_avg_ms": health["ping_avg_ms"],
     }
+
+
+def ensure_node_topology_columns() -> None:
+    inspector = inspect(engine)
+    existing_columns = {column["name"] for column in inspector.get_columns("nodes")}
+    dialect = engine.dialect.name
+
+    include_default = "FALSE" if dialect == "postgresql" else "0"
+    statements: list[str] = []
+    if "include_in_topology" not in existing_columns:
+        statements.append(f"ALTER TABLE nodes ADD COLUMN include_in_topology BOOLEAN NOT NULL DEFAULT {include_default}")
+    if "topology_level" not in existing_columns:
+        statements.append("ALTER TABLE nodes ADD COLUMN topology_level INTEGER")
+    if "topology_unit" not in existing_columns:
+        statements.append("ALTER TABLE nodes ADD COLUMN topology_unit VARCHAR(64)")
+
+    if not statements:
+        return
+
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+        connection.execute(
+            text(
+                "UPDATE nodes SET include_in_topology = "
+                + ("FALSE" if dialect == "postgresql" else "0")
+                + " WHERE include_in_topology IS NULL"
+            )
+        )
 
 
 def apply_health_to_node(node: Node, health: dict[str, object]) -> None:
@@ -756,6 +799,7 @@ async def summarize_dashboard_node(node: Node) -> dict[str, object]:
 async def startup_ping_monitor() -> None:
     global ping_monitor_task, seeker_poll_task, service_poll_task
     Base.metadata.create_all(bind=engine)
+    ensure_node_topology_columns()
 
     if ping_monitor_task is None or ping_monitor_task.done():
         ping_monitor_task = asyncio.create_task(ping_monitor_loop())
@@ -895,6 +939,29 @@ async def dashboard_nodes(db: Session = Depends(get_db)) -> list[dict[str, objec
             str(node["name"]).lower(),
         ),
     )
+
+
+@app.get("/api/topology")
+async def topology_payload(db: Session = Depends(get_db)) -> dict[str, object]:
+    nodes = db.scalars(select(Node).order_by(Node.name)).all()
+    health_payloads = await asyncio.gather(*(compute_node_status(node) for node in nodes))
+    inventory_nodes = []
+    for node, health in zip(nodes, health_payloads):
+        apply_health_to_node(node, health)
+        inventory_nodes.append(
+            {
+                "id": node.id,
+                "name": node.name,
+                "host": node.host,
+                "location": node.location,
+                "status": health["status"],
+                "include_in_topology": node.include_in_topology,
+                "topology_level": node.topology_level,
+                "topology_unit": node.topology_unit,
+            }
+        )
+    db.commit()
+    return build_mock_topology_payload(inventory_nodes)
 
 
 @app.get("/api/services")

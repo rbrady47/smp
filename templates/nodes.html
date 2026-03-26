@@ -13,7 +13,7 @@
             <a href="/">Dashboard</a>
             <a href="/nodes/dashboard">Node Dashboard</a>
             <a href="/services/dashboard">Services Dashboard</a>
-            <a href="#topology">Topology</a>
+            <a href="/topology">Topology</a>
             <a href="#health">Health</a>
             <a href="#admin">Admin</a>
         </nav>
@@ -57,6 +57,32 @@
                 <label>
                     <span>Location</span>
                     <input type="text" id="node-location" name="location" required>
+                </label>
+
+                <label class="checkbox-field">
+                    <input type="checkbox" id="node-include-in-topology" name="include_in_topology">
+                    <span>Include in Topology</span>
+                </label>
+
+                <label>
+                    <span>Topology Level</span>
+                    <select id="node-topology-level" name="topology_level">
+                        <option value="0">0</option>
+                        <option value="1">1</option>
+                    </select>
+                </label>
+
+                <label>
+                    <span>Topology Unit</span>
+                    <select id="node-topology-unit" name="topology_unit">
+                        <option value="AGG">AGG</option>
+                        <option value="DIV HQ">DIV HQ</option>
+                        <option value="1BCT">1BCT</option>
+                        <option value="2BCT">2BCT</option>
+                        <option value="3BCT">3BCT</option>
+                        <option value="CAB/DIVARTY">CAB/DIVARTY</option>
+                        <option value="Sustainment">Sustainment</option>
+                    </select>
                 </label>
 
                 <label class="checkbox-field">
@@ -107,6 +133,7 @@
                             <th>Name</th>
                             <th>Host</th>
                             <th>Location</th>
+                            <th>Topology</th>
                             <th>Services</th>
                             <th>Status</th>
                             <th>Actions</th>
@@ -114,7 +141,7 @@
                     </thead>
                     <tbody id="nodes-table-body">
                         <tr>
-                            <td colspan="6" class="table-message">Loading nodes...</td>
+                            <td colspan="7" class="table-message">Loading nodes...</td>
                         </tr>
                     </tbody>
                 </table>

@@ -41,6 +41,18 @@ const dashboardRefreshStorageKey = "smp-dashboard-refresh-seconds";
 const themeModeStorageKey = "smp-theme-mode";
 const pinnedNodesStorageKey = "smp-main-dashboard-node-ids";
 const pinnedServicesStorageKey = "smp-main-dashboard-service-ids";
+const topologyControlsCollapsedStorageKey = "smp-topology-controls-collapsed";
+const TOPOLOGY_LOCATIONS = ["HSMC", "Cloud", "Episodic"];
+const TOPOLOGY_UNITS = ["DIV HQ", "1BCT", "2BCT", "3BCT", "CAB/DIVARTY", "Sustainment"];
+let topologyPayload = null;
+let topologyResizeListenerBound = false;
+const topologyState = {
+    activeLocations: new Set(TOPOLOGY_LOCATIONS),
+    activeUnits: new Set(TOPOLOGY_UNITS),
+    view: "backbone+l2",
+    selectedKind: null,
+    selectedId: null,
+};
 
 const statusPriority = {
     online: 0,
@@ -56,6 +68,19 @@ function escapeHtml(value) {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
+}
+
+function safeStart(loader, label) {
+    try {
+        const result = loader();
+        if (result && typeof result.catch === "function") {
+            result.catch((error) => {
+                console.error(`Startup loader failed: ${label}`, error);
+            });
+        }
+    } catch (error) {
+        console.error(`Startup loader failed: ${label}`, error);
+    }
 }
 
 function getSavedThemeMode() {
@@ -727,11 +752,39 @@ function resetNodeForm() {
     document.getElementById("node-id").value = "";
     document.getElementById("node-web-port").value = "443";
     document.getElementById("node-ssh-port").value = "22";
+    document.getElementById("node-include-in-topology").checked = false;
+    document.getElementById("node-topology-level").value = "0";
+    document.getElementById("node-topology-unit").value = "AGG";
     document.getElementById("node-enabled").checked = true;
     formTitle.textContent = "Add Node";
     submitButton.textContent = "Add Node";
     cancelButton.hidden = true;
     formError.hidden = true;
+    syncTopologyFormFields();
+}
+
+function syncTopologyFormFields() {
+    const includeCheckbox = document.getElementById("node-include-in-topology");
+    const levelField = document.getElementById("node-topology-level");
+    const unitField = document.getElementById("node-topology-unit");
+
+    if (!includeCheckbox || !levelField || !unitField) {
+        return;
+    }
+
+    const enabled = includeCheckbox.checked;
+    levelField.disabled = !enabled;
+    unitField.disabled = !enabled;
+
+    if (!enabled) {
+        return;
+    }
+
+    if (levelField.value === "0") {
+        unitField.value = "AGG";
+    } else if (unitField.value === "AGG") {
+        unitField.value = "DIV HQ";
+    }
 }
 
 function populateNodeForm(nodeId) {
@@ -747,6 +800,9 @@ function populateNodeForm(nodeId) {
     document.getElementById("node-web-port").value = String(node.web_port);
     document.getElementById("node-ssh-port").value = String(node.ssh_port);
     document.getElementById("node-location").value = node.location;
+    document.getElementById("node-include-in-topology").checked = Boolean(node.include_in_topology);
+    document.getElementById("node-topology-level").value = String(node.topology_level ?? 0);
+    document.getElementById("node-topology-unit").value = node.topology_unit ?? "AGG";
     document.getElementById("node-enabled").checked = node.enabled;
     document.getElementById("node-notes").value = node.notes ?? "";
     document.getElementById("node-api-username").value = node.api_username ?? "";
@@ -757,6 +813,7 @@ function populateNodeForm(nodeId) {
     document.getElementById("node-cancel-button").hidden = false;
     document.getElementById("node-form-error").hidden = true;
     currentEditNodeId = node.id;
+    syncTopologyFormFields();
     renderNodesTable(currentNodes);
 }
 
@@ -770,7 +827,7 @@ function renderNodesTable(nodes) {
     if (nodes.length === 0) {
         tableBody.innerHTML = `
             <tr>
-                <td colspan="6" class="table-message">No nodes have been added yet.</td>
+                <td colspan="7" class="table-message">No nodes have been added yet.</td>
             </tr>
         `;
         return;
@@ -783,6 +840,7 @@ function renderNodesTable(nodes) {
                     <td>${node.name}</td>
                     <td>${node.host}</td>
                     <td>${node.location}</td>
+                    <td>${formatTopologyCell(node)}</td>
                     <td>${servicesCell(node)}</td>
                     <td>${statusCell(node)}</td>
                     <td class="action-cell">
@@ -794,6 +852,21 @@ function renderNodesTable(nodes) {
             `,
         )
         .join("");
+}
+
+function formatTopologyCell(node) {
+    if (!node.include_in_topology) {
+        return `<span class="status-pill status-neutral">Excluded</span>`;
+    }
+
+    const level = node.topology_level ?? "--";
+    const unit = node.topology_unit ?? "--";
+    return `
+        <div class="table-stack">
+            <strong>L${level}</strong>
+            <span>${escapeHtml(unit)}</span>
+        </div>
+    `;
 }
 
 function renderDashboard(nodes, options = {}) {
@@ -1393,6 +1466,520 @@ function setSectionError(id, message) {
     }
 }
 
+function renderTopologyFilterButtons(containerId, values, stateSet, filterType) {
+    const container = document.getElementById(containerId);
+    if (!container) {
+        return;
+    }
+
+    container.innerHTML = values
+        .map(
+            (value) => `
+                <button
+                    type="button"
+                    class="topology-filter-chip ${stateSet.has(value) ? "active" : ""}"
+                    data-topology-filter="${filterType}"
+                    data-topology-value="${escapeHtml(value)}"
+                >
+                    ${escapeHtml(value)}
+                </button>
+            `,
+        )
+        .join("");
+}
+
+function renderTopologyViewButtons() {
+    const container = document.getElementById("topology-view-filters");
+    if (!container) {
+        return;
+    }
+
+    const views = [
+        ["backbone", "Backbone"],
+        ["backbone+l2", "Backbone + Lvl2"],
+    ];
+    container.innerHTML = views
+        .map(
+            ([value, label]) => `
+                <button
+                    type="button"
+                    class="topology-filter-chip ${topologyState.view === value ? "active" : ""}"
+                    data-topology-view="${value}"
+                >
+                    ${label}
+                </button>
+            `,
+        )
+        .join("");
+}
+
+function renderTopologyLocationHeaders() {
+    const container = document.getElementById("topology-locations-header");
+    if (!container) {
+        return;
+    }
+    container.innerHTML = "";
+}
+
+function getTopologyNodePosition(entity) {
+    const stage = document.getElementById("topology-stage");
+    if (!stage) {
+        return { x: 0, y: 0 };
+    }
+
+    const width = Math.max(stage.clientWidth, 2140);
+    const unitIndex = Math.max(TOPOLOGY_UNITS.indexOf(entity.unit), 0);
+    const aggXs = {
+        Cloud: width * 0.18,
+        HSMC: width * 0.5,
+        Episodic: width * 0.82,
+    };
+    const groupXs = TOPOLOGY_UNITS.reduce((accumulator, unit, index) => {
+        accumulator[unit] = width * (0.04 + ((index + 0.5) / TOPOLOGY_UNITS.length) * 0.92);
+        return accumulator;
+    }, {});
+    const locationOffsets = {
+        Cloud: -64,
+        HSMC: 0,
+        Episodic: 64,
+    };
+    const aggYs = {
+        Cloud: 140,
+        HSMC: 92,
+        Episodic: 140,
+    };
+    const lvl1Y = 340;
+    const lvl2Y = 610;
+
+    if (entity.level === 0) {
+        return {
+            x: aggXs[entity.location] ?? width / 2,
+            y: aggYs[entity.location] ?? 120,
+        };
+    }
+
+    if (entity.level === 1) {
+        return {
+            x: (groupXs[entity.unit] ?? width / 2) + (locationOffsets[entity.location] ?? 0),
+            y: lvl1Y,
+        };
+    }
+
+    return {
+        x: groupXs[entity.unit] ?? width / 2,
+        y: lvl2Y,
+    };
+}
+
+function getTopologyEntities() {
+    if (!topologyPayload) {
+        return [];
+    }
+
+    return [
+        ...(topologyPayload.lvl0_nodes ?? []),
+        ...(topologyPayload.lvl1_nodes ?? []),
+        ...(topologyPayload.lvl2_clusters ?? []),
+    ];
+}
+
+function getTopologyLinkId(link, index) {
+    return link.id || `link-${index}`;
+}
+
+function isTopologyEntityVisible(entity) {
+    if (entity.level === 0) {
+        return topologyState.activeLocations.has(entity.location);
+    }
+
+    if (entity.level === 1) {
+        return topologyState.activeLocations.has(entity.location) && topologyState.activeUnits.has(entity.unit);
+    }
+
+    if (entity.level === 2) {
+        return topologyState.view === "backbone+l2" && topologyState.activeUnits.has(entity.unit);
+    }
+
+    return true;
+}
+
+function renderTopologyStage() {
+    const layer = document.getElementById("topology-node-layer");
+    const stage = document.getElementById("topology-stage");
+    if (!layer || !stage || !topologyPayload) {
+        return;
+    }
+
+    renderTopologyLocationHeaders();
+
+    const entities = getTopologyEntities();
+    const visibleEntities = entities.filter(isTopologyEntityVisible);
+    const entityMap = new Map(entities.map((entity) => [entity.id, entity]));
+
+    layer.innerHTML = visibleEntities
+        .map((entity) => {
+            const position = getTopologyNodePosition(entity);
+            const isCluster = entity.level === 2;
+            const isLvl1 = entity.level === 1;
+            const classes = [
+                "topology-entity",
+                isCluster ? "topology-cluster" : "topology-node",
+                `topology-status-${entity.status || "neutral"}`,
+                entity.level === 0 ? "topology-node-agg" : "",
+                isLvl1 ? "topology-node-lvl1" : "",
+                topologyState.selectedKind === "entity" && topologyState.selectedId === entity.id ? "is-selected" : "",
+            ]
+                .filter(Boolean)
+                .join(" ");
+
+            const badge = isCluster ? `<span class="topology-count-badge">${entity.count}</span>` : "";
+            const subtitle = isCluster
+                ? "Aggregated Lvl2"
+                : entity.level === 1
+                    ? escapeHtml(entity.unit)
+                    : `${escapeHtml(entity.location)} · ${escapeHtml(entity.unit)}`;
+            const displayName = entity.level === 1 ? escapeHtml(entity.location) : escapeHtml(entity.name);
+
+            return `
+                <button
+                    type="button"
+                    class="${classes}"
+                    data-topology-id="${entity.id}"
+                    style="left:${position.x}px; top:${position.y}px;"
+                >
+                    <span class="topology-node-name">${displayName}</span>
+                    <span class="topology-node-meta">${subtitle}</span>
+                    ${badge}
+                </button>
+            `;
+        })
+        .join("");
+
+    const visibleIds = new Set(visibleEntities.map((entity) => entity.id));
+    if (topologyState.selectedKind === "entity" && topologyState.selectedId && !visibleIds.has(topologyState.selectedId)) {
+        topologyState.selectedKind = null;
+        topologyState.selectedId = null;
+    }
+
+    layer.querySelectorAll("[data-topology-id]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+            event.stopPropagation();
+            const nextId = button.getAttribute("data-topology-id");
+            if (topologyState.selectedKind === "entity" && topologyState.selectedId === nextId) {
+                topologyState.selectedKind = null;
+                topologyState.selectedId = null;
+            } else {
+                topologyState.selectedKind = "entity";
+                topologyState.selectedId = nextId;
+            }
+            renderTopologyStage();
+        });
+    });
+
+    stage.onclick = (event) => {
+        const target = event.target;
+        if (target instanceof Element && target.closest("[data-topology-id], [data-topology-link-id], #topology-drawer")) {
+            return;
+        }
+        topologyState.selectedKind = null;
+        topologyState.selectedId = null;
+        renderTopologyStage();
+    };
+
+    drawTopologyLinks(entityMap);
+    renderTopologyDrawer();
+}
+
+function drawTopologyLinks(entityMap) {
+    const svg = document.getElementById("topology-links");
+    const stage = document.getElementById("topology-stage");
+    if (!svg || !stage || !topologyPayload) {
+        return;
+    }
+
+    const stageRect = stage.getBoundingClientRect();
+    svg.setAttribute("viewBox", `0 0 ${Math.max(stage.clientWidth, 1)} ${Math.max(stage.clientHeight, 1)}`);
+    svg.innerHTML = "";
+
+    (topologyPayload.links ?? []).forEach((link, index) => {
+        const fromEntity = entityMap.get(link.from);
+        const toEntity = entityMap.get(link.to);
+        if (!fromEntity || !toEntity) {
+            return;
+        }
+
+        if (!isTopologyEntityVisible(fromEntity) || !isTopologyEntityVisible(toEntity)) {
+            return;
+        }
+
+        if (topologyState.view === "backbone" && link.kind === "cluster") {
+            return;
+        }
+
+        const fromNode = stage.querySelector(`[data-topology-id="${CSS.escape(link.from)}"]`);
+        const toNode = stage.querySelector(`[data-topology-id="${CSS.escape(link.to)}"]`);
+        if (!(fromNode instanceof HTMLElement) || !(toNode instanceof HTMLElement)) {
+            return;
+        }
+
+        const fromRect = fromNode.getBoundingClientRect();
+        const toRect = toNode.getBoundingClientRect();
+        const x1 = fromRect.left + fromRect.width / 2 - stageRect.left;
+        const y1 = fromRect.top + fromRect.height / 2 - stageRect.top;
+        const x2 = toRect.left + toRect.width / 2 - stageRect.left;
+        const y2 = toRect.top + toRect.height / 2 - stageRect.top;
+
+        const linkId = getTopologyLinkId(link, index);
+        const shape = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        shape.setAttribute("x1", String(x1));
+        shape.setAttribute("y1", String(y1));
+        shape.setAttribute("x2", String(x2));
+        shape.setAttribute("y2", String(y2));
+        shape.setAttribute(
+            "class",
+            `topology-link topology-link-${link.kind} topology-link-${link.status || "neutral"} ${topologyState.selectedKind === "link" && topologyState.selectedId === linkId ? "is-selected" : ""}`,
+        );
+        shape.setAttribute("data-topology-link-id", linkId);
+        svg.appendChild(shape);
+    });
+
+    svg.querySelectorAll("[data-topology-link-id]").forEach((line) => {
+        line.addEventListener("click", (event) => {
+            event.stopPropagation();
+            const nextId = line.getAttribute("data-topology-link-id");
+            if (!nextId) {
+                return;
+            }
+            if (topologyState.selectedKind === "link" && topologyState.selectedId === nextId) {
+                topologyState.selectedKind = null;
+                topologyState.selectedId = null;
+            } else {
+                topologyState.selectedKind = "link";
+                topologyState.selectedId = nextId;
+            }
+            renderTopologyStage();
+        });
+    });
+}
+
+function renderTopologyDrawer() {
+    const drawer = document.getElementById("topology-details-drawer");
+    const drawerShell = document.getElementById("topology-drawer");
+    if (!drawer || !drawerShell || !topologyPayload) {
+        return;
+    }
+
+    const entity = topologyState.selectedKind === "entity"
+        ? getTopologyEntities().find((item) => item.id === topologyState.selectedId)
+        : null;
+    const link = topologyState.selectedKind === "link"
+        ? (topologyPayload.links ?? []).find((item, index) => getTopologyLinkId(item, index) === topologyState.selectedId)
+        : null;
+
+    if (!entity && !link) {
+        drawerShell.hidden = true;
+        drawerShell.classList.remove("is-open");
+        return;
+    }
+
+    drawerShell.hidden = false;
+    requestAnimationFrame(() => {
+        drawerShell.classList.add("is-open");
+    });
+
+    if (link) {
+        drawer.innerHTML = `
+            <div class="topology-drawer-block">
+                <span class="dashboard-meta-label">Selected Link</span>
+                <h3>${escapeHtml(link.label || `${link.from} -> ${link.to}`)}</h3>
+            </div>
+            <div class="topology-drawer-grid">
+                <div class="detail-summary-item">
+                    <span class="detail-summary-label">Kind</span>
+                    <strong class="detail-summary-value">${escapeHtml(link.kind || "--")}</strong>
+                </div>
+                <div class="detail-summary-item">
+                    <span class="detail-summary-label">Status</span>
+                    <strong class="detail-summary-value">${escapeHtml(link.status || "neutral")}</strong>
+                </div>
+                <div class="detail-summary-item">
+                    <span class="detail-summary-label">From</span>
+                    <strong class="detail-summary-value">${escapeHtml(link.from || "--")}</strong>
+                </div>
+                <div class="detail-summary-item">
+                    <span class="detail-summary-label">To</span>
+                    <strong class="detail-summary-value">${escapeHtml(link.to || "--")}</strong>
+                </div>
+            </div>
+            <div class="topology-drawer-block">
+                <span class="dashboard-meta-label">Operational Notes</span>
+                <p>Phase 1 placeholder link telemetry. Phase 2 can add observed versus expected overlays and richer link health.</p>
+            </div>
+        `;
+        return;
+    }
+
+    const levelLabel = entity.level === 0 ? "Lvl0" : entity.level === 1 ? "Lvl1" : "Lvl2 Cluster";
+    drawer.innerHTML = `
+        <div class="topology-drawer-block">
+            <span class="dashboard-meta-label">Selected</span>
+            <h3>${escapeHtml(entity.name)}</h3>
+        </div>
+        <div class="topology-drawer-grid">
+            <div class="detail-summary-item">
+                <span class="detail-summary-label">Level</span>
+                <strong class="detail-summary-value">${levelLabel}</strong>
+            </div>
+            <div class="detail-summary-item">
+                <span class="detail-summary-label">Status</span>
+                <strong class="detail-summary-value">${escapeHtml(entity.status || "neutral")}</strong>
+            </div>
+            <div class="detail-summary-item">
+                <span class="detail-summary-label">Location</span>
+                <strong class="detail-summary-value">${escapeHtml(entity.location || "Cross-Location")}</strong>
+            </div>
+            <div class="detail-summary-item">
+                <span class="detail-summary-label">Unit</span>
+                <strong class="detail-summary-value">${escapeHtml(entity.unit || "--")}</strong>
+            </div>
+        </div>
+        <div class="topology-drawer-block">
+            <span class="dashboard-meta-label">Operational Notes</span>
+            <p>${escapeHtml(entity.metrics_text || "Placeholder metrics for Phase 1 topology inspection.")}</p>
+        </div>
+    `;
+}
+
+function toggleTopologySetValue(setRef, value) {
+    if (setRef.has(value)) {
+        setRef.delete(value);
+    } else {
+        setRef.add(value);
+    }
+}
+
+function wireTopologyControls() {
+    const root = document.getElementById("topology-root");
+    if (!root) {
+        return;
+    }
+
+    root.querySelectorAll("[data-topology-filter]").forEach((button) => {
+        button.addEventListener("click", () => {
+            const filterType = button.getAttribute("data-topology-filter");
+            const value = button.getAttribute("data-topology-value");
+            if (!filterType || !value) {
+                return;
+            }
+
+            const targetSet = filterType === "location" ? topologyState.activeLocations : topologyState.activeUnits;
+            if (targetSet.size === 1 && targetSet.has(value)) {
+                return;
+            }
+
+            toggleTopologySetValue(targetSet, value);
+            renderTopologyControls();
+            renderTopologyStage();
+        });
+    });
+
+    root.querySelectorAll("[data-topology-view]").forEach((button) => {
+        button.addEventListener("click", () => {
+            topologyState.view = button.getAttribute("data-topology-view") || "backbone+l2";
+            renderTopologyControls();
+            renderTopologyStage();
+        });
+    });
+}
+
+function renderTopologyControls() {
+    renderTopologyFilterButtons("topology-location-filters", TOPOLOGY_LOCATIONS, topologyState.activeLocations, "location");
+    renderTopologyFilterButtons("topology-unit-filters", TOPOLOGY_UNITS, topologyState.activeUnits, "unit");
+    renderTopologyViewButtons();
+    wireTopologyControls();
+}
+
+function getTopologyControlsCollapsed() {
+    try {
+        return window.localStorage.getItem(topologyControlsCollapsedStorageKey) === "true";
+    } catch (error) {
+        return false;
+    }
+}
+
+function setTopologyControlsCollapsed(collapsed) {
+    const bar = document.getElementById("topology-filter-bar");
+    const body = document.getElementById("topology-filter-bar-body");
+    const button = document.getElementById("topology-filter-toggle");
+
+    if (!bar || !body || !button) {
+        return;
+    }
+
+    bar.hidden = collapsed;
+    body.hidden = collapsed;
+    button.textContent = collapsed ? "Show Controls" : "Hide Controls";
+    button.setAttribute("aria-expanded", collapsed ? "false" : "true");
+
+    try {
+        window.localStorage.setItem(topologyControlsCollapsedStorageKey, collapsed ? "true" : "false");
+    } catch (error) {
+        // Ignore storage failures.
+    }
+}
+
+function wireTopologyBarToggle() {
+    const button = document.getElementById("topology-filter-toggle");
+    if (!button || button.dataset.bound === "true") {
+        return;
+    }
+
+    button.dataset.bound = "true";
+    button.addEventListener("click", () => {
+        const collapsed = !getTopologyControlsCollapsed();
+        setTopologyControlsCollapsed(collapsed);
+        renderTopologyStage();
+    });
+}
+
+async function loadTopologyPage() {
+    const root = document.getElementById("topology-root");
+    if (!root) {
+        return;
+    }
+
+    try {
+        topologyPayload = await apiRequest("/api/topology");
+        topologyState.activeLocations = new Set(TOPOLOGY_LOCATIONS);
+        topologyState.activeUnits = new Set(TOPOLOGY_UNITS);
+        topologyState.view = "backbone+l2";
+        topologyState.selectedKind = null;
+        topologyState.selectedId = null;
+        renderTopologyControls();
+        wireTopologyBarToggle();
+        setTopologyControlsCollapsed(getTopologyControlsCollapsed());
+        renderTopologyStage();
+    } catch (error) {
+        const drawer = document.getElementById("topology-details-drawer");
+        const layer = document.getElementById("topology-node-layer");
+        if (layer) {
+            layer.innerHTML = "";
+        }
+        if (drawer) {
+            drawer.innerHTML = `<p class="status-error">${escapeHtml(error.message || "Unable to load topology")}</p>`;
+        }
+    }
+
+    if (!topologyResizeListenerBound) {
+        window.addEventListener("resize", () => {
+            if (topologyPayload && document.getElementById("topology-root")) {
+                renderTopologyStage();
+            }
+        });
+        topologyResizeListenerBound = true;
+    }
+}
+
 async function loadNodeDetailPage() {
     const root = document.getElementById("node-detail-root");
     if (!root) {
@@ -1439,6 +2026,9 @@ async function loadNodeDetailPage() {
             ["Mate Count", config.n_mates ?? 0],
             ["Enclave", config.enclave_id ?? "--"],
             ["Platform", config.platform ?? "--"],
+            ["In Topology", node.include_in_topology ? "Yes" : "No"],
+            ["Topology Level", node.topology_level ?? "--"],
+            ["Topology Unit", node.topology_unit ?? "--"],
         ]);
 
         renderDetailTableBody(
@@ -1852,6 +2442,9 @@ function collectNodeFormPayload() {
         web_port: Number(document.getElementById("node-web-port").value),
         ssh_port: Number(document.getElementById("node-ssh-port").value),
         location: document.getElementById("node-location").value.trim(),
+        include_in_topology: document.getElementById("node-include-in-topology").checked,
+        topology_level: Number(document.getElementById("node-topology-level").value),
+        topology_unit: document.getElementById("node-topology-unit").value,
         enabled: document.getElementById("node-enabled").checked,
         notes: document.getElementById("node-notes").value.trim() || null,
         api_username: document.getElementById("node-api-username").value.trim() || null,
@@ -1987,13 +2580,14 @@ async function handleNodeActionClick(event) {
 
 window.addEventListener("DOMContentLoaded", () => {
     mountThemeControl();
-    loadPlatformStatus();
-    loadNodes();
-    loadNodeDashboard();
-    loadServicesDashboard();
-    loadMainDashboard();
-    loadServices();
-    loadNodeDetailPage();
+    safeStart(loadPlatformStatus, "platform-status");
+    safeStart(loadNodes, "nodes");
+    safeStart(loadNodeDashboard, "node-dashboard");
+    safeStart(loadServicesDashboard, "services-dashboard");
+    safeStart(loadMainDashboard, "main-dashboard");
+    safeStart(loadServices, "services");
+    safeStart(loadTopologyPage, "topology");
+    safeStart(loadNodeDetailPage, "node-detail");
 
     const nodeForm = document.getElementById("node-form");
     const serviceForm = document.getElementById("service-form");
@@ -2009,6 +2603,19 @@ window.addEventListener("DOMContentLoaded", () => {
     if (nodeForm) {
         nodeForm.addEventListener("submit", handleNodeFormSubmit);
         resetNodeForm();
+    }
+
+    const topologyInclude = document.getElementById("node-include-in-topology");
+    const topologyLevel = document.getElementById("node-topology-level");
+    const topologyUnit = document.getElementById("node-topology-unit");
+    if (topologyInclude) {
+        topologyInclude.addEventListener("change", syncTopologyFormFields);
+    }
+    if (topologyLevel) {
+        topologyLevel.addEventListener("change", syncTopologyFormFields);
+    }
+    if (topologyUnit) {
+        topologyUnit.addEventListener("change", syncTopologyFormFields);
     }
 
     if (serviceForm) {

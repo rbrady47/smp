@@ -1,4 +1,10 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+
+TopologyLevel = Literal[0, 1]
+TopologyUnit = Literal["AGG", "DIV HQ", "1BCT", "2BCT", "3BCT", "CAB/DIVARTY", "Sustainment"]
 
 
 class NodeBase(BaseModel):
@@ -7,6 +13,9 @@ class NodeBase(BaseModel):
     web_port: int = Field(default=443, ge=1, le=65535)
     ssh_port: int = Field(default=22, ge=1, le=65535)
     location: str = Field(..., min_length=1, max_length=255)
+    include_in_topology: bool = False
+    topology_level: TopologyLevel | None = 0
+    topology_unit: TopologyUnit | None = "AGG"
     enabled: bool = True
     notes: str | None = None
     api_username: str | None = Field(default=None, max_length=255)

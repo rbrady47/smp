@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page_title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260326-topology2">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">SMP</div>
+        <nav class="nav">
+            <a href="/">Dashboard</a>
+            <a href="/nodes/dashboard">Node Dashboard</a>
+            <a href="/services/dashboard">Services Dashboard</a>
+            <a href="/topology">Topology</a>
+            <a href="#health">Health</a>
+            <a href="#admin">Admin</a>
+        </nav>
+    </header>
+
+    <main class="container topology-page" id="topology-root">
+        <section class="dashboard-toolbar topology-toolbar-header">
+            <div>
+                <p class="eyebrow">Operational Topology</p>
+                <h1>Mission Topology</h1>
+                <p class="subtitle">Phase 1 fixed-layout topology for Lvl0, Lvl1, and aggregated Lvl2 clusters, prepared for future anchor-node binding.</p>
+            </div>
+            <div class="dashboard-toolbar-actions">
+                <a href="/nodes" class="button-secondary">Manage Nodes</a>
+            </div>
+        </section>
+
+        <section class="card topology-filter-bar" id="topology-filter-bar">
+            <div class="topology-filter-bar-header">
+                <div>
+                    <span class="dashboard-meta-label">Controls</span>
+                </div>
+            </div>
+            <div class="topology-filter-bar-body" id="topology-filter-bar-body">
+                <div class="topology-filter-group">
+                    <span class="dashboard-meta-label">Locations</span>
+                    <div class="topology-chip-row" id="topology-location-filters"></div>
+                </div>
+                <div class="topology-filter-group">
+                    <span class="dashboard-meta-label">Units</span>
+                    <div class="topology-chip-row" id="topology-unit-filters"></div>
+                </div>
+                <div class="topology-filter-group topology-filter-group-view">
+                    <span class="dashboard-meta-label">View</span>
+                    <div class="topology-chip-row" id="topology-view-filters"></div>
+                </div>
+            </div>
+        </section>
+
+        <section class="topology-layout">
+            <section class="card topology-stage-card">
+                <div class="topology-stage-header">
+                    <div>
+                        <h2>Topology Canvas</h2>
+                        <p class="section-copy">Mock structured layout with real inventory metadata overlaid where available.</p>
+                    </div>
+                    <div class="topology-stage-actions">
+                        <button type="button" class="button-secondary topology-filter-toggle" id="topology-filter-toggle" aria-expanded="true">
+                            Hide Controls
+                        </button>
+                    </div>
+                </div>
+                <div class="topology-stage" id="topology-stage">
+                    <div class="topology-stage-grid-label topology-label-lvl0">Lvl0</div>
+                    <div class="topology-stage-grid-label topology-label-lvl1">Lvl1</div>
+                    <div class="topology-stage-grid-label topology-label-lvl2">Lvl2</div>
+                    <div class="topology-stage-grid-label topology-label-lvl3">Lvl3 Reserved</div>
+                    <div class="topology-locations-header" id="topology-locations-header"></div>
+                    <svg class="topology-links" id="topology-links" aria-hidden="true"></svg>
+                    <div class="topology-layer topology-layer-nodes" id="topology-node-layer"></div>
+                    <aside class="card topology-drawer" id="topology-drawer" hidden>
+                        <div class="section-heading">
+                            <h2>Details</h2>
+                            <p class="section-copy">Selected node, link, or cluster details for Phase 1.</p>
+                        </div>
+                        <div class="topology-drawer-content" id="topology-details-drawer">
+                            <p class="table-message">Select a node, link, or cluster to inspect it.</p>
+                        </div>
+                    </aside>
+                </div>
+            </section>
+        </section>
+    </main>
+
+    <script src="{{ url_for('static', path='js/app.js') }}?v=20260326-topology2"></script>
+</body>
+</html>
