@@ -49,6 +49,15 @@ const statusPriority = {
     disabled: 3,
 };
 
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
 function getSavedThemeMode() {
     try {
         return window.localStorage.getItem(themeModeStorageKey) || "system";
@@ -1083,7 +1092,7 @@ function renderDetailSummaryGrid(containerId, items) {
         .join("");
 }
 
-function renderNodeSummaryPanel(containerId, summary) {
+function renderNodeSummaryPanel(containerId, summary, node = {}) {
     const container = document.getElementById(containerId);
     if (!container) {
         return;
@@ -1092,49 +1101,58 @@ function renderNodeSummaryPanel(containerId, summary) {
     const txBps = Number(summary.tx_bps ?? 0);
     const rxBps = Number(summary.rx_bps ?? 0);
     const rttMs = Number(summary.latency_ms ?? 0);
+    const cpuPercent = Number(summary.cpu_avg ?? 0);
     const peakTraffic = Math.max(txBps, rxBps, 1_000_000);
 
     container.innerHTML = `
         <div class="node-summary-panel">
-            <div class="node-summary-card">
-                <div class="node-summary-title-row">
-                    <div>
-                        <span class="detail-summary-label">Anchor Node</span>
-                        <h3 class="node-summary-title">${summary.name ?? "--"}</h3>
-                    </div>
-                    <span class="node-summary-health">${summary.health_state ?? "--"}</span>
-                </div>
-                <div class="node-summary-keyline">
-                    <div class="node-summary-primary">${summary.host ?? "--"}</div>
-                    <div class="node-summary-subline">
-                        <span>Status ${summary.status ?? "--"}</span>
-                    </div>
-                </div>
-                <div class="node-summary-stats">
-                    <div class="node-summary-stat">
-                        <span class="detail-summary-label">Active Sites</span>
-                        <strong>${summary.active_site_count ?? 0}</strong>
-                    </div>
-                    <div class="node-summary-stat">
-                        <span class="detail-summary-label">WAN</span>
-                        <strong>${summary.wan_count ?? 0}</strong>
-                    </div>
-                    <div class="node-summary-stat">
-                        <span class="detail-summary-label">CPU</span>
-                        <strong>${formatCpuPercent(summary.cpu_avg)}</strong>
-                    </div>
-                    <div class="node-summary-stat">
-                        <span class="detail-summary-label">Version</span>
-                        <strong>${summary.version ?? "--"}</strong>
-                    </div>
-                </div>
-            </div>
-            <div class="node-gauge-grid">
-                ${renderMetricGauge("TX", formatRate(txBps), txBps, peakTraffic)}
-                ${renderMetricGauge("RX", formatRate(rxBps), rxBps, peakTraffic)}
-                ${renderMetricGauge("RTT", summary.latency_ms != null ? `${summary.latency_ms} ms` : "--", rttMs, 200)}
-            </div>
+            ${renderMetricGauge("TX", formatRate(txBps), txBps, peakTraffic)}
+            ${renderMetricGauge("RX", formatRate(rxBps), rxBps, peakTraffic)}
+            ${renderMetricGauge("CPU", formatCpuPercent(summary.cpu_avg), cpuPercent, 100)}
+            ${renderMetricGauge("RTT", summary.latency_ms != null ? `${summary.latency_ms} ms` : "--", rttMs, 200)}
         </div>
+    `;
+}
+
+function renderDetailHeaderActions(containerId, summary, node = {}) {
+    const container = document.getElementById(containerId);
+    if (!container) {
+        return;
+    }
+
+    const healthState = summary.health_state ?? "--";
+    const webOk = Boolean(node.web_ok);
+    const sshOk = Boolean(node.ssh_ok);
+    const host = node.host ?? summary.host ?? "";
+    const sshUsername = node.ssh_username ?? "";
+    const webPort = Number(node.web_port ?? 443);
+    const webScheme = node.web_scheme ?? "https";
+
+    container.innerHTML = `
+        <span class="node-summary-chip node-summary-health-chip">${healthState}</span>
+        <button
+            type="button"
+            class="service-link node-summary-chip node-summary-service ${webOk ? "ok" : "down"}"
+            data-node-summary-action="open-web"
+            data-host="${escapeHtml(host)}"
+            data-web-port="${Number.isFinite(webPort) ? webPort : 443}"
+            data-web-scheme="${escapeHtml(webScheme)}"
+            title="Open Web UI"
+        >
+            <span class="service-icon">🌐</span>
+            <span>Web</span>
+        </button>
+        <button
+            type="button"
+            class="service-link node-summary-chip node-summary-service ${sshOk ? "ok" : "down"}"
+            data-node-summary-action="ssh"
+            data-host="${escapeHtml(host)}"
+            data-ssh-username="${escapeHtml(sshUsername)}"
+            title="Copy SSH command"
+        >
+            <span class="service-icon">🔐</span>
+            <span>SSH</span>
+        </button>
     `;
 }
 
@@ -1142,17 +1160,68 @@ function renderMetricGauge(label, valueText, rawValue, maxValue) {
     const safeMax = Math.max(Number(maxValue) || 1, 1);
     const safeValue = Math.max(Number(rawValue) || 0, 0);
     const ratio = Math.min(safeValue / safeMax, 1);
-    const degrees = 180 * ratio;
+    const degrees = 360 * ratio;
+    const { primary, secondary } = splitMetricDisplay(valueText);
     return `
         <div class="metric-gauge-card">
-            <span class="detail-summary-label">${label}</span>
-            <div class="metric-gauge" style="--gauge-deg:${degrees}deg;">
-                <div class="metric-gauge-inner">
-                    <strong class="metric-gauge-value">${valueText}</strong>
+            <span class="metric-gauge-label">${label}</span>
+            <div class="metric-gauge-shell" style="--gauge-deg:${degrees}deg;">
+                <div class="metric-gauge">
+                    <div class="metric-gauge-center">
+                        <strong class="metric-gauge-value">${primary}</strong>
+                        ${secondary ? `<span class="metric-gauge-unit">${secondary}</span>` : ""}
+                    </div>
                 </div>
             </div>
         </div>
     `;
+}
+
+function splitMetricDisplay(valueText) {
+    const text = String(valueText ?? "--").trim();
+    if (!text || text === "--") {
+        return { primary: "--", secondary: "" };
+    }
+
+    if (text.endsWith("%")) {
+        return { primary: text.slice(0, -1), secondary: "%" };
+    }
+
+    const match = text.match(/^(.+?)\s+([A-Za-z/]+)$/);
+    if (match) {
+        return { primary: match[1], secondary: match[2] };
+    }
+
+    return { primary: text, secondary: "" };
+}
+
+function wireNodeSummaryActions(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) {
+        return;
+    }
+
+    container.querySelectorAll("[data-node-summary-action]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+
+            const action = button.getAttribute("data-node-summary-action");
+            const host = button.getAttribute("data-host") || "";
+            const sshUsername = button.getAttribute("data-ssh-username") || "";
+            const webPort = Number(button.getAttribute("data-web-port"));
+            const webScheme = button.getAttribute("data-web-scheme") || "https";
+
+            if (action === "open-web") {
+                openWebForNode(host, webPort, webScheme);
+                return;
+            }
+
+            if (action === "ssh") {
+                copySshCommand(host, sshUsername).catch(() => {});
+            }
+        });
+    });
 }
 
 function renderDetailTableBody(bodyId, rows, columns, emptyMessage, options = {}) {
@@ -1343,15 +1412,23 @@ async function loadNodeDetailPage() {
         const errors = detail.errors ?? {};
 
         document.getElementById("detail-node-name").textContent = node.name ?? `Node ${nodeId}`;
-        document.getElementById("detail-host").textContent = node.host ?? "--";
-        document.getElementById("detail-location").textContent = node.location ?? "--";
-        document.getElementById("detail-status").textContent = node.status ?? "--";
-        document.getElementById("detail-services").textContent =
-            `Web ${node.web_ok ? "Up" : "Down"} · SSH ${node.ssh_ok ? "Up" : "Down"}`;
-        document.getElementById("detail-last-refresh").textContent = formatDashboardTimestamp(node.last_refresh);
-        document.getElementById("detail-last-telemetry").textContent = formatDashboardTimestamp(node.last_telemetry_pull);
+        const detailLocation = document.getElementById("detail-location");
+        const detailLastRefresh = document.getElementById("detail-last-refresh");
+        const detailLastTelemetry = document.getElementById("detail-last-telemetry");
 
-        renderNodeSummaryPanel("detail-summary-grid", summary);
+        if (detailLocation) {
+            detailLocation.textContent = node.location ?? "--";
+        }
+        if (detailLastRefresh) {
+            detailLastRefresh.textContent = formatDashboardTimestamp(node.last_refresh);
+        }
+        if (detailLastTelemetry) {
+            detailLastTelemetry.textContent = formatDashboardTimestamp(node.last_telemetry_pull);
+        }
+
+        renderDetailHeaderActions("detail-header-actions", summary, node);
+        renderNodeSummaryPanel("detail-summary-grid", summary, node);
+        wireNodeSummaryActions("detail-header-actions");
 
         renderDetailSummaryGrid("detail-config-grid", [
             ["Site ID", config.site_id ?? "--"],

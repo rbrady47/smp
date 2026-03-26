@@ -310,6 +310,23 @@ a {
     border-color: var(--border);
 }
 
+:root[data-theme="dark"] .node-summary-chip {
+    background: rgba(46, 63, 94, 0.72);
+    border-color: rgba(94, 121, 168, 0.38);
+    color: #a9bbd8;
+}
+
+:root[data-theme="dark"] .node-summary-health {
+    background: rgba(41, 214, 127, 0.18);
+    color: #59e29e;
+}
+
+:root[data-theme="dark"] .node-summary-health-chip {
+    background: rgba(41, 214, 127, 0.18);
+    border-color: rgba(65, 224, 145, 0.24);
+    color: #59e29e;
+}
+
 :root[data-theme="dark"] .card {
     box-shadow:
         0 18px 42px rgba(3, 8, 18, 0.34),
@@ -365,18 +382,30 @@ a {
     gap: 0.9rem;
 }
 
+.detail-header-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    align-items: center;
+    margin-top: 0.35rem;
+}
+
 .detail-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     gap: 1.25rem;
     margin-bottom: 1.25rem;
-    align-items: stretch;
+    align-items: start;
 }
 
 .detail-grid > .card {
     display: flex;
     flex-direction: column;
-    min-height: 100%;
+    min-height: auto;
+}
+
+.node-summary-shell {
+    padding: 1.05rem 1.15rem;
 }
 
 .detail-summary-item {
@@ -404,156 +433,193 @@ a {
 
 .node-summary-panel {
     display: grid;
-    grid-template-columns: minmax(260px, 0.9fr) minmax(380px, 1.1fr);
-    gap: 1rem;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.8rem;
     align-items: stretch;
-}
-
-.node-summary-card {
-    display: grid;
-    gap: 1rem;
-    padding: 1.15rem 1.2rem;
-    border-radius: 18px;
-    border: 1px solid var(--border);
-    background:
-        radial-gradient(circle at top right, rgba(68, 169, 255, 0.18), transparent 34%),
-        linear-gradient(180deg, #f8fbff 0%, #eef4fc 100%);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
-    min-height: 228px;
-}
-
-.node-summary-title-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 1rem;
-}
-
-.node-summary-title {
-    margin: 0.2rem 0 0;
-    color: var(--text);
-    font-size: 1.55rem;
-    line-height: 1.05;
-}
-
-.node-summary-subline {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    color: var(--muted);
-    font-weight: 700;
-}
-
-.node-summary-keyline {
-    display: grid;
-    gap: 0.45rem;
-}
-
-.node-summary-primary {
-    color: var(--text);
-    font-size: 1.25rem;
-    font-weight: 800;
 }
 
 .node-summary-health {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     padding: 0.4rem 0.75rem;
     border-radius: 999px;
     background: rgba(34, 197, 94, 0.12);
     color: #0b7a34;
     font-weight: 800;
     letter-spacing: 0.02em;
+    white-space: nowrap;
 }
 
-.node-summary-stats {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.8rem;
+.node-summary-health-chip {
+    background: rgba(34, 197, 94, 0.12);
+    color: #0b7a34;
+    border-color: rgba(34, 197, 94, 0.2);
 }
 
-.node-summary-stat {
-    display: grid;
-    gap: 0.2rem;
-    padding: 0.85rem 0.95rem;
-    border-radius: 14px;
-    background: rgba(255, 255, 255, 0.72);
-    border: 1px solid rgba(153, 179, 215, 0.35);
-}
-
-.node-summary-stat strong {
-    color: var(--text);
-    font-size: 1.35rem;
-    font-weight: 800;
-    line-height: 1.2;
-    overflow-wrap: anywhere;
-}
-
-.node-gauge-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 0.9rem;
+.node-summary-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.48rem 0.8rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.48);
+    color: var(--muted);
+    font-size: 0.9rem;
+    font-weight: 700;
 }
 
 .metric-gauge-card {
     display: grid;
-    gap: 0.6rem;
-    padding: 0.95rem;
-    border-radius: 18px;
+    grid-template-rows: auto 1fr;
+    gap: 0.75rem;
+    padding: 0.85rem 0.7rem 0.95rem;
+    border-radius: 20px;
     border: 1px solid var(--border);
     background:
+        radial-gradient(circle at 50% 16%, rgba(118, 84, 255, 0.16), transparent 38%),
         linear-gradient(180deg, #f8fbff 0%, #eef4fc 100%);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
-    min-height: 228px;
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.85),
+        0 14px 30px rgba(13, 27, 54, 0.12);
+    min-height: 200px;
+    overflow: hidden;
+    min-width: 0;
+    width: 100%;
+    justify-items: center;
+}
+
+.metric-gauge-label {
+    font-size: 0.82rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+.metric-gauge-shell {
+    position: relative;
+    width: 100%;
+    max-width: 148px;
+    aspect-ratio: 1 / 1;
+    display: grid;
+    place-items: center;
+    align-self: center;
+}
+
+.metric-gauge-shell::before {
+    content: "";
+    position: absolute;
+    inset: 8px;
+    border-radius: 50%;
+    background:
+        radial-gradient(circle, rgba(137, 90, 255, 0.22), transparent 55%),
+        radial-gradient(circle at 50% 50%, rgba(96, 165, 250, 0.2), transparent 72%);
+    filter: blur(10px);
+    opacity: 0.9;
 }
 
 .metric-gauge {
     position: relative;
     width: 100%;
-    aspect-ratio: 1.45 / 1;
-    overflow: hidden;
-    margin-top: auto;
+    aspect-ratio: 1 / 1;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background:
+        radial-gradient(circle at center, rgba(13, 27, 54, 0.92) 0 48%, transparent 49%),
+        conic-gradient(from -220deg, #4f6cff 0deg, #7b5cff 135deg, #d06dff var(--gauge-deg), rgba(123, 141, 180, 0.22) var(--gauge-deg), rgba(123, 141, 180, 0.22) 320deg, rgba(123, 141, 180, 0) 360deg);
 }
 
 .metric-gauge::before {
     content: "";
     position: absolute;
-    inset: 0;
-    border-radius: 999px 999px 0 0;
+    inset: 10px;
+    border-radius: 50%;
     background:
-        conic-gradient(from 180deg, #2dd4bf 0deg, #60a5fa var(--gauge-deg), rgba(191, 211, 235, 0.55) var(--gauge-deg), rgba(191, 211, 235, 0.55) 180deg);
-    -webkit-mask: radial-gradient(circle at 50% 100%, transparent 55%, #000 56%);
-    mask: radial-gradient(circle at 50% 100%, transparent 55%, #000 56%);
+        radial-gradient(circle at center, rgba(7, 16, 33, 0.96) 0 58%, transparent 59%),
+        repeating-conic-gradient(from -220deg, rgba(255, 255, 255, 0.22) 0deg 2deg, transparent 2deg 8deg);
+    opacity: 0.75;
 }
 
 :root[data-theme="dark"] .metric-gauge::before {
     background:
-        conic-gradient(from 180deg, #2dd4bf 0deg, #60a5fa var(--gauge-deg), rgba(65, 85, 117, 0.65) var(--gauge-deg), rgba(65, 85, 117, 0.65) 180deg);
+        radial-gradient(circle at center, rgba(7, 16, 33, 0.96) 0 58%, transparent 59%),
+        repeating-conic-gradient(from -220deg, rgba(180, 194, 224, 0.2) 0deg 2deg, transparent 2deg 8deg);
 }
 
-.metric-gauge-inner {
+:root[data-theme="dark"] .metric-gauge-card {
+    background:
+        radial-gradient(circle at 50% 14%, rgba(129, 90, 255, 0.18), transparent 40%),
+        linear-gradient(180deg, rgba(34, 47, 71, 0.98) 0%, rgba(28, 39, 60, 0.98) 100%);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.04),
+        0 16px 30px rgba(2, 8, 23, 0.28);
+}
+
+.metric-gauge::after {
+    content: "";
     position: absolute;
-    inset: auto 0 0;
+    inset: 18px;
+    border-radius: 50%;
+    border: 1px solid rgba(163, 178, 214, 0.22);
+    box-shadow:
+        inset 0 0 0 1px rgba(255, 255, 255, 0.02),
+        0 0 18px rgba(103, 126, 255, 0.22);
+}
+
+.metric-gauge-center {
+    position: absolute;
+    inset: 24%;
     display: flex;
+    flex-direction: column;
     justify-content: center;
     align-items: center;
-    min-height: 54%;
+    gap: 0.15rem;
+    border-radius: 50%;
+    background:
+        radial-gradient(circle at 50% 35%, rgba(86, 53, 168, 0.24), transparent 52%),
+        linear-gradient(180deg, rgba(9, 21, 43, 0.98) 0%, rgba(11, 23, 46, 0.98) 100%);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.03),
+        0 0 18px rgba(91, 92, 226, 0.18);
+    z-index: 1;
 }
 
 .metric-gauge-value {
-    color: var(--text);
+    color: #f3f8ff;
     font-size: 1.25rem;
     font-weight: 800;
     text-align: center;
+    line-height: 1;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    letter-spacing: -0.03em;
+}
+
+.metric-gauge-unit {
+    color: #a9bbd8;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
 }
 
 @media (max-width: 900px) {
     .node-summary-panel {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 640px) {
+    .node-summary-panel {
         grid-template-columns: 1fr;
     }
 
-    .node-gauge-grid {
-        grid-template-columns: 1fr;
+    .node-summary-card,
+    .metric-gauge-card {
+        min-height: auto;
     }
 }
 
