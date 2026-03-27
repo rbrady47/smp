@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 SEEKER_API_VERIFY_TLS = False
 SEEKER_API_TIMEOUT_SECONDS = 10.0
+REMOTE_SITE_CFG_CACHE: dict[tuple[str, int, bool, str], dict[str, str]] = {}
 
 
 def _safe_int(value: Any) -> int | None:
@@ -217,6 +218,11 @@ def _build_base_url(node: Node) -> str:
     return f"{scheme}://{node.host}:{node.web_port}"
 
 
+def _is_usable_text(value: Any) -> bool:
+    text = _stringify(value).strip()
+    return bool(text and text != "--")
+
+
 def _mask_value(key: str, value: Any) -> str:
     lowered = key.lower()
     if lowered in {"transid", "transidrefresh", "pass", "password"}:
@@ -415,6 +421,86 @@ async def get_bwv_stats(
 
 async def get_bwv_cfg(node: Node, *, emit_logs: bool = False) -> dict[str, Any]:
     return await _seeker_post_bwv(node, {"reqType": "bwvCfg"}, emit_logs=emit_logs)
+
+
+async def resolve_site_name_map(
+    anchor_node: Node,
+    sites: list[dict[str, Any]],
+    known_site_names: dict[str, str],
+) -> dict[str, str]:
+    resolved = {
+        _stringify(site_id): name
+        for site_id, name in known_site_names.items()
+        if _is_usable_text(site_id) and _is_usable_text(name)
+    }
+
+    for site in sites:
+        site_id = _stringify(site.get("site_id") or site.get("mate_site_id")).strip()
+        site_ip = _stringify(site.get("site_ip") or site.get("mate_ip")).strip()
+        if not site_id or site_id == "--":
+            continue
+        if site_id in resolved:
+            continue
+        if not site_ip or site_ip == "--":
+            continue
+        if _stringify(site.get("ping")).strip().lower() != "up":
+            continue
+
+        cache_key = (
+            site_ip,
+            anchor_node.web_port,
+            bool(anchor_node.api_use_https),
+            _stringify(anchor_node.api_username),
+        )
+        cached = REMOTE_SITE_CFG_CACHE.get(cache_key)
+        if cached:
+            cached_name = _stringify(cached.get("site_name")).strip()
+            cached_site_id = _stringify(cached.get("site_id")).strip()
+            if cached_name and cached_name != "--":
+                resolved[site_id] = cached_name
+            if cached_site_id and cached_site_id != "--" and cached_name and cached_name != "--":
+                resolved.setdefault(cached_site_id, cached_name)
+            continue
+
+        if not anchor_node.api_username or not anchor_node.api_password:
+            continue
+
+        probe_node = Node(
+            name=site_ip,
+            host=site_ip,
+            web_port=anchor_node.web_port,
+            ssh_port=anchor_node.ssh_port,
+            location=anchor_node.location,
+            include_in_topology=False,
+            topology_level=None,
+            topology_unit=None,
+            enabled=True,
+            notes=None,
+            api_username=anchor_node.api_username,
+            api_password=anchor_node.api_password,
+            api_use_https=anchor_node.api_use_https,
+        )
+
+        try:
+            cfg_result = await get_bwv_cfg(probe_node, emit_logs=False)
+            if cfg_result.get("status") != "ok":
+                logger.info("Unable to resolve remote site name for %s (%s): %s", site_id, site_ip, cfg_result.get("message"))
+                continue
+            cfg_summary = normalize_bwv_cfg(cfg_result.get("raw") or {}, probe_node)
+            REMOTE_SITE_CFG_CACHE[cache_key] = {
+                "site_id": _stringify(cfg_summary.get("site_id")),
+                "site_name": _stringify(cfg_summary.get("site_name")),
+            }
+            resolved_name = _stringify(cfg_summary.get("site_name")).strip()
+            resolved_site_id = _stringify(cfg_summary.get("site_id")).strip()
+            if resolved_name and resolved_name != "--":
+                resolved[site_id] = resolved_name
+                if resolved_site_id and resolved_site_id != "--":
+                    resolved.setdefault(resolved_site_id, resolved_name)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Remote site-name probe failed for %s (%s): %s", site_id, site_ip, exc)
+
+    return resolved
 
 
 def normalize_bwv_stats(data: dict[str, Any]) -> dict[str, Any]:

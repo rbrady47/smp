@@ -19,50 +19,168 @@
         </nav>
     </header>
 
-    <main class="container dashboard-container">
+    <main class="container dashboard-container node-dashboard-list-page">
         <section class="dashboard-toolbar">
             <div>
                 <p class="eyebrow">Operational Nodes</p>
                 <h1>Node Dashboard</h1>
+                <p class="subtitle">Anchor and discovered Seeker nodes in one operational list view, with fast drill-down and lightweight inventory management.</p>
             </div>
             <div class="dashboard-toolbar-actions">
-                <a href="/nodes" class="button-secondary">Manage Nodes</a>
+                <button type="button" class="button-primary" id="open-node-modal-button">Add Node</button>
             </div>
         </section>
 
         <section class="card dashboard-meta">
             <div>
-                <span class="dashboard-meta-label">Auto Refresh</span>
-                <div class="dashboard-refresh-control">
-                    <button type="button" class="button-secondary dashboard-refresh-button" id="dashboard-refresh-button">10 seconds</button>
-                    <div class="dashboard-refresh-menu" id="dashboard-refresh-menu" hidden>
-                        <button type="button" data-seconds="0">Off</button>
-                        <button type="button" data-seconds="10">10 sec</button>
-                        <button type="button" data-seconds="30">30 sec</button>
-                        <button type="button" data-seconds="60">60 sec</button>
-                    </div>
-                </div>
-            </div>
-            <div>
                 <span class="dashboard-meta-label">Last Update</span>
                 <strong id="dashboard-last-updated">Loading...</strong>
             </div>
             <div>
-                <span class="dashboard-meta-label">Nodes</span>
-                <strong id="dashboard-node-count">0</strong>
+                <span class="dashboard-meta-label">Anchors</span>
+                <strong id="anchor-node-count">0</strong>
+            </div>
+            <div>
+                <span class="dashboard-meta-label">Discovered</span>
+                <strong id="discovered-node-count">0</strong>
             </div>
         </section>
 
-        <section class="node-grid" id="nodeGrid">
-            <article class="node-card">
-                <div class="node-header">
-                    <div class="node-name">Loading nodes...</div>
+        <section class="node-list-section-grid">
+            <article class="card node-list-card">
+                <div class="node-list-card-header">
+                    <div>
+                        <h2>Anchor Nodes</h2>
+                        <p class="section-copy">SMP-managed anchor nodes with full detail drill-down.</p>
+                    </div>
+                    <input id="anchor-node-search" class="route-filter-input node-list-search" type="search" placeholder="Search anchor nodes">
+                </div>
+                <div class="node-list-scroll">
+                    <div class="node-list" id="anchor-node-list">
+                        <div class="table-message">Loading anchor nodes...</div>
+                    </div>
+                </div>
+            </article>
+
+            <article class="card node-list-card">
+                <div class="node-list-card-header">
+                    <div>
+                        <h2>Discovered Nodes</h2>
+                        <p class="section-copy">Only nodes currently reachable or seen up in the last 24 hours. Lvl3 nodes are indented beneath the Lvl2 node that surfaced them.</p>
+                    </div>
+                    <input id="discovered-node-search" class="route-filter-input node-list-search" type="search" placeholder="Search discovered nodes">
+                </div>
+                <div class="node-list-scroll">
+                    <div class="node-list" id="discovered-node-list">
+                        <div class="table-message">Loading discovered nodes...</div>
+                    </div>
                 </div>
             </article>
         </section>
 
-        <p id="dashboard-error" class="status-error" hidden>Unable to load dashboard nodes</p>
+        <p id="dashboard-error" class="status-error" hidden>Unable to load node dashboard data</p>
     </main>
+
+    <div class="modal-shell" id="node-modal-shell" hidden>
+        <div class="modal-backdrop" data-modal-close="node-modal"></div>
+        <section class="modal-card node-modal-card" role="dialog" aria-modal="true" aria-labelledby="node-form-title">
+            <div class="section-heading">
+                <h2 id="node-form-title">Add Node</h2>
+                <p class="section-copy">Add a new anchor node without leaving the dashboard.</p>
+            </div>
+            <form id="node-form" class="node-form">
+                <input type="hidden" id="node-id" name="node-id">
+
+                <label>
+                    <span>Name</span>
+                    <input type="text" id="node-name" name="name" required>
+                </label>
+
+                <label>
+                    <span>Node ID</span>
+                    <input type="text" id="node-node-id" name="node_id" placeholder="4095">
+                </label>
+
+                <label>
+                    <span>Host</span>
+                    <input type="text" id="node-host" name="host" placeholder="10.0.0.1 or seeker.example.local" required>
+                </label>
+
+                <label>
+                    <span>Web Port</span>
+                    <input type="number" id="node-web-port" name="web_port" min="1" max="65535" value="443" required>
+                </label>
+
+                <label>
+                    <span>SSH Port</span>
+                    <input type="number" id="node-ssh-port" name="ssh_port" min="1" max="65535" value="22" required>
+                </label>
+
+                <label>
+                    <span>Location</span>
+                    <input type="text" id="node-location" name="location" required>
+                </label>
+
+                <label class="checkbox-field">
+                    <input type="checkbox" id="node-include-in-topology" name="include_in_topology">
+                    <span>Include in Topology</span>
+                </label>
+
+                <label>
+                    <span>Topology Level</span>
+                    <select id="node-topology-level" name="topology_level">
+                        <option value="0">0</option>
+                        <option value="1">1</option>
+                    </select>
+                </label>
+
+                <label>
+                    <span>Topology Unit</span>
+                    <select id="node-topology-unit" name="topology_unit">
+                        <option value="AGG">AGG</option>
+                        <option value="DIV HQ">DIV HQ</option>
+                        <option value="1BCT">1BCT</option>
+                        <option value="2BCT">2BCT</option>
+                        <option value="3BCT">3BCT</option>
+                        <option value="CAB/DIVARTY">CAB/DIVARTY</option>
+                        <option value="Sustainment">Sustainment</option>
+                    </select>
+                </label>
+
+                <label class="checkbox-field">
+                    <input type="checkbox" id="node-enabled" name="enabled" checked>
+                    <span>Enabled</span>
+                </label>
+
+                <label class="full-width">
+                    <span>Notes</span>
+                    <textarea id="node-notes" name="notes" rows="3" placeholder="Optional notes"></textarea>
+                </label>
+
+                <label>
+                    <span>API Username</span>
+                    <input type="text" id="node-api-username" name="api_username">
+                </label>
+
+                <label>
+                    <span>API Password</span>
+                    <input type="password" id="node-api-password" name="api_password">
+                </label>
+
+                <label class="checkbox-field">
+                    <input type="checkbox" id="node-api-use-https" name="api_use_https">
+                    <span>API Uses HTTPS</span>
+                </label>
+
+                <div class="form-actions full-width node-modal-actions">
+                    <button type="button" class="button-secondary" id="node-save-add-another-button">Save &amp; Add Another</button>
+                    <button type="submit" class="button-primary" id="node-submit-button">Save</button>
+                    <button type="button" class="button-secondary" id="node-cancel-button">Cancel</button>
+                </div>
+            </form>
+            <p id="node-form-error" class="status-error" hidden>Unable to save node</p>
+        </section>
+    </div>
 
     <script src="{{ url_for('static', path='js/app.js') }}"></script>
 </body>

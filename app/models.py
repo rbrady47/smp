@@ -11,6 +11,7 @@ class Node(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    node_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     host: Mapped[str] = mapped_column(String(255), nullable=False)
     web_port: Mapped[int] = mapped_column(Integer, nullable=False, default=443)
     ssh_port: Mapped[int] = mapped_column(Integer, nullable=False, default=22)

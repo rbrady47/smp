@@ -9,6 +9,7 @@ TopologyUnit = Literal["AGG", "DIV HQ", "1BCT", "2BCT", "3BCT", "CAB/DIVARTY", "
 
 class NodeBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
+    node_id: str | None = Field(default=None, max_length=64)
     host: str = Field(..., min_length=1, max_length=255)
     web_port: int = Field(default=443, ge=1, le=65535)
     ssh_port: int = Field(default=22, ge=1, le=65535)

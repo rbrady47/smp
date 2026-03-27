@@ -35,8 +35,12 @@ async function loadPlatformStatus() {
 let currentNodes = [];
 let currentEditNodeId = null;
 let currentServices = [];
+let currentNodeDashboardPayload = { anchors: [], discovered: [] };
+let keepNodeModalOpenAfterSave = false;
 let dashboardRefreshTimer = null;
+let nodeDashboardEventSource = null;
 const dashboardOrderStorageKey = "smp-dashboard-order";
+const anchorListOrderStorageKey = "smp-anchor-list-order";
 const dashboardRefreshStorageKey = "smp-dashboard-refresh-seconds";
 const themeModeStorageKey = "smp-theme-mode";
 const pinnedNodesStorageKey = "smp-main-dashboard-node-ids";
@@ -245,6 +249,111 @@ function saveDashboardOrder(nodeIds) {
     }
 }
 
+function getSavedAnchorListOrder() {
+    try {
+        const raw = window.localStorage.getItem(anchorListOrderStorageKey);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed.map((value) => String(value)) : [];
+    } catch (error) {
+        return [];
+    }
+}
+
+function saveAnchorListOrder(pinKeys) {
+    try {
+        window.localStorage.setItem(anchorListOrderStorageKey, JSON.stringify(pinKeys));
+    } catch (error) {
+        // Ignore storage failures and keep the dashboard usable.
+    }
+}
+
+function sortAnchorListRows(rows) {
+    const savedOrder = getSavedAnchorListOrder();
+    const orderIndex = new Map(savedOrder.map((key, index) => [key, index]));
+
+    return [...rows].sort((left, right) => {
+        const leftKey = String(left.pin_key || `anchor:${left.id}`);
+        const rightKey = String(right.pin_key || `anchor:${right.id}`);
+        const leftSaved = orderIndex.get(leftKey);
+        const rightSaved = orderIndex.get(rightKey);
+
+        if (leftSaved !== undefined && rightSaved !== undefined) {
+            return leftSaved - rightSaved;
+        }
+        if (leftSaved !== undefined) {
+            return -1;
+        }
+        if (rightSaved !== undefined) {
+            return 1;
+        }
+
+        return String(left.site_name || left.name || "").localeCompare(String(right.site_name || right.name || ""));
+    });
+}
+
+function updateAnchorListOrderFromDom() {
+    const list = document.getElementById("anchor-node-list");
+    if (!list) {
+        return;
+    }
+    const keys = Array.from(list.querySelectorAll(".node-list-row[data-node-pin-key]"))
+        .map((row) => String(row.getAttribute("data-node-pin-key") || ""))
+        .filter(Boolean);
+    saveAnchorListOrder(keys);
+}
+
+function attachAnchorRowDragAndDrop(row) {
+    row.addEventListener("dragstart", (event) => {
+        row.classList.add("dragging");
+        if (event.dataTransfer) {
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData("text/plain", row.dataset.nodePinKey || "");
+        }
+    });
+
+    row.addEventListener("dragend", () => {
+        row.classList.remove("dragging");
+        document.querySelectorAll(".node-list-row.drag-over").forEach((item) => item.classList.remove("drag-over"));
+        updateAnchorListOrderFromDom();
+    });
+
+    row.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        const list = row.parentElement;
+        const draggingRow = list?.querySelector(".node-list-row.dragging");
+
+        if (!(list instanceof HTMLElement) || !(draggingRow instanceof HTMLElement) || draggingRow === row) {
+            return;
+        }
+
+        const rect = row.getBoundingClientRect();
+        const before = event.clientY < rect.top + rect.height / 2;
+
+        document.querySelectorAll(".node-list-row.drag-over").forEach((item) => {
+            if (item !== row) {
+                item.classList.remove("drag-over");
+            }
+        });
+        row.classList.add("drag-over");
+
+        if (before) {
+            list.insertBefore(draggingRow, row);
+        } else {
+            list.insertBefore(draggingRow, row.nextSibling);
+        }
+    });
+
+    row.addEventListener("dragleave", () => {
+        row.classList.remove("drag-over");
+    });
+
+    row.addEventListener("drop", (event) => {
+        event.preventDefault();
+        row.classList.remove("drag-over");
+        updateAnchorListOrderFromDom();
+    });
+}
+
 function sortDashboardNodes(nodes) {
     const savedOrder = getSavedDashboardOrder();
     const orderIndex = new Map(savedOrder.map((id, index) => [id, index]));
@@ -410,7 +519,31 @@ function savePinnedIds(storageKey, ids) {
 }
 
 function getPinnedNodeIds() {
-    return getPinnedIds(pinnedNodesStorageKey);
+    return getPinnedNodeKeys()
+        .map((value) => {
+            const match = /^anchor:(\d+)$/.exec(String(value));
+            return match ? Number(match[1]) : null;
+        })
+        .filter((value) => Number.isFinite(value));
+}
+
+function getPinnedNodeKeys() {
+    try {
+        const raw = window.localStorage.getItem(pinnedNodesStorageKey);
+        const parsed = raw ? JSON.parse(raw) : [];
+        if (!Array.isArray(parsed)) {
+            return [];
+        }
+        return parsed.map((value) => {
+            if (typeof value === "number") {
+                return `anchor:${value}`;
+            }
+            const normalized = String(value);
+            return /^\d+$/.test(normalized) ? `anchor:${normalized}` : normalized;
+        });
+    } catch (error) {
+        return [];
+    }
 }
 
 function getPinnedServiceIds() {
@@ -427,6 +560,16 @@ function togglePinnedNodeId(nodeId) {
     savePinnedIds(pinnedNodesStorageKey, Array.from(current));
 }
 
+function togglePinnedNodeKey(nodeKey) {
+    const current = new Set(getPinnedNodeKeys());
+    if (current.has(nodeKey)) {
+        current.delete(nodeKey);
+    } else {
+        current.add(nodeKey);
+    }
+    savePinnedIds(pinnedNodesStorageKey, Array.from(current));
+}
+
 function togglePinnedServiceId(serviceId) {
     const current = new Set(getPinnedServiceIds());
     if (current.has(serviceId)) {
@@ -439,6 +582,13 @@ function togglePinnedServiceId(serviceId) {
 
 function openNode(nodeId) {
     window.location.href = `/nodes/${nodeId}`;
+}
+
+function openNodeDetail(detailUrl) {
+    if (!detailUrl) {
+        return;
+    }
+    window.location.href = detailUrl;
 }
 
 window.openNode = openNode;
@@ -504,6 +654,46 @@ function showDashboardFeedback(message) {
     }
 
     lastUpdated.textContent = message;
+}
+
+function disconnectNodeDashboardStream() {
+    if (nodeDashboardEventSource) {
+        nodeDashboardEventSource.close();
+        nodeDashboardEventSource = null;
+    }
+}
+
+function connectNodeDashboardStream() {
+    const anchorList = document.getElementById("anchor-node-list");
+    const discoveredList = document.getElementById("discovered-node-list");
+    const dashboardError = document.getElementById("dashboard-error");
+
+    if (!anchorList || !discoveredList || !dashboardError || !window.EventSource || nodeDashboardEventSource) {
+        return;
+    }
+
+    nodeDashboardEventSource = new EventSource("/api/node-dashboard/stream");
+
+    nodeDashboardEventSource.addEventListener("snapshot", (event) => {
+        try {
+            const payload = JSON.parse(event.data || "{}");
+            currentNodeDashboardPayload = {
+                anchors: Array.isArray(payload.anchors) ? payload.anchors : [],
+                discovered: Array.isArray(payload.discovered) ? payload.discovered : [],
+            };
+            renderNodeDashboardLists(currentNodeDashboardPayload);
+            dashboardError.hidden = true;
+        } catch (error) {
+            console.error("Unable to parse node dashboard stream payload", error);
+        }
+    });
+
+    nodeDashboardEventSource.onerror = () => {
+        disconnectNodeDashboardStream();
+        window.setTimeout(() => {
+            connectNodeDashboardStream();
+        }, 3000);
+    };
 }
 
 function applyDashboardRefreshInterval() {
@@ -742,6 +932,7 @@ function resetNodeForm() {
     const submitButton = document.getElementById("node-submit-button");
     const cancelButton = document.getElementById("node-cancel-button");
     const formError = document.getElementById("node-form-error");
+    const saveAddAnotherButton = document.getElementById("node-save-add-another-button");
 
     if (!form) {
         return;
@@ -750,6 +941,7 @@ function resetNodeForm() {
     form.reset();
     currentEditNodeId = null;
     document.getElementById("node-id").value = "";
+    document.getElementById("node-node-id").value = "";
     document.getElementById("node-web-port").value = "443";
     document.getElementById("node-ssh-port").value = "22";
     document.getElementById("node-include-in-topology").checked = false;
@@ -757,10 +949,38 @@ function resetNodeForm() {
     document.getElementById("node-topology-unit").value = "AGG";
     document.getElementById("node-enabled").checked = true;
     formTitle.textContent = "Add Node";
-    submitButton.textContent = "Add Node";
-    cancelButton.hidden = true;
+    submitButton.textContent = "Save";
+    cancelButton.hidden = false;
+    if (saveAddAnotherButton) {
+        saveAddAnotherButton.hidden = false;
+    }
     formError.hidden = true;
+    formError.textContent = "Unable to save node";
+    keepNodeModalOpenAfterSave = false;
     syncTopologyFormFields();
+}
+
+function getNodeModalShell() {
+    return document.getElementById("node-modal-shell");
+}
+
+function openNodeModal() {
+    const modalShell = getNodeModalShell();
+    if (!modalShell) {
+        return;
+    }
+    modalShell.hidden = false;
+    document.body.classList.add("modal-open");
+}
+
+function closeNodeModal() {
+    const modalShell = getNodeModalShell();
+    if (!modalShell) {
+        return;
+    }
+    modalShell.hidden = true;
+    document.body.classList.remove("modal-open");
+    keepNodeModalOpenAfterSave = false;
 }
 
 function syncTopologyFormFields() {
@@ -789,6 +1009,7 @@ function syncTopologyFormFields() {
 
 function populateNodeForm(nodeId) {
     const node = currentNodes.find((entry) => entry.id === nodeId);
+    const saveAddAnotherButton = document.getElementById("node-save-add-another-button");
 
     if (!node) {
         return;
@@ -796,6 +1017,7 @@ function populateNodeForm(nodeId) {
 
     document.getElementById("node-id").value = String(node.id);
     document.getElementById("node-name").value = node.name;
+    document.getElementById("node-node-id").value = node.node_id ?? "";
     document.getElementById("node-host").value = node.host;
     document.getElementById("node-web-port").value = String(node.web_port);
     document.getElementById("node-ssh-port").value = String(node.ssh_port);
@@ -809,12 +1031,16 @@ function populateNodeForm(nodeId) {
     document.getElementById("node-api-password").value = node.api_password ?? "";
     document.getElementById("node-api-use-https").checked = node.api_use_https;
     document.getElementById("node-form-title").textContent = `Edit ${node.name}`;
-    document.getElementById("node-submit-button").textContent = "Save Changes";
+    document.getElementById("node-submit-button").textContent = "Save";
     document.getElementById("node-cancel-button").hidden = false;
+    if (saveAddAnotherButton) {
+        saveAddAnotherButton.hidden = true;
+    }
     document.getElementById("node-form-error").hidden = true;
     currentEditNodeId = node.id;
     syncTopologyFormFields();
     renderNodesTable(currentNodes);
+    openNodeModal();
 }
 
 function renderNodesTable(nodes) {
@@ -827,7 +1053,7 @@ function renderNodesTable(nodes) {
     if (nodes.length === 0) {
         tableBody.innerHTML = `
             <tr>
-                <td colspan="7" class="table-message">No nodes have been added yet.</td>
+                <td colspan="8" class="table-message">No nodes have been added yet.</td>
             </tr>
         `;
         return;
@@ -838,6 +1064,7 @@ function renderNodesTable(nodes) {
             (node) => `
                 <tr class="${currentEditNodeId === node.id ? "row-editing" : ""}">
                     <td>${node.name}</td>
+                    <td>${escapeHtml(node.node_id ?? "--")}</td>
                     <td>${node.host}</td>
                     <td>${node.location}</td>
                     <td>${formatTopologyCell(node)}</td>
@@ -874,7 +1101,7 @@ function renderDashboard(nodes, options = {}) {
     const lastUpdated = document.getElementById(options.lastUpdatedId || "dashboard-last-updated");
     const nodeCount = document.getElementById(options.countId || "dashboard-node-count");
     const showPin = options.showPin ?? true;
-    const pinnedIds = new Set(options.pinnedNodeIds ?? getPinnedNodeIds());
+    const pinnedKeys = new Set(options.pinnedNodeKeys ?? getPinnedNodeKeys());
     const emptyTitle = options.emptyTitle || "No nodes configured";
     const emptySubtitle = options.emptySubtitle || "Add nodes from the inventory page to populate the dashboard.";
 
@@ -902,19 +1129,28 @@ function renderDashboard(nodes, options = {}) {
 
     grid.innerHTML = "";
     sortedNodes.forEach((node) => {
-        const isPinned = pinnedIds.has(Number(node.id));
+        const pinKey = node.pin_key || `anchor:${node.id}`;
+        const isPinned = pinnedKeys.has(pinKey);
+        const nodeName = node.name || node.site_name || node.site_id || "Unknown";
+        const nodeSub = `${node.site || node.location || "--"} · ${node.host || "--"}`;
+        const sitesUp = Number.isFinite(Number(node.sites_up)) ? Number(node.sites_up) : "--";
+        const sitesTotal = Number.isFinite(Number(node.sites_total)) ? Number(node.sites_total) : "--";
+        const cpuValue = node.cpu_avg != null ? formatCpuPercent(node.cpu_avg) : "--";
+        const txValue = node.tx_display || formatRate(node.tx_bps || node.tx_rate || 0);
+        const rxValue = node.rx_display || formatRate(node.rx_bps || node.rx_rate || 0);
+        const latencyValue = node.latency_ms == null ? "--" : node.latency_ms;
         const card = document.createElement("article");
         card.className = `node-card node-card-${node.status}`;
-        card.dataset.nodeId = String(node.id);
+        card.dataset.nodeId = String(node.id ?? node.site_id ?? pinKey);
         card.setAttribute("role", "button");
         card.setAttribute("tabindex", "0");
         card.setAttribute("draggable", "true");
         card.innerHTML = `
             <div class="node-card-glow"></div>
-            <div class="node-header">
-                <div>
-                    <div class="node-name">${node.name}</div>
-                    <div class="node-sub">${node.site} · ${node.host}</div>
+                <div class="node-header">
+                    <div>
+                    <div class="node-name">${escapeHtml(nodeName)}</div>
+                    <div class="node-sub">${escapeHtml(nodeSub)}</div>
                     <div class="node-version">${node.version && node.version !== "--" ? node.version : ""}</div>
                 </div>
                 <div class="node-header-actions">
@@ -923,7 +1159,7 @@ function renderDashboard(nodes, options = {}) {
                             type="button"
                             class="dashboard-pin-button ${isPinned ? "pinned" : ""}"
                             data-dashboard-action="toggle-node-pin"
-                            data-node-id="${node.id}"
+                            data-node-pin-key="${escapeHtml(pinKey)}"
                             title="${isPinned ? "Remove from main dashboard" : "Add to main dashboard"}"
                             draggable="false"
                         >
@@ -941,22 +1177,22 @@ function renderDashboard(nodes, options = {}) {
                 <span class="metric-chip metric-chip-rtt ping-${node.ping_state || "down"}">
                     <span class="ping-dot ${node.ping_ok ? "up" : "down"}" title="${node.ping_ok ? "Ping reachable" : "Ping unreachable"}"></span>
                     <span class="metric-chip-label">RTT</span>
-                    <span class="metric-chip-value">${node.latency_ms ?? "--"} ms</span>
+                    <span class="metric-chip-value">${escapeHtml(String(latencyValue))}${latencyValue === "--" ? "" : " ms"}</span>
                 </span>
             </div>
 
               <div class="node-metrics">
                   <div class="metric-block">
                       <span class="metric-label">Sites</span>
-                      <strong>${node.sites_up}/${node.sites_total}</strong>
+                      <strong>${escapeHtml(String(sitesUp))}/${escapeHtml(String(sitesTotal))}</strong>
                   </div>
                   <div class="metric-block">
                       <span class="metric-label">CPU</span>
-                      <strong>${formatCpuPercent(node.cpu_avg)}</strong>
+                      <strong>${escapeHtml(String(cpuValue))}</strong>
                   </div>
                   <div class="metric-block metric-block-traffic">
                       <span class="metric-label">Tx / Rx</span>
-                      <strong>${formatRate(node.tx_bps)} / ${formatRate(node.rx_bps)}</strong>
+                      <strong>${escapeHtml(String(txValue))} / ${escapeHtml(String(rxValue))}</strong>
                   </div>
               </div>
           `;
@@ -967,11 +1203,19 @@ function renderDashboard(nodes, options = {}) {
                 return;
             }
 
+            if (node.detail_url) {
+                openNodeDetail(node.detail_url);
+                return;
+            }
             openNode(node.id);
         });
         card.addEventListener("keydown", (event) => {
             if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
+                if (node.detail_url) {
+                    openNodeDetail(node.detail_url);
+                    return;
+                }
                 openNode(node.id);
             }
         });
@@ -1002,7 +1246,7 @@ function renderDashboard(nodes, options = {}) {
                 }
 
                 if (action === "toggle-node-pin") {
-                    togglePinnedNodeId(node.id);
+                    togglePinnedNodeKey(button.getAttribute("data-node-pin-key") || pinKey);
                     if (document.getElementById("mainNodeGrid")) {
                         loadMainDashboard();
                     } else {
@@ -1320,7 +1564,7 @@ function renderDetailTableBody(bodyId, rows, columns, emptyMessage, options = {}
         .map(
             (row) => `
                 <tr>
-                    ${columns.map((column) => `<td>${formatDetailCell(column, row[column])}</td>`).join("")}
+                    ${columns.map((column) => `<td>${formatDetailCell(column, row[column], row)}</td>`).join("")}
                 </tr>
             `,
         )
@@ -1433,7 +1677,24 @@ function wireSitesFilter() {
     handler();
 }
 
-function formatDetailCell(column, value) {
+function wireDetailLinks() {
+    document.querySelectorAll("[data-detail-link=\"site-web\"]").forEach((button) => {
+        button.removeEventListener("click", button._detailLinkHandler);
+        const handler = (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const siteIp = button.getAttribute("data-site-ip") || "";
+            if (!siteIp) {
+                return;
+            }
+            openWebForNode(siteIp, 443, "https");
+        };
+        button._detailLinkHandler = handler;
+        button.addEventListener("click", handler);
+    });
+}
+
+function formatDetailCell(column, value, row = {}) {
     if (column === "tunnel_health" && Array.isArray(value)) {
         return `
             <div class="tunnel-health" title="Tun0-3">
@@ -1445,6 +1706,26 @@ function formatDetailCell(column, value) {
                     )
                     .join("")}
             </div>
+        `;
+    }
+
+    if (column === "site_name") {
+        const siteIp = String(row?.mate_ip ?? "").trim();
+        const siteName = escapeHtml(value ?? "--");
+        if (!siteIp || siteIp === "--") {
+            return siteName;
+        }
+
+        return `
+            <a
+                href="#"
+                class="detail-link-chip"
+                data-detail-link="site-web"
+                data-site-ip="${escapeHtml(siteIp)}"
+                title="Open ${siteName} web UI"
+            >
+                ${siteName}
+            </a>
         `;
     }
 
@@ -1528,7 +1809,8 @@ function getTopologyNodePosition(entity) {
     }
 
     const width = Math.max(stage.clientWidth, 2140);
-    const unitIndex = Math.max(TOPOLOGY_UNITS.indexOf(entity.unit), 0);
+    const lvl1NodeWidth = 92;
+    const lvl1TouchGap = 0;
     const aggXs = {
         Cloud: width * 0.18,
         HSMC: width * 0.5,
@@ -1539,9 +1821,9 @@ function getTopologyNodePosition(entity) {
         return accumulator;
     }, {});
     const locationOffsets = {
-        Cloud: -64,
+        Cloud: -(lvl1NodeWidth + lvl1TouchGap),
         HSMC: 0,
-        Episodic: 64,
+        Episodic: lvl1NodeWidth + lvl1TouchGap,
     };
     const aggYs = {
         Cloud: 140,
@@ -1986,19 +2268,20 @@ async function loadNodeDetailPage() {
         return;
     }
 
-    const nodeId = Number(root.getAttribute("data-node-id"));
-    if (!Number.isFinite(nodeId)) {
+    const detailEndpoint = root.getAttribute("data-detail-endpoint");
+    const nodeId = root.getAttribute("data-node-id");
+    if (!detailEndpoint) {
         return;
     }
 
     try {
-        const detail = await apiRequest(`/api/nodes/${nodeId}/detail`);
+        const detail = await apiRequest(detailEndpoint);
         const node = detail.node ?? {};
         const summary = detail.node_summary ?? {};
         const config = detail.config_summary ?? {};
         const errors = detail.errors ?? {};
 
-        document.getElementById("detail-node-name").textContent = node.name ?? `Node ${nodeId}`;
+        document.getElementById("detail-node-name").textContent = node.name ?? `Node ${nodeId ?? "--"}`;
         const detailLocation = document.getElementById("detail-location");
         const detailLastRefresh = document.getElementById("detail-last-refresh");
         const detailLastTelemetry = document.getElementById("detail-last-telemetry");
@@ -2033,11 +2316,27 @@ async function loadNodeDetailPage() {
 
         renderDetailTableBody(
             "detail-tunnels-body",
-            detail.tunnels ?? [],
+            [...(detail.tunnels ?? [])].sort((left, right) => {
+                const leftPingUp = String(left?.ping ?? "").trim().toLowerCase() === "up";
+                const rightPingUp = String(right?.ping ?? "").trim().toLowerCase() === "up";
+                const leftIndex = Number(left?.mate_index);
+                const rightIndex = Number(right?.mate_index);
+                const leftPinned = leftPingUp && leftIndex === 0;
+                const rightPinned = rightPingUp && rightIndex === 0;
+
+                if (leftPinned !== rightPinned) {
+                    return leftPinned ? -1 : 1;
+                }
+                if (leftPingUp !== rightPingUp) {
+                    return leftPingUp ? -1 : 1;
+                }
+                return (Number.isFinite(leftIndex) ? leftIndex : 999999) - (Number.isFinite(rightIndex) ? rightIndex : 999999);
+            }),
             ["mate_index", "site_name", "mate_site_id", "mate_ip", "tunnel_health", "tx_rate", "rx_rate", "rtt_ms", "ping"],
             "No tunnel data available.",
         );
         wireSitesFilter();
+        wireDetailLinks();
         renderDetailTableBody(
             "detail-channels-body",
             detail.channels ?? [],
@@ -2116,34 +2415,57 @@ async function loadNodes() {
     const tableBody = document.getElementById("nodes-table-body");
     const nodesError = document.getElementById("nodes-error");
 
-    if (!tableBody) {
-        return;
-    }
-
     try {
         currentNodes = sortNodesForDisplay(await apiRequest("/api/nodes"));
-        renderNodesTable(currentNodes);
-        nodesError.hidden = true;
+        if (tableBody) {
+            renderNodesTable(currentNodes);
+        }
+        if (nodesError) {
+            nodesError.hidden = true;
+        }
         clearFeedback();
 
         const selectedNodeId = Number(new URLSearchParams(window.location.search).get("node"));
-        if (selectedNodeId) {
+        if (selectedNodeId && tableBody) {
             populateNodeForm(selectedNodeId);
         }
     } catch (error) {
-        tableBody.innerHTML = `
-            <tr>
-                <td colspan="6" class="table-message">Unable to load node inventory</td>
-            </tr>
-        `;
-        nodesError.hidden = false;
+        if (tableBody) {
+            tableBody.innerHTML = `
+                <tr>
+                    <td colspan="8" class="table-message">Unable to load node inventory</td>
+                </tr>
+            `;
+        }
+        if (nodesError) {
+            nodesError.hidden = false;
+        }
     }
 }
 
 async function loadNodeDashboard() {
-    const grid = document.getElementById("nodeGrid");
+    const anchorList = document.getElementById("anchor-node-list");
+    const discoveredList = document.getElementById("discovered-node-list");
     const dashboardError = document.getElementById("dashboard-error");
 
+    if (anchorList && discoveredList && dashboardError) {
+        try {
+            const payload = await apiRequest("/api/node-dashboard");
+            currentNodeDashboardPayload = payload;
+            renderNodeDashboardLists(payload);
+            dashboardError.hidden = true;
+            connectNodeDashboardStream();
+            return;
+        } catch (error) {
+            anchorList.innerHTML = `<div class="table-message">Unable to load anchor nodes.</div>`;
+            discoveredList.innerHTML = `<div class="table-message">Unable to load discovered nodes.</div>`;
+            dashboardError.textContent = error.message || "Unable to load node dashboard data";
+            dashboardError.hidden = false;
+            return;
+        }
+    }
+
+    const grid = document.getElementById("nodeGrid");
     if (!grid || !dashboardError) {
         return;
     }
@@ -2164,6 +2486,292 @@ async function loadNodeDashboard() {
         `;
         dashboardError.textContent = error.message || "Unable to load dashboard nodes";
         dashboardError.hidden = false;
+    }
+}
+
+function normalizeNodeDashboardSearch(value) {
+    return String(value ?? "").trim().toLowerCase();
+}
+
+function nodeListMatches(row, query) {
+    if (!query) {
+        return true;
+    }
+    const haystacks = [
+        row.site_name,
+        row.site_id,
+        row.version,
+        row.host,
+        row.discovered_parent_name,
+        Array.isArray(row.surfaced_by_names) ? row.surfaced_by_names.join(" ") : "",
+    ]
+        .map((item) => String(item ?? "").toLowerCase());
+    return haystacks.some((value) => value.includes(query));
+}
+
+function renderNodeDashboardRow(row, pinnedKeys) {
+    const pinKey = row.pin_key || `anchor:${row.id}`;
+    const isPinned = pinnedKeys.has(pinKey);
+    const isAnchor = row.row_type === "anchor";
+    const discoveredLevel = Number(row.discovered_level || 0);
+    const indentClass = discoveredLevel >= 3 ? " node-list-row-child" : "";
+    const parentLine = isAnchor ? "" : row.discovered_parent_name && !Array.isArray(row.surfaced_by_names)
+        ? `<div class="node-list-parent">via ${escapeHtml(row.discovered_parent_name)}</div>`
+        : "";
+    const webScheme = row.web_scheme || "https";
+    const webPort = Number(row.web_port || 443);
+    const sshUser = row.ssh_username || "";
+    const detailSummary = row.detail && typeof row.detail === "object" && row.detail.summary && typeof row.detail.summary === "object"
+        ? row.detail.summary
+        : null;
+    const rawLatency = row.latency_ms
+        ?? row.rtt_ms
+        ?? row.rtt
+        ?? row.mate_ping_rtt
+        ?? row.ping_rtt
+        ?? detailSummary?.latency_ms
+        ?? detailSummary?.rtt_ms
+        ?? detailSummary?.rtt;
+    const latencyMatch = typeof rawLatency === "string"
+        ? rawLatency.match(/-?\d+(?:\.\d+)?/)
+        : null;
+    const numericLatency = typeof rawLatency === "number"
+        ? rawLatency
+        : latencyMatch
+            ? Number(latencyMatch[0])
+            : Number(rawLatency);
+    const latencyValue = Number.isFinite(numericLatency)
+        ? (isAnchor ? Math.round(numericLatency) : Math.round(numericLatency))
+        : null;
+    const latencyText = latencyValue == null || rawLatency === "--" ? "--" : `${latencyValue} ms`;
+    const rttState = row.ping_state || (String(row.ping || "").toLowerCase() === "up" ? "good" : "down");
+    const txDisplay = row.tx_display || formatRate(row.tx_bps || row.tx_rate || 0);
+    const rxDisplay = row.rx_display || formatRate(row.rx_bps || row.rx_rate || 0);
+    return `
+        <article class="node-list-row${indentClass}" ${isAnchor ? `data-node-pin-key="${escapeHtml(pinKey)}" draggable="true"` : ""}>
+            <div class="node-list-main node-list-main-inline">
+                <div class="node-list-primary-cell">
+                    <button type="button" class="node-list-name-button" data-node-detail-url="${escapeHtml(row.detail_url || "")}">
+                        ${escapeHtml(row.site_name || row.name || row.site_id || "Unknown")}
+                    </button>
+                    ${parentLine}
+                </div>
+                <div class="node-list-meta-grid node-list-meta-grid-inline ${!isAnchor ? "node-list-meta-grid-inline-discovered" : ""}">
+                    <div class="node-list-meta"><span class="node-list-meta-label">Site ID</span><strong>${escapeHtml(row.site_id || "--")}</strong></div>
+                    <div class="node-list-meta"><span class="node-list-meta-label">Site IP</span><strong>${escapeHtml(row.host || "--")}</strong></div>
+                    <div class="node-list-meta"><span class="node-list-meta-label">Version</span><strong>${escapeHtml(row.version || "--")}</strong></div>
+                    <div class="node-list-meta">
+                        <span class="node-list-meta-label">RTT</span>
+                        <span class="metric-chip metric-chip-rtt node-list-rtt-chip ping-${escapeHtml(String(rttState))}">
+                            <span class="metric-chip-label">RTT</span>
+                            <span class="metric-chip-value">${escapeHtml(latencyText)}</span>
+                        </span>
+                    </div>
+                    <div class="node-list-meta node-list-meta-traffic"><span class="node-list-meta-label">Tx / Rx</span><strong>${escapeHtml(txDisplay)} / ${escapeHtml(rxDisplay)}</strong></div>
+                </div>
+            </div>
+            <div class="node-list-actions">
+                <button
+                    type="button"
+                    class="dashboard-pin-button ${isPinned ? "pinned" : ""}"
+                    data-node-list-action="toggle-pin"
+                    data-node-pin-key="${escapeHtml(pinKey)}"
+                    title="${isPinned ? "Remove from main dashboard" : "Add to main dashboard"}"
+                >★</button>
+                <button
+                    type="button"
+                    class="service-link ${row.web_ok ? "ok" : "down"}"
+                    data-node-list-action="open-web"
+                    data-host="${escapeHtml(row.host || "")}"
+                    data-web-port="${Number.isFinite(webPort) ? webPort : 443}"
+                    data-web-scheme="${escapeHtml(webScheme)}"
+                ><span class="service-icon">🌐</span><span>Web</span></button>
+                <button
+                    type="button"
+                    class="service-link ${row.ssh_ok ? "ok" : "down"}"
+                    data-node-list-action="ssh"
+                    data-host="${escapeHtml(row.host || "")}"
+                    data-ssh-username="${escapeHtml(sshUser)}"
+                ><span class="service-icon">🔐</span><span>SSH</span></button>
+                ${isAnchor ? `
+                    <button
+                        type="button"
+                        class="service-link"
+                        data-node-list-action="edit-anchor"
+                        data-node-id="${escapeHtml(String(row.id || ""))}"
+                        aria-label="Edit node"
+                        title="Edit node"
+                    ><span class="service-icon">✎</span></button>
+                    <button
+                        type="button"
+                        class="service-link down"
+                        data-node-list-action="delete-anchor"
+                        data-node-id="${escapeHtml(String(row.id || ""))}"
+                        data-node-name="${escapeHtml(row.site_name || row.name || row.site_id || "node")}"
+                        aria-label="Delete node"
+                        title="Delete node"
+                    ><span class="service-icon">🗑</span></button>
+                ` : `
+                    <button
+                        type="button"
+                        class="service-link down"
+                        data-node-list-action="delete-discovered"
+                        data-site-id="${escapeHtml(String(row.site_id || ""))}"
+                        data-node-name="${escapeHtml(row.site_name || row.name || row.site_id || "node")}"
+                        aria-label="Delete discovered node"
+                        title="Delete discovered node"
+                    ><span class="service-icon">🗑</span></button>
+                `}
+            </div>
+        </article>
+    `;
+}
+
+function renderNodeDashboardLists(payload) {
+    const anchorList = document.getElementById("anchor-node-list");
+    const discoveredList = document.getElementById("discovered-node-list");
+    const anchorCount = document.getElementById("anchor-node-count");
+    const discoveredCount = document.getElementById("discovered-node-count");
+    const lastUpdated = document.getElementById("dashboard-last-updated");
+    const anchorSearch = document.getElementById("anchor-node-search");
+    const discoveredSearch = document.getElementById("discovered-node-search");
+    if (!anchorList || !discoveredList) {
+        return;
+    }
+
+    const anchors = Array.isArray(payload?.anchors) ? payload.anchors : [];
+    const discovered = Array.isArray(payload?.discovered) ? payload.discovered : [];
+    const pinnedKeys = new Set(getPinnedNodeKeys());
+    const anchorQuery = normalizeNodeDashboardSearch(anchorSearch?.value);
+    const discoveredQuery = normalizeNodeDashboardSearch(discoveredSearch?.value);
+    const filteredAnchors = anchors.filter((row) => nodeListMatches(row, anchorQuery));
+    const filteredDiscovered = discovered.filter((row) => nodeListMatches(row, discoveredQuery));
+
+    anchorList.innerHTML = filteredAnchors.length
+        ? sortAnchorListRows(filteredAnchors).map((row) => renderNodeDashboardRow(row, pinnedKeys)).join("")
+        : `<div class="table-message">No anchor nodes matched.</div>`;
+    discoveredList.innerHTML = filteredDiscovered.length
+        ? filteredDiscovered.map((row) => renderNodeDashboardRow(row, pinnedKeys)).join("")
+        : `<div class="table-message">No discovered nodes matched.</div>`;
+
+    if (anchorCount) {
+        anchorCount.textContent = String(anchors.length);
+    }
+    if (discoveredCount) {
+        discoveredCount.textContent = String(discovered.length);
+    }
+    if (lastUpdated) {
+        lastUpdated.textContent = new Date().toLocaleTimeString();
+    }
+
+    document.querySelectorAll("[data-node-detail-url]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            openNodeDetail(button.getAttribute("data-node-detail-url"));
+        });
+    });
+
+    document.querySelectorAll("[data-node-list-action]").forEach((button) => {
+        button.addEventListener("click", async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const action = button.getAttribute("data-node-list-action");
+            if (action === "toggle-pin") {
+                togglePinnedNodeKey(button.getAttribute("data-node-pin-key") || "");
+                renderNodeDashboardLists(currentNodeDashboardPayload);
+                return;
+            }
+            if (action === "open-web") {
+                openWebForNode(
+                    button.getAttribute("data-host") || "",
+                    Number(button.getAttribute("data-web-port")),
+                    button.getAttribute("data-web-scheme") || "https",
+                );
+                return;
+            }
+            if (action === "ssh") {
+                await copySshCommand(
+                    button.getAttribute("data-host") || "",
+                    button.getAttribute("data-ssh-username") || "",
+                ).catch(() => {});
+                return;
+            }
+            if (action === "edit-anchor") {
+                const nodeId = Number(button.getAttribute("data-node-id"));
+                if (Number.isFinite(nodeId)) {
+                    if (!currentNodes.length) {
+                        await loadNodes();
+                    }
+                    populateNodeForm(nodeId);
+                }
+                return;
+            }
+            if (action === "delete-anchor") {
+                const nodeId = Number(button.getAttribute("data-node-id"));
+                const nodeName = button.getAttribute("data-node-name") || "this node";
+                if (!Number.isFinite(nodeId)) {
+                    return;
+                }
+                const confirmed = window.confirm(`Delete ${nodeName}?`);
+                if (!confirmed) {
+                    return;
+                }
+                try {
+                    await apiRequest(`/api/nodes/${nodeId}`, { method: "DELETE" });
+                    await loadNodes();
+                    await loadNodeDashboard();
+                    await loadMainDashboard();
+                    showDashboardFeedback("Node deleted");
+                } catch (error) {
+                    const dashboardError = document.getElementById("dashboard-error");
+                    if (dashboardError) {
+                        dashboardError.textContent = error.message || "Unable to delete node";
+                        dashboardError.hidden = false;
+                    }
+                }
+                return;
+            }
+            if (action === "delete-discovered") {
+                const siteId = String(button.getAttribute("data-site-id") || "").trim();
+                const nodeName = button.getAttribute("data-node-name") || "this discovered node";
+                if (!siteId) {
+                    return;
+                }
+                const confirmed = window.confirm(`Delete ${nodeName}?`);
+                if (!confirmed) {
+                    return;
+                }
+                try {
+                    await apiRequest(`/api/discovered-nodes/${encodeURIComponent(siteId)}`, { method: "DELETE" });
+                    await loadNodeDashboard();
+                    await loadMainDashboard();
+                    showDashboardFeedback("Discovered node deleted");
+                } catch (error) {
+                    const dashboardError = document.getElementById("dashboard-error");
+                    if (dashboardError) {
+                        dashboardError.textContent = error.message || "Unable to delete discovered node";
+                        dashboardError.hidden = false;
+                    }
+                }
+            }
+        });
+    });
+
+    anchorList.querySelectorAll(".node-list-row[data-node-pin-key]").forEach((row) => {
+        if (!(row instanceof HTMLElement)) {
+            return;
+        }
+        attachAnchorRowDragAndDrop(row);
+    });
+
+    if (anchorSearch && !anchorSearch._nodeDashboardSearchBound) {
+        anchorSearch.addEventListener("input", () => renderNodeDashboardLists(currentNodeDashboardPayload));
+        anchorSearch._nodeDashboardSearchBound = true;
+    }
+    if (discoveredSearch && !discoveredSearch._nodeDashboardSearchBound) {
+        discoveredSearch.addEventListener("input", () => renderNodeDashboardLists(currentNodeDashboardPayload));
+        discoveredSearch._nodeDashboardSearchBound = true;
     }
 }
 
@@ -2199,19 +2807,23 @@ async function loadMainDashboard() {
     }
 
     const [nodesResult, servicesResult] = await Promise.allSettled([
-        apiRequest("/api/dashboard/nodes"),
+        apiRequest("/api/node-dashboard"),
         apiRequest("/api/dashboard/services"),
     ]);
 
     if (nodesResult.status === "fulfilled") {
-        const pinnedNodeIds = getPinnedNodeIds();
-        const pinnedNodes = nodesResult.value.filter((node) => pinnedNodeIds.includes(Number(node.id)));
+        const pinnedNodeKeys = new Set(getPinnedNodeKeys());
+        const allNodes = [
+            ...(Array.isArray(nodesResult.value?.anchors) ? nodesResult.value.anchors : []),
+            ...(Array.isArray(nodesResult.value?.discovered) ? nodesResult.value.discovered : []),
+        ];
+        const pinnedNodes = allNodes.filter((node) => pinnedNodeKeys.has(String(node.pin_key || `anchor:${node.id}`)));
         renderDashboard(pinnedNodes, {
             gridId: "mainNodeGrid",
             lastUpdatedId: "main-dashboard-last-updated",
             countId: "main-dashboard-node-count",
             showPin: true,
-            pinnedNodeIds,
+            pinnedNodeKeys: Array.from(pinnedNodeKeys),
             emptyTitle: "No pinned nodes",
             emptySubtitle: "Pin nodes from the full Node Dashboard to build this watchlist.",
         });
@@ -2438,6 +3050,7 @@ async function handleDashboardServiceTableClick(event) {
 function collectNodeFormPayload() {
     return {
         name: document.getElementById("node-name").value.trim(),
+        node_id: document.getElementById("node-node-id").value.trim() || null,
         host: document.getElementById("node-host").value.trim(),
         web_port: Number(document.getElementById("node-web-port").value),
         ssh_port: Number(document.getElementById("node-ssh-port").value),
@@ -2467,8 +3080,17 @@ async function handleNodeFormSubmit(event) {
             method,
             body: JSON.stringify(payload),
         });
-        resetNodeForm();
         await loadNodes();
+        await loadNodeDashboard();
+        await loadMainDashboard();
+        if (keepNodeModalOpenAfterSave) {
+            resetNodeForm();
+            openNodeModal();
+            showFeedback("Node saved. Ready for another.");
+            return;
+        }
+        resetNodeForm();
+        closeNodeModal();
         showFeedback(nodeId ? "Node updated." : "Node added.");
     } catch (error) {
         formError.textContent = error.message || "Unable to save node";
@@ -2596,6 +3218,9 @@ window.addEventListener("DOMContentLoaded", () => {
     const dashboardServicesBody = document.getElementById("dashboardServicesBody");
     const mainDashboardServicesBody = document.getElementById("mainDashboardServicesBody");
     const cancelButton = document.getElementById("node-cancel-button");
+    const saveAddAnotherButton = document.getElementById("node-save-add-another-button");
+    const openNodeModalButton = document.getElementById("open-node-modal-button");
+    const nodeModalShell = document.getElementById("node-modal-shell");
     const refreshButton = document.getElementById("refresh-nodes-button");
     const dashboardRefreshButton = document.getElementById("dashboard-refresh-button");
     const dashboardRefreshMenu = document.getElementById("dashboard-refresh-menu");
@@ -2640,7 +3265,43 @@ window.addEventListener("DOMContentLoaded", () => {
     }
 
     if (cancelButton) {
-        cancelButton.addEventListener("click", resetNodeForm);
+        cancelButton.addEventListener("click", () => {
+            resetNodeForm();
+            closeNodeModal();
+        });
+    }
+
+    if (saveAddAnotherButton) {
+        saveAddAnotherButton.addEventListener("click", () => {
+            keepNodeModalOpenAfterSave = true;
+            nodeForm?.requestSubmit();
+        });
+    }
+
+    if (openNodeModalButton) {
+        openNodeModalButton.addEventListener("click", () => {
+            resetNodeForm();
+            openNodeModal();
+        });
+    }
+
+    if (nodeModalShell) {
+        nodeModalShell.addEventListener("click", (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) {
+                return;
+            }
+            if (target.dataset.modalClose === "node-modal") {
+                resetNodeForm();
+                closeNodeModal();
+            }
+        });
+        document.addEventListener("keydown", (event) => {
+            if (event.key === "Escape" && !nodeModalShell.hidden) {
+                resetNodeForm();
+                closeNodeModal();
+            }
+        });
     }
 
     if (refreshButton) {
@@ -2690,7 +3351,14 @@ window.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    if (document.getElementById("nodeGrid") || document.getElementById("mainNodeGrid")) {
+    if (
+        document.getElementById("nodeGrid")
+        || document.getElementById("mainNodeGrid")
+    ) {
         applyDashboardRefreshInterval();
     }
+
+    window.addEventListener("beforeunload", () => {
+        disconnectNodeDashboardStream();
+    });
 });
