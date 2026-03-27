@@ -3,6 +3,8 @@ from __future__ import annotations
 from itertools import combinations
 from typing import Any
 
+from app.schemas import TopologyDiscoveryPayload
+
 
 TOPOLOGY_LOCATIONS = ["HSMC", "Cloud", "Episodic"]
 TOPOLOGY_UNITS = ["DIV HQ", "1BCT", "2BCT", "3BCT", "CAB/DIVARTY", "Sustainment"]
@@ -38,6 +40,69 @@ def topology_status_from_node_status(status: str | None) -> str:
     if status_value in {"offline", "disabled"}:
         return "down"
     return "neutral"
+
+
+def build_topology_discovery_payload(node_dashboard_payload: dict[str, Any]) -> dict[str, Any]:
+    anchors: list[dict[str, Any]] = []
+    discovered: list[dict[str, Any]] = []
+    by_location: dict[str, int] = {}
+    by_unit: dict[str, int] = {}
+    by_location_unit: dict[str, int] = {}
+
+    for row in node_dashboard_payload.get("anchors") or []:
+        if not isinstance(row, dict):
+            continue
+        anchors.append(
+            {
+                "inventory_node_id": int(row.get("id") or 0),
+                "site_id": str(row.get("site_id") or ""),
+                "site_name": str(row.get("site_name") or row.get("name") or ""),
+                "location": normalize_topology_location(str(row.get("site") or "").strip() or None),
+                "unit": str(row.get("unit") or "").strip() or None,
+                "topology_level": int(row.get("topology_level")) if row.get("topology_level") is not None else None,
+                "status": str(row.get("status") or "unknown"),
+                "include_in_topology": bool(row.get("include_in_topology")),
+            }
+        )
+
+    for row in node_dashboard_payload.get("discovered") or []:
+        if not isinstance(row, dict):
+            continue
+        location = normalize_topology_location(str(row.get("location") or "").strip() or None)
+        unit = str(row.get("unit") or "").strip() or None
+        discovered_row = {
+            "site_id": str(row.get("site_id") or ""),
+            "site_name": str(row.get("site_name") or ""),
+            "location": location,
+            "unit": unit,
+            "discovered_level": int(row.get("discovered_level") or row.get("level") or 2),
+            "surfaced_by_site_id": str(row.get("surfaced_by_site_id") or row.get("discovered_parent_site_id") or "").strip() or None,
+            "surfaced_by_name": str(row.get("surfaced_by_name") or row.get("discovered_parent_name") or "").strip() or None,
+            "ping": str(row.get("ping") or "Down"),
+            "web_ok": bool(row.get("web_ok")),
+            "ssh_ok": bool(row.get("ssh_ok")),
+        }
+        discovered.append(discovered_row)
+
+        location_key = location or "--"
+        unit_key = unit or "--"
+        location_unit_key = f"{location_key}::{unit_key}"
+        by_location[location_key] = by_location.get(location_key, 0) + 1
+        by_unit[unit_key] = by_unit.get(unit_key, 0) + 1
+        by_location_unit[location_unit_key] = by_location_unit.get(location_unit_key, 0) + 1
+
+    return TopologyDiscoveryPayload.model_validate(
+        {
+            "anchors": anchors,
+            "discovered": discovered,
+            "summary": {
+                "total_discovered": len(discovered),
+                "by_location": by_location,
+                "by_unit": by_unit,
+                "by_location_unit": by_location_unit,
+            },
+        }
+    ).model_dump()
 
 
 def build_mock_topology_payload(inventory_nodes: list[dict[str, Any]]) -> dict[str, Any]:
@@ -91,12 +156,12 @@ def build_mock_topology_payload(inventory_nodes: list[dict[str, Any]]) -> dict[s
         lvl2_clusters.append(
             {
                 "id": cluster_id,
-                "name": f"{unit} Lvl2",
+                "name": f"{unit} Edge Nodes",
                 "count": TOPOLOGY_LVL2_COUNTS[unit],
                 "level": 2,
                 "unit": unit,
                 "status": "neutral",
-                "metrics_text": f"Aggregated placeholder for {unit} subordinate nodes.",
+                "metrics_text": f"Edge nodes placeholder for {unit} subordinate nodes.",
             }
         )
 

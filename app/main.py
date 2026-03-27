@@ -11,7 +11,7 @@ import time
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -21,6 +21,8 @@ from sqlalchemy.orm import Session
 from app.db import Base, SessionLocal, engine, get_db
 from app.bwvstats_ingest import collect_bwvstats_phase1, get_raw_bwvstats_snapshots
 from app.models import Node, ServiceCheck
+from app.node_dashboard_backend import NodeDashboardBackend
+from app.node_watchlist_projection_service import build_node_watchlist_payload
 from app.seeker_api import (
     build_detail_payload,
     get_bwv_cfg,
@@ -31,7 +33,7 @@ from app.seeker_api import (
     resolve_site_name_map,
 )
 from app.schemas import NodeCreate, NodeUpdate, ServiceCheckCreate
-from app.topology import build_mock_topology_payload, normalize_topology_location
+from app.topology import build_mock_topology_payload, build_topology_discovery_payload, normalize_topology_location
 
 app = FastAPI(title="Seeker Management Platform", version="0.1.0")
 templates = Jinja2Templates(directory="templates")
@@ -56,7 +58,8 @@ PING_INTERVAL_SECONDS = 1.0
 SEEKER_POLL_INTERVAL_SECONDS = 15.0
 SERVICE_POLL_INTERVAL_SECONDS = 30.0
 SERVICE_CHECK_TIMEOUT_SECONDS = 5.0
-NODE_DASHBOARD_REFRESH_SECONDS = 1.0
+NODE_DASHBOARD_FAST_REFRESH_SECONDS = 1.0
+NODE_DASHBOARD_PROJECTION_REFRESH_SECONDS = 5.0
 ping_samples_by_node: dict[int, deque[int]] = {}
 ping_snapshot_by_node: dict[int, dict[str, object]] = {}
 ping_monitor_task: asyncio.Task | None = None
@@ -64,20 +67,6 @@ seeker_detail_cache: dict[int, dict[str, object]] = {}
 seeker_poll_task: asyncio.Task | None = None
 service_status_cache: dict[int, dict[str, object]] = {}
 service_poll_task: asyncio.Task | None = None
-discovered_node_cache: dict[str, dict[str, object]] = {}
-discovered_node_tombstones: dict[str, str] = {}
-DISCOVERED_PROBE_TTL_SECONDS = 300.0
-DISCOVERED_PING_TTL_SECONDS = 5.0
-DISCOVERED_PING_MEMORY_HOURS = 24
-discovered_ping_cache: dict[str, dict[str, object]] = {}
-discovered_ping_inflight: set[str] = set()
-discovered_probe_inflight: set[str] = set()
-node_dashboard_cache: dict[str, object] = {
-    "anchors": [],
-    "discovered": [],
-    "cached_at": None,
-    "warming": True,
-}
 node_dashboard_poll_task: asyncio.Task | None = None
 
 
@@ -113,7 +102,7 @@ async def topology_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request=request,
         name="topology.html",
-        context={"page_title": "Topology | Seeker Management Platform"},
+        context={"page_title": "Division C2 Information Network | Seeker Management Platform"},
     )
 
 
@@ -158,7 +147,7 @@ async def node_detail_alias(node_id: int, request: Request, db: Session = Depend
 
 @app.get("/nodes/discovered/{site_id}", response_class=HTMLResponse)
 async def discovered_node_detail_page(site_id: str, request: Request) -> HTMLResponse:
-    cached = discovered_node_cache.get(site_id) or {}
+    cached = node_dashboard_backend.get_cached_discovered_node(site_id) or {}
     node_name = str(cached.get("site_name") or f"Discovered Site {site_id}")
     return templates.TemplateResponse(
         request=request,
@@ -552,533 +541,6 @@ async def refresh_seeker_detail_for_node(node: Node) -> dict[str, object]:
     return detail
 
 
-def _safe_parse_iso(value: object) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(str(value))
-    except ValueError:
-        return None
-
-
-def _discovered_pin_key(site_id: str) -> str:
-    return f"discovered:{site_id}"
-
-
-def _anchor_pin_key(node_id: int) -> str:
-    return f"anchor:{node_id}"
-
-
-def _is_recent_ping_up(entry: dict[str, object]) -> bool:
-    ping = str(entry.get("ping") or "").strip().lower()
-    if ping == "up":
-        return True
-    last_ping_up = _safe_parse_iso(entry.get("last_ping_up"))
-    if not last_ping_up:
-        return False
-    return last_ping_up >= datetime.now(timezone.utc) - timedelta(hours=DISCOVERED_PING_MEMORY_HOURS)
-
-
-def _is_generic_site_name(value: object, site_id: object = None) -> bool:
-    text = str(value or "").strip()
-    if not text:
-        return True
-    if site_id is not None and text.lower() == f"site {site_id}".lower():
-        return True
-    return bool(re.fullmatch(r"site\s+\S+", text, re.IGNORECASE))
-
-
-def _prefer_discovered_site_name(current_value: object, candidate_value: object, site_id: object) -> str:
-    current = str(current_value or "").strip()
-    candidate = str(candidate_value or "").strip()
-    if not current:
-        return candidate
-    if not candidate:
-        return current
-    if _is_generic_site_name(current, site_id) and not _is_generic_site_name(candidate, site_id):
-        return candidate
-    return current
-
-
-def _merge_discovered_sources(*values: object) -> list[str]:
-    merged: list[str] = []
-    for value in values:
-        if isinstance(value, list):
-            items = value
-        elif value:
-            items = [value]
-        else:
-            items = []
-        for item in items:
-            text = str(item or "").strip()
-            if text and text not in merged:
-                merged.append(text)
-    return merged
-
-
-def _update_discovered_ping_timestamps(entry: dict[str, object], *, ping_up: bool, now: datetime) -> None:
-    if ping_up:
-        entry["last_ping_up"] = now.isoformat()
-        entry["ping_down_since"] = None
-    else:
-        if entry.get("last_ping_up") and not entry.get("ping_down_since"):
-            entry["ping_down_since"] = now.isoformat()
-
-
-def _should_keep_discovered(entry: dict[str, object]) -> bool:
-    if str(entry.get("ping") or "").strip().lower() == "up":
-        return True
-    last_ping_up = _safe_parse_iso(entry.get("last_ping_up"))
-    if last_ping_up is None:
-        return False
-    down_since = _safe_parse_iso(entry.get("ping_down_since"))
-    if down_since is None:
-        return last_ping_up >= datetime.now(timezone.utc) - timedelta(hours=DISCOVERED_PING_MEMORY_HOURS)
-    return down_since >= datetime.now(timezone.utc) - timedelta(hours=DISCOVERED_PING_MEMORY_HOURS)
-
-
-def schedule_discovered_ping_refresh(site_id: str, host: str) -> None:
-    normalized_host = str(host or "").strip()
-    if not normalized_host or site_id in discovered_ping_inflight:
-        return
-
-    discovered_ping_inflight.add(site_id)
-
-    async def _runner() -> None:
-        checked_at = datetime.now(timezone.utc)
-        try:
-            result = await asyncio.to_thread(ping_host, normalized_host)
-            discovered_ping_cache[site_id] = {
-                "host": normalized_host,
-                "reachable": bool(result.get("reachable")),
-                "latency_ms": result.get("latency_ms"),
-                "checked_at": checked_at.isoformat(),
-            }
-        except Exception:
-            logger.exception("Background discovered ping refresh failed for site_id=%s host=%s", site_id, normalized_host)
-        finally:
-            discovered_ping_inflight.discard(site_id)
-
-    asyncio.create_task(_runner())
-
-
-async def get_discovered_ping_snapshot(site_id: str, host: str) -> dict[str, int | bool | None]:
-    now = datetime.now(timezone.utc)
-    cached = discovered_ping_cache.get(site_id)
-    cached_at = _safe_parse_iso(cached.get("checked_at")) if isinstance(cached, dict) else None
-    normalized_host = str(host or "").strip()
-    cached_host = str(cached.get("host") or "").strip() if isinstance(cached, dict) else ""
-
-    if (
-        cached
-        and cached_at
-        and (now - cached_at).total_seconds() < DISCOVERED_PING_TTL_SECONDS
-        and cached_host == normalized_host
-    ):
-        return {
-            "reachable": bool(cached.get("reachable")),
-            "latency_ms": cached.get("latency_ms") if cached.get("latency_ms") is not None else None,
-        }
-
-    schedule_discovered_ping_refresh(site_id, normalized_host)
-
-    if cached and cached_host == normalized_host:
-        return {
-            "reachable": bool(cached.get("reachable")),
-            "latency_ms": cached.get("latency_ms") if cached.get("latency_ms") is not None else None,
-        }
-
-    return {
-        "reachable": False,
-        "latency_ms": None,
-    }
-
-
-def _format_dashboard_rate(value: object) -> str:
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError):
-        text = str(value or "").strip()
-        return text or "--"
-
-    if numeric <= 0:
-        return "0 bps"
-    if numeric >= 1_000_000:
-        return f"{numeric / 1_000_000:.1f} Mbps"
-    if numeric >= 1_000:
-        return f"{numeric / 1_000:.1f} Kbps"
-    if numeric.is_integer():
-        return f"{int(numeric)} bps"
-    return f"{numeric:.0f} bps"
-
-
-async def probe_discovered_node_detail(
-    source_node: Node,
-    *,
-    site_id: str,
-    site_ip: str,
-    level: int,
-    surfaced_by_site_id: str | None,
-    surfaced_by_name: str | None,
-) -> dict[str, object] | None:
-    if not source_node.api_username or not source_node.api_password or not site_ip or site_ip == "--":
-        return None
-
-    now = datetime.now(timezone.utc)
-    cached = discovered_node_cache.get(site_id)
-    cached_at = _safe_parse_iso(cached.get("probed_at")) if isinstance(cached, dict) else None
-    if cached and cached_at and (now - cached_at).total_seconds() < DISCOVERED_PROBE_TTL_SECONDS:
-        cached["level"] = level
-        cached["surfaced_by_site_id"] = surfaced_by_site_id
-        cached["surfaced_by_name"] = surfaced_by_name
-        return cached
-
-    ping_result = ping_host(site_ip)
-    web_check, ssh_check = await asyncio.gather(
-        asyncio.to_thread(check_tcp_port, site_ip, source_node.web_port),
-        asyncio.to_thread(check_tcp_port, site_ip, source_node.ssh_port),
-    )
-    health = {
-        "status": "online" if web_check["reachable"] and ssh_check["reachable"] else "degraded" if web_check["reachable"] or ssh_check["reachable"] else "offline",
-        "latency_ms": ping_result["latency_ms"] if ping_result["reachable"] else None,
-        "last_checked": now,
-        "web_ok": bool(web_check["reachable"]),
-        "ssh_ok": bool(ssh_check["reachable"]),
-        "ping_ok": bool(ping_result["reachable"]),
-        "ping_state": "good" if ping_result["reachable"] else "down",
-        "ping_avg_ms": ping_result["latency_ms"] if ping_result["reachable"] else None,
-    }
-
-    transient_node = Node(
-        id=-1,
-        name=site_id or site_ip,
-        host=site_ip,
-        web_port=source_node.web_port,
-        ssh_port=source_node.ssh_port,
-        location=source_node.location,
-        include_in_topology=False,
-        topology_level=None,
-        topology_unit=None,
-        enabled=True,
-        notes=None,
-        api_username=source_node.api_username,
-        api_password=source_node.api_password,
-        api_use_https=source_node.api_use_https,
-        last_checked=now,
-        latency_ms=health["latency_ms"],
-    )
-
-    cfg_result, stats_result, learnt_routes_result = await asyncio.gather(
-        get_bwv_cfg(transient_node),
-        get_bwv_stats(transient_node),
-        get_bwv_stats(transient_node, extra_args={"learntRoutes": "1"}),
-    )
-
-    detail = build_detail_payload(
-        transient_node,
-        node_health=health,
-        cfg_result=cfg_result,
-        stats_result=stats_result,
-        learnt_routes_result=learnt_routes_result,
-    )
-
-    config_summary = detail.get("config_summary") if isinstance(detail.get("config_summary"), dict) else {}
-    normalized = normalize_bwv_stats(detail.get("raw", {}).get("bwv_stats", {}) or {})
-    payload = {
-        "site_id": str(config_summary.get("site_id") or site_id or "--"),
-        "site_name": str(config_summary.get("site_name") or f"Site {site_id}" or site_ip),
-        "host": site_ip,
-        "location": transient_node.location,
-        "unit": transient_node.topology_unit or "--",
-        "version": str(config_summary.get("version") or "--"),
-        "latency_ms": health["latency_ms"],
-        "tx_bps": normalized.get("tx_bps", 0),
-        "rx_bps": normalized.get("rx_bps", 0),
-        "tx_display": _format_dashboard_rate(normalized.get("tx_bps", 0)),
-        "rx_display": _format_dashboard_rate(normalized.get("rx_bps", 0)),
-        "web_ok": health["web_ok"],
-        "ssh_ok": health["ssh_ok"],
-        "ping": "Up" if health["ping_ok"] else "Down",
-        "last_seen": now.isoformat(),
-        "last_ping_up": now.isoformat() if health["ping_ok"] else (cached.get("last_ping_up") if isinstance(cached, dict) else None),
-        "ping_down_since": None if health["ping_ok"] else (cached.get("ping_down_since") if isinstance(cached, dict) else now.isoformat()),
-        "level": level,
-        "surfaced_by_site_id": surfaced_by_site_id,
-        "surfaced_by_name": surfaced_by_name,
-        "surfaced_by_names": _merge_discovered_sources(cached.get("surfaced_by_names") if isinstance(cached, dict) else None, surfaced_by_name),
-        "detail": detail,
-        "probed_at": now.isoformat(),
-    }
-    discovered_node_cache[payload["site_id"]] = payload
-    return payload
-
-
-def schedule_discovered_node_probe(
-    source_node: Node,
-    *,
-    site_id: str,
-    site_ip: str,
-    level: int,
-    surfaced_by_site_id: str | None,
-    surfaced_by_name: str | None,
-) -> None:
-    if not source_node.api_username or not source_node.api_password or not site_ip or site_ip == "--":
-        return
-    if site_id in discovered_probe_inflight:
-        return
-
-    cached = discovered_node_cache.get(site_id)
-    cached_at = _safe_parse_iso(cached.get("probed_at")) if isinstance(cached, dict) else None
-    now = datetime.now(timezone.utc)
-    if cached and cached_at and (now - cached_at).total_seconds() < DISCOVERED_PROBE_TTL_SECONDS:
-        return
-
-    discovered_probe_inflight.add(site_id)
-
-    async def _runner() -> None:
-        try:
-            await probe_discovered_node_detail(
-                source_node,
-                site_id=site_id,
-                site_ip=site_ip,
-                level=level,
-                surfaced_by_site_id=surfaced_by_site_id,
-                surfaced_by_name=surfaced_by_name,
-            )
-        except Exception:
-            logger.exception("Background discovered node probe failed for site_id=%s host=%s", site_id, site_ip)
-        finally:
-            discovered_probe_inflight.discard(site_id)
-
-    asyncio.create_task(_runner())
-
-
-async def build_node_dashboard_payload(nodes: list[Node]) -> dict[str, list[dict[str, object]]]:
-    for cached_site_id, cached in list(discovered_node_cache.items()):
-        if not isinstance(cached, dict):
-            discovered_node_cache.pop(cached_site_id, None)
-            continue
-        if str(cached.get("ping") or "").strip().lower() != "up" and not _should_keep_discovered(cached):
-            discovered_node_cache.pop(cached_site_id, None)
-
-    anchor_summaries = await asyncio.gather(*(summarize_dashboard_node(node) for node in nodes))
-    anchor_by_site_id: dict[str, dict[str, object]] = {}
-    anchors: list[dict[str, object]] = []
-    now = datetime.now(timezone.utc)
-
-    for node, summary in zip(nodes, anchor_summaries):
-        detail = seeker_detail_cache.get(node.id) or {}
-        config_summary = detail.get("config_summary") if isinstance(detail.get("config_summary"), dict) else {}
-        site_id = str(node.node_id or config_summary.get("site_id") or node.id)
-        site_name = str(node.name or config_summary.get("site_name") or f"Node {node.id}")
-        record = {
-            **summary,
-            "row_type": "anchor",
-            "pin_key": _anchor_pin_key(node.id),
-            "detail_url": f"/nodes/{node.id}",
-            "site_id": site_id,
-            "site_name": site_name,
-            "unit": node.topology_unit or "AGG",
-            "last_ping_up": summary.get("last_seen"),
-            "discovered_parent_site_id": None,
-            "discovered_parent_name": None,
-            "discovered_level": 1,
-            "tx_display": _format_dashboard_rate(summary.get("tx_bps", 0)),
-            "rx_display": _format_dashboard_rate(summary.get("rx_bps", 0)),
-        }
-        anchors.append(record)
-        anchor_by_site_id[site_id] = record
-
-    discovered_map: dict[str, dict[str, object]] = {}
-    discovery_candidates: dict[str, dict[str, object]] = {}
-
-    for node in nodes:
-        detail = seeker_detail_cache.get(node.id) or {}
-        config_summary = detail.get("config_summary") if isinstance(detail.get("config_summary"), dict) else {}
-        parent_site_id = str(config_summary.get("site_id") or "")
-        parent_site_name = str(config_summary.get("site_name") or node.name)
-        for row in detail.get("tunnels") or []:
-            site_id = str(row.get("mate_site_id") or "").strip()
-            if not site_id or site_id in anchor_by_site_id or site_id in discovered_node_tombstones:
-                continue
-            mate_ip = str(row.get("mate_ip") or "").strip()
-            if not mate_ip or mate_ip == "--":
-                continue
-            candidate = discovery_candidates.setdefault(
-                site_id,
-                {
-                    "site_id": site_id,
-                    "host": mate_ip,
-                    "source_node": node,
-                    "location": node.location,
-                    "unit": node.topology_unit or "--",
-                    "discovered_level": min((int(node.topology_level) if node.topology_level is not None else 1) + 1, 3),
-                    "surfaced_by_site_id": parent_site_id or None,
-                    "surfaced_by_name": parent_site_name or None,
-                    "surfaced_by_names": [parent_site_name] if parent_site_name else [],
-                },
-            )
-            candidate["host"] = mate_ip
-            candidate["source_node"] = node
-            candidate["location"] = node.location
-            candidate["unit"] = node.topology_unit or candidate.get("unit") or "--"
-            candidate["discovered_level"] = min(
-                candidate.get("discovered_level", 2),
-                min((int(node.topology_level) if node.topology_level is not None else 1) + 1, 3),
-            )
-            candidate["surfaced_by_site_id"] = candidate.get("surfaced_by_site_id") or parent_site_id or None
-            candidate["surfaced_by_name"] = candidate.get("surfaced_by_name") or parent_site_name or None
-            candidate["surfaced_by_names"] = _merge_discovered_sources(candidate.get("surfaced_by_names"), parent_site_name)
-
-    if discovery_candidates:
-        for site_id, candidate in discovery_candidates.items():
-            ping_payload = await get_discovered_ping_snapshot(site_id, str(candidate["host"]))
-            ping_up = bool(ping_payload.get("reachable"))
-            cached = discovered_node_cache.get(site_id, {})
-            cached_latency = cached.get("latency_ms") if isinstance(cached, dict) else None
-            entry = {
-                **(cached if isinstance(cached, dict) else {}),
-                "row_type": "discovered",
-                "pin_key": _discovered_pin_key(site_id),
-                "detail_url": f"/nodes/discovered/{site_id}",
-                "site_id": site_id,
-                "site_name": _prefer_discovered_site_name(
-                    cached.get("site_name") if isinstance(cached, dict) else None,
-                    candidate.get("site_name"),
-                    site_id,
-                ) or f"Site {site_id}",
-                "host": str(candidate.get("host") or cached.get("host") if isinstance(cached, dict) else "--"),
-                "location": str(candidate.get("location") or (cached.get("location") if isinstance(cached, dict) else "--") or "--"),
-                "unit": str(candidate.get("unit") or (cached.get("unit") if isinstance(cached, dict) else "--") or "--"),
-                "version": str((cached.get("version") if isinstance(cached, dict) else None) or "--"),
-                "latency_ms": ping_payload.get("latency_ms") if ping_payload.get("latency_ms") is not None else cached_latency,
-                "tx_bps": cached.get("tx_bps") if isinstance(cached, dict) else 0,
-                "rx_bps": cached.get("rx_bps") if isinstance(cached, dict) else 0,
-                "tx_display": str((cached.get("tx_display") if isinstance(cached, dict) else None) or "--"),
-                "rx_display": str((cached.get("rx_display") if isinstance(cached, dict) else None) or "--"),
-                "ping": "Up" if ping_up else "Down",
-                "web_ok": bool(cached.get("web_ok")) if isinstance(cached, dict) else False,
-                "ssh_ok": bool(cached.get("ssh_ok")) if isinstance(cached, dict) else False,
-                "last_seen": now.isoformat(),
-                "last_ping_up": cached.get("last_ping_up") if isinstance(cached, dict) else None,
-                "ping_down_since": cached.get("ping_down_since") if isinstance(cached, dict) else None,
-                "discovered_parent_site_id": candidate.get("surfaced_by_site_id"),
-                "discovered_parent_name": candidate.get("surfaced_by_name"),
-                "surfaced_by_names": _merge_discovered_sources(
-                    cached.get("surfaced_by_names") if isinstance(cached, dict) else None,
-                    candidate.get("surfaced_by_names"),
-                ),
-                "discovered_level": int(candidate.get("discovered_level") or 2),
-            }
-            _update_discovered_ping_timestamps(entry, ping_up=ping_up, now=now)
-            discovered_map[site_id] = entry
-            if ping_up:
-                schedule_discovered_node_probe(
-                    candidate["source_node"],
-                    site_id=site_id,
-                    site_ip=str(candidate["host"]),
-                    level=int(candidate.get("discovered_level") or 2),
-                    surfaced_by_site_id=str(candidate.get("surfaced_by_site_id") or "").strip() or None,
-                    surfaced_by_name=str(candidate.get("surfaced_by_name") or "").strip() or None,
-                )
-    # Merge any already-cached discovered details so the dashboard renders fast
-    # without blocking on live recursive probes.
-    for cached_site_id, cached in list(discovered_node_cache.items()):
-        if not isinstance(cached, dict):
-            continue
-        site_id = str(cached.get("site_id") or cached_site_id).strip()
-        if not site_id or site_id in anchor_by_site_id or site_id in discovered_node_tombstones:
-            continue
-        discovered_map[site_id] = {
-            **discovered_map.get(site_id, {}),
-            **cached,
-            "row_type": "discovered",
-            "pin_key": _discovered_pin_key(site_id),
-            "detail_url": f"/nodes/discovered/{site_id}",
-            "site_id": site_id,
-            "site_name": _prefer_discovered_site_name(
-                discovered_map.get(site_id, {}).get("site_name"),
-                cached.get("site_name"),
-                site_id,
-            ) or f"Site {site_id}",
-            "host": str(cached.get("host") or discovered_map.get(site_id, {}).get("host") or "--"),
-            "location": str(cached.get("location") or discovered_map.get(site_id, {}).get("location") or "--"),
-            "unit": str(cached.get("unit") or discovered_map.get(site_id, {}).get("unit") or "--"),
-            "version": str(cached.get("version") or discovered_map.get(site_id, {}).get("version") or "--"),
-            "discovered_level": int(cached.get("level") or discovered_map.get(site_id, {}).get("discovered_level") or 2),
-            "discovered_parent_site_id": cached.get("surfaced_by_site_id") or discovered_map.get(site_id, {}).get("discovered_parent_site_id"),
-            "discovered_parent_name": cached.get("surfaced_by_name") or discovered_map.get(site_id, {}).get("discovered_parent_name"),
-            "surfaced_by_names": _merge_discovered_sources(
-                discovered_map.get(site_id, {}).get("surfaced_by_names"),
-                cached.get("surfaced_by_names"),
-                cached.get("surfaced_by_name"),
-            ),
-            "ping_down_since": cached.get("ping_down_since") or discovered_map.get(site_id, {}).get("ping_down_since"),
-            "latency_ms": (
-                cached.get("latency_ms")
-                if cached.get("latency_ms") is not None
-                else discovered_map.get(site_id, {}).get("latency_ms")
-            ),
-        }
-
-    discovered = [
-        row for row in discovered_map.values()
-        if str(row.get("site_id") or "").strip() not in anchor_by_site_id and _should_keep_discovered(row)
-    ]
-    discovered.sort(
-        key=lambda row: (
-            int(row.get("discovered_level") or 99),
-            str(row.get("discovered_parent_name") or ""),
-            0 if str(row.get("ping") or "").strip().lower() == "up" else 1,
-            str(row.get("site_name") or "").lower(),
-        )
-    )
-
-    return {
-        "anchors": anchors,
-        "discovered": discovered,
-    }
-
-
-async def refresh_node_dashboard_cache_once() -> None:
-    global node_dashboard_cache
-    db = SessionLocal()
-    try:
-        nodes = db.scalars(select(Node).order_by(Node.name)).all()
-    finally:
-        db.close()
-
-    payload = await build_node_dashboard_payload(nodes)
-    node_dashboard_cache = {
-        **payload,
-        "cached_at": datetime.now(timezone.utc).isoformat(),
-        "warming": False,
-    }
-
-
-def get_serialized_node_dashboard_cache() -> dict[str, object]:
-    return {
-        "anchors": list(node_dashboard_cache.get("anchors") or []),
-        "discovered": list(node_dashboard_cache.get("discovered") or []),
-        "cached_at": node_dashboard_cache.get("cached_at"),
-        "warming": bool(node_dashboard_cache.get("warming")),
-    }
-
-
-async def node_dashboard_polling_loop() -> None:
-    global node_dashboard_cache
-    while True:
-        try:
-            await refresh_node_dashboard_cache_once()
-        except Exception:
-            logger.exception("Node dashboard cache refresh failed")
-            node_dashboard_cache = {
-                **node_dashboard_cache,
-                "warming": False,
-            }
-        await asyncio.sleep(NODE_DASHBOARD_REFRESH_SECONDS)
-
-
 async def seeker_polling_loop() -> None:
     while True:
         db = SessionLocal()
@@ -1402,6 +864,69 @@ async def summarize_dashboard_node(node: Node) -> dict[str, object]:
     }
 
 
+node_dashboard_backend = NodeDashboardBackend(
+    seeker_detail_cache=seeker_detail_cache,
+    summarize_dashboard_node=summarize_dashboard_node,
+    ping_host=ping_host,
+    check_tcp_port=check_tcp_port,
+    get_bwv_cfg=get_bwv_cfg,
+    get_bwv_stats=get_bwv_stats,
+    normalize_bwv_stats=normalize_bwv_stats,
+    build_detail_payload=build_detail_payload,
+    logger=logger,
+)
+node_dashboard_backend.projection_refresh_seconds = NODE_DASHBOARD_PROJECTION_REFRESH_SECONDS
+discovered_node_cache = node_dashboard_backend.discovered_node_cache
+discovered_node_tombstones = node_dashboard_backend.discovered_node_tombstones
+node_dashboard_cache = node_dashboard_backend.node_dashboard_cache
+
+
+async def probe_discovered_node_detail(
+    source_node: Node,
+    *,
+    site_id: str,
+    site_ip: str,
+    level: int,
+    surfaced_by_site_id: str | None,
+    surfaced_by_name: str | None,
+) -> dict[str, object] | None:
+    return await node_dashboard_backend.probe_discovered_node_detail(
+        source_node,
+        site_id=site_id,
+        site_ip=site_ip,
+        level=level,
+        surfaced_by_site_id=surfaced_by_site_id,
+        surfaced_by_name=surfaced_by_name,
+    )
+
+
+async def build_node_dashboard_payload(db: Session, nodes: list[Node]) -> dict[str, list[dict[str, object]]]:
+    return await node_dashboard_backend.build_payload(db, nodes)
+
+
+async def refresh_node_dashboard_cache_once() -> None:
+    db = SessionLocal()
+    try:
+        nodes = db.scalars(select(Node).order_by(Node.name)).all()
+        await node_dashboard_backend.refresh_cache(db, nodes)
+    finally:
+        db.close()
+
+
+def get_serialized_node_dashboard_cache() -> dict[str, object]:
+    return node_dashboard_backend.get_serialized_cache()
+
+
+async def node_dashboard_polling_loop() -> None:
+    while True:
+        try:
+            await refresh_node_dashboard_cache_once()
+        except Exception:
+            logger.exception("Node dashboard cache refresh failed")
+            node_dashboard_backend.mark_cache_refresh_failed()
+        await asyncio.sleep(NODE_DASHBOARD_FAST_REFRESH_SECONDS)
+
+
 @app.on_event("startup")
 async def startup_ping_monitor() -> None:
     global ping_monitor_task, seeker_poll_task, service_poll_task, node_dashboard_poll_task
@@ -1545,17 +1070,8 @@ async def node_detail(node_id: int, db: Session = Depends(get_db)) -> dict[str, 
 
 @app.get("/api/discovered-nodes/{site_id}/detail")
 async def discovered_node_detail(site_id: str, db: Session = Depends(get_db)) -> dict[str, object]:
-    cached = discovered_node_cache.get(site_id)
     nodes = db.scalars(select(Node).order_by(Node.name)).all()
-
-    if not cached:
-        payload = await build_node_dashboard_payload(nodes)
-        for row in payload.get("discovered", []):
-            if str(row.get("site_id") or "") == str(site_id):
-                cached = row
-                break
-        if cached and isinstance(cached, dict):
-            discovered_node_cache[site_id] = {**discovered_node_cache.get(site_id, {}), **cached}
+    cached = node_dashboard_backend.ensure_discovered_node_cached(db, site_id)
 
     if not cached:
         raise HTTPException(status_code=404, detail="Discovered node not found")
@@ -1569,18 +1085,7 @@ async def discovered_node_detail(site_id: str, db: Session = Depends(get_db)) ->
         raise HTTPException(status_code=404, detail="Discovered node detail not available")
 
     parent_site_id = str(cached.get("discovered_parent_site_id") or cached.get("surfaced_by_site_id") or "").strip()
-    source_node = None
-    for node in nodes:
-        node_detail = seeker_detail_cache.get(node.id) or {}
-        config_summary = node_detail.get("config_summary") if isinstance(node_detail.get("config_summary"), dict) else {}
-        node_site_id = str(config_summary.get("site_id") or "").strip()
-        if parent_site_id and node_site_id == parent_site_id:
-            source_node = node
-            break
-
-    if source_node is None:
-        source_node = next((node for node in nodes if node.api_username and node.api_password), None)
-
+    source_node = node_dashboard_backend.find_source_node_for_discovered_detail(cached, nodes)
     if source_node is None:
         raise HTTPException(status_code=404, detail="Discovered node detail not available")
 
@@ -1602,9 +1107,8 @@ async def discovered_node_detail(site_id: str, db: Session = Depends(get_db)) ->
 
 
 @app.delete("/api/discovered-nodes/{site_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_discovered_node(site_id: str) -> Response:
-    discovered_node_cache.pop(site_id, None)
-    discovered_node_tombstones[site_id] = datetime.now(timezone.utc).isoformat()
+async def delete_discovered_node(site_id: str, db: Session = Depends(get_db)) -> Response:
+    node_dashboard_backend.delete_discovered_node(db, site_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -1638,13 +1142,25 @@ async def dashboard_nodes(db: Session = Depends(get_db)) -> list[dict[str, objec
     )
 
 
+@app.get("/api/dashboard/nodes/watchlist")
+async def dashboard_node_watchlist(
+    pin_key: list[str] = Query(default=[]),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    db.commit()
+    return build_node_watchlist_payload(node_dashboard_backend.get_serialized_cache(), pin_key)
+
+
 @app.get("/api/node-dashboard")
 async def node_dashboard_payload(db: Session = Depends(get_db)) -> dict[str, list[dict[str, object]]]:
     db.commit()
-    return {
-        "anchors": list(node_dashboard_cache.get("anchors") or []),
-        "discovered": list(node_dashboard_cache.get("discovered") or []),
-    }
+    return node_dashboard_backend.get_cached_payload()
+
+
+@app.get("/api/topology/discovery")
+async def topology_discovery_payload(db: Session = Depends(get_db)) -> dict[str, object]:
+    db.commit()
+    return build_topology_discovery_payload(node_dashboard_backend.get_cached_payload())
 
 
 @app.get("/api/node-dashboard/stream")

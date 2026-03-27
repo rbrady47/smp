@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ page_title }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260326-topology2">
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260327-topology5">
 </head>
 <body>
     <header class="topbar">
@@ -23,8 +23,8 @@
         <section class="dashboard-toolbar topology-toolbar-header">
             <div>
                 <p class="eyebrow">Operational Topology</p>
-                <h1>Mission Topology</h1>
-                <p class="subtitle">Phase 1 fixed-layout topology for Lvl0, Lvl1, and aggregated Lvl2 clusters, prepared for future anchor-node binding.</p>
+                <h1>Division C2 Information Network</h1>
+                <p class="subtitle">Phase 1 fixed-layout topology for C2IN Aggregate, C2IN VME, and C2IN Edge nodes, prepared for unit-specific drill-in views.</p>
             </div>
             <div class="dashboard-toolbar-actions">
                 <a href="/nodes" class="button-secondary">Manage Nodes</a>
@@ -57,20 +57,25 @@
             <section class="card topology-stage-card">
                 <div class="topology-stage-header">
                     <div>
-                        <h2>Topology Canvas</h2>
+                        <h2>Division C2 Information Network</h2>
                         <p class="section-copy">Mock structured layout with real inventory metadata overlaid where available.</p>
                     </div>
                     <div class="topology-stage-actions">
+                        <button type="button" class="button-secondary topology-layout-toggle" id="topology-layout-edit-toggle" aria-pressed="false">
+                            Edit Layout
+                        </button>
+                        <button type="button" class="button-secondary topology-layout-reset" id="topology-layout-reset" hidden>
+                            Reset Layout
+                        </button>
                         <button type="button" class="button-secondary topology-filter-toggle" id="topology-filter-toggle" aria-expanded="true">
                             Hide Controls
                         </button>
                     </div>
                 </div>
                 <div class="topology-stage" id="topology-stage">
-                    <div class="topology-stage-grid-label topology-label-lvl0">Lvl0</div>
-                    <div class="topology-stage-grid-label topology-label-lvl1">Lvl1</div>
-                    <div class="topology-stage-grid-label topology-label-lvl2">Lvl2</div>
-                    <div class="topology-stage-grid-label topology-label-lvl3">Lvl3 Reserved</div>
+                    <div class="topology-stage-grid-label topology-label-lvl0">C2IN Aggregate</div>
+                    <div class="topology-stage-grid-label topology-label-lvl1">C2IN VME</div>
+                    <div class="topology-stage-grid-label topology-label-lvl2">C2IN Edge</div>
                     <div class="topology-locations-header" id="topology-locations-header"></div>
                     <svg class="topology-links" id="topology-links" aria-hidden="true"></svg>
                     <div class="topology-layer topology-layer-nodes" id="topology-node-layer"></div>
@@ -88,6 +93,6 @@
         </section>
     </main>
 
-    <script src="{{ url_for('static', path='js/app.js') }}?v=20260326-topology2"></script>
+    <script src="{{ url_for('static', path='js/app.js') }}?v=20260327-topology4"></script>
 </body>
 </html>

@@ -46,16 +46,31 @@ const themeModeStorageKey = "smp-theme-mode";
 const pinnedNodesStorageKey = "smp-main-dashboard-node-ids";
 const pinnedServicesStorageKey = "smp-main-dashboard-service-ids";
 const topologyControlsCollapsedStorageKey = "smp-topology-controls-collapsed";
+const topologyEditModeStorageKey = "smp-topology-edit-mode";
+const topologyLayoutStorageKey = "smp-topology-layout-overrides";
 const TOPOLOGY_LOCATIONS = ["HSMC", "Cloud", "Episodic"];
 const TOPOLOGY_UNITS = ["DIV HQ", "1BCT", "2BCT", "3BCT", "CAB/DIVARTY", "Sustainment"];
+const TOPOLOGY_LOCATION_ALIASES = {
+    hsmc: "HSMC",
+    cloud: "Cloud",
+    azure: "Cloud",
+    episodic: "Episodic",
+    epis: "Episodic",
+};
 let topologyPayload = null;
+let topologyDiscoveryPayload = { anchors: [], discovered: [] };
 let topologyResizeListenerBound = false;
+let topologyRouteListenerBound = false;
 const topologyState = {
     activeLocations: new Set(TOPOLOGY_LOCATIONS),
     activeUnits: new Set(TOPOLOGY_UNITS),
     view: "backbone+l2",
     selectedKind: null,
     selectedId: null,
+    focusUnit: null,
+    editMode: false,
+    layoutOverrides: {},
+    dragging: null,
 };
 
 const statusPriority = {
@@ -72,6 +87,348 @@ function escapeHtml(value) {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
+}
+
+function normalizeTopologyLocation(location) {
+    if (!location) {
+        return null;
+    }
+
+    const normalized = String(location).trim();
+    return TOPOLOGY_LOCATION_ALIASES[normalized.toLowerCase()] || normalized;
+}
+
+function normalizeTopologyUnit(unit) {
+    if (!unit) {
+        return null;
+    }
+
+    const normalized = String(unit).trim();
+    return TOPOLOGY_UNITS.includes(normalized) ? normalized : null;
+}
+
+function getTopologyDiscoveryCounts() {
+    const summary = topologyDiscoveryPayload?.summary;
+    if (summary && typeof summary === "object") {
+        return {
+            total: Number(summary.total_discovered || 0),
+            byLocation: new Map(Object.entries(summary.by_location || {})),
+            byLocationUnit: new Map(Object.entries(summary.by_location_unit || {})),
+            byUnit: new Map(Object.entries(summary.by_unit || {})),
+        };
+    }
+
+    const counts = {
+        total: 0,
+        byLocation: new Map(),
+        byLocationUnit: new Map(),
+        byUnit: new Map(),
+    };
+    const discovered = Array.isArray(topologyDiscoveryPayload?.discovered) ? topologyDiscoveryPayload.discovered : [];
+
+    discovered.forEach((row) => {
+        const location = normalizeTopologyLocation(row.location) || "--";
+        const unit = String(row.unit || "--");
+        counts.total += 1;
+        counts.byLocation.set(location, (counts.byLocation.get(location) || 0) + 1);
+        counts.byLocationUnit.set(`${location}::${unit}`, (counts.byLocationUnit.get(`${location}::${unit}`) || 0) + 1);
+        counts.byUnit.set(unit, (counts.byUnit.get(unit) || 0) + 1);
+    });
+
+    return counts;
+}
+
+function getTopologyDiscoveryCount(entity, discoveryCounts) {
+    if (entity.level === 0) {
+        return discoveryCounts.byLocation.get(entity.location) || 0;
+    }
+
+    if (entity.level === 1) {
+        return discoveryCounts.byLocationUnit.get(`${entity.location}::${entity.unit}`) || 0;
+    }
+
+    if (entity.level === 2) {
+        return discoveryCounts.byUnit.get(entity.unit) || 0;
+    }
+
+    return 0;
+}
+
+function getTopologyBubbleSize(entity, discoveredCount) {
+    const scale = Math.sqrt(Math.max(discoveredCount, 0));
+    if (entity.level === 0) {
+        return Math.round(Math.max(154, Math.min(228, 142 + scale * 12)));
+    }
+
+    if (entity.level === 1) {
+        return Math.round(Math.max(104, Math.min(156, 94 + scale * 7)));
+    }
+
+    return Math.round(Math.max(146, Math.min(220, 122 + scale * 10)));
+}
+
+function getTopologyBubbleDotCount(discoveredCount) {
+    return Math.max(0, Math.min(18, Math.round(discoveredCount / 3)));
+}
+
+function getTopologyBubbleDotMarkup(discoveredCount) {
+    const dotCount = getTopologyBubbleDotCount(discoveredCount);
+    if (!dotCount) {
+        return "";
+    }
+
+    return `
+        <span class="topology-bubble-dots" aria-hidden="true">
+            ${Array.from({ length: dotCount }, () => "<span class=\"topology-bubble-dot\"></span>").join("")}
+        </span>
+    `;
+}
+
+function getSavedTopologyEditMode() {
+    try {
+        return window.localStorage.getItem(topologyEditModeStorageKey) === "true";
+    } catch (error) {
+        return false;
+    }
+}
+
+function saveTopologyEditMode(editMode) {
+    try {
+        window.localStorage.setItem(topologyEditModeStorageKey, editMode ? "true" : "false");
+    } catch (error) {
+        // Ignore storage failures.
+    }
+}
+
+function getSavedTopologyLayoutOverrides() {
+    try {
+        const raw = window.localStorage.getItem(topologyLayoutStorageKey);
+        if (!raw) {
+            return {};
+        }
+
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (error) {
+        return {};
+    }
+}
+
+function saveTopologyLayoutOverrides() {
+    try {
+        window.localStorage.setItem(topologyLayoutStorageKey, JSON.stringify(topologyState.layoutOverrides || {}));
+    } catch (error) {
+        // Ignore storage failures.
+    }
+}
+
+function clearTopologyLayoutOverrides() {
+    topologyState.layoutOverrides = {};
+    saveTopologyLayoutOverrides();
+}
+
+function setTopologyEditMode(editMode) {
+    topologyState.editMode = Boolean(editMode);
+    saveTopologyEditMode(topologyState.editMode);
+
+    const stage = document.getElementById("topology-stage");
+    const button = document.getElementById("topology-layout-edit-toggle");
+    const resetButton = document.getElementById("topology-layout-reset");
+
+    if (stage) {
+        stage.classList.toggle("is-editing", topologyState.editMode);
+    }
+    if (button) {
+        button.textContent = topologyState.editMode ? "Lock Layout" : "Edit Layout";
+        button.setAttribute("aria-pressed", topologyState.editMode ? "true" : "false");
+    }
+    if (resetButton) {
+        resetButton.hidden = !topologyState.editMode;
+    }
+}
+
+function getTopologyBaseLayout(entity) {
+    const position = getTopologyNodePosition(entity);
+    const discoveryCounts = getTopologyDiscoveryCounts();
+    const discoveredCount = getTopologyDiscoveryCount(entity, discoveryCounts);
+    return {
+        x: position.x,
+        y: position.y,
+        size: getTopologyBubbleSize(entity, discoveredCount),
+    };
+}
+
+function getTopologyEntityLayout(entity) {
+    const baseLayout = getTopologyBaseLayout(entity);
+    const override = topologyState.layoutOverrides?.[entity.id];
+    if (!override) {
+        return baseLayout;
+    }
+
+    return {
+        x: Number.isFinite(override.x) ? override.x : baseLayout.x,
+        y: Number.isFinite(override.y) ? override.y : baseLayout.y,
+        size: Number.isFinite(override.size) ? override.size : baseLayout.size,
+    };
+}
+
+function setTopologyEntityLayout(entityId, nextLayout, options = {}) {
+    topologyState.layoutOverrides = {
+        ...(topologyState.layoutOverrides || {}),
+        [entityId]: {
+            x: Math.round(nextLayout.x),
+            y: Math.round(nextLayout.y),
+            size: Math.round(nextLayout.size),
+        },
+    };
+
+    if (options.persist !== false) {
+        saveTopologyLayoutOverrides();
+    }
+}
+
+function removeTopologyEntityLayout(entityId) {
+    if (!topologyState.layoutOverrides?.[entityId]) {
+        return;
+    }
+
+    const nextOverrides = { ...(topologyState.layoutOverrides || {}) };
+    delete nextOverrides[entityId];
+    topologyState.layoutOverrides = nextOverrides;
+    saveTopologyLayoutOverrides();
+}
+
+function applyTopologyEntityStyles(button, layout) {
+    button.style.left = `${layout.x}px`;
+    button.style.top = `${layout.y}px`;
+    button.style.setProperty("--topology-bubble-size", `${layout.size}px`);
+}
+
+function getTopologyStageBounds() {
+    const stage = document.getElementById("topology-stage");
+    return stage ? stage.getBoundingClientRect() : null;
+}
+
+function wireTopologyLayoutEditor(stage, layer, entityMap) {
+    if (layer.dataset.layoutEditorBound === "true") {
+        return;
+    }
+
+    layer.dataset.layoutEditorBound = "true";
+
+    const clearDragListeners = () => {
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", handlePointerEnd);
+        window.removeEventListener("pointercancel", handlePointerEnd);
+    };
+
+    const handlePointerMove = (event) => {
+        const drag = topologyState.dragging;
+        if (!drag || event.pointerId !== drag.pointerId) {
+            return;
+        }
+
+        const deltaX = event.clientX - drag.startX;
+        const deltaY = event.clientY - drag.startY;
+        const nextLayout = { ...drag.startLayout };
+
+        if (drag.mode === "resize") {
+            const nextSize = Math.max(88, Math.round(drag.startLayout.size + Math.max(deltaX, deltaY)));
+            const offset = (nextSize - drag.startLayout.size) / 2;
+            nextLayout.x = drag.startLayout.x + offset;
+            nextLayout.y = drag.startLayout.y + offset;
+            nextLayout.size = nextSize;
+        } else {
+            nextLayout.x = drag.startLayout.x + deltaX;
+            nextLayout.y = drag.startLayout.y + deltaY;
+        }
+
+        setTopologyEntityLayout(drag.entityId, nextLayout, { persist: false });
+        applyTopologyEntityStyles(drag.element, nextLayout);
+        drawTopologyLinks(entityMap);
+        event.preventDefault();
+    };
+
+    const handlePointerEnd = (event) => {
+        const drag = topologyState.dragging;
+        if (!drag || event.pointerId !== drag.pointerId) {
+            return;
+        }
+
+        try {
+            drag.element.releasePointerCapture(drag.pointerId);
+        } catch (error) {
+            // Ignore capture failures.
+        }
+
+        saveTopologyLayoutOverrides();
+        topologyState.dragging = null;
+        clearDragListeners();
+        event.preventDefault();
+    };
+
+    layer.addEventListener("pointerdown", (event) => {
+        if (!topologyState.editMode) {
+            return;
+        }
+
+        const target = event.target;
+        const button = target instanceof Element ? target.closest("[data-topology-id]") : null;
+        if (!(button instanceof HTMLElement)) {
+            return;
+        }
+
+        const entityId = button.getAttribute("data-topology-id");
+        const entity = entityMap.get(entityId || "");
+        if (!entity) {
+            return;
+        }
+
+        const resizeHandle = target instanceof Element ? target.closest("[data-topology-resize-handle]") : null;
+        const startLayout = getTopologyEntityLayout(entity);
+
+        topologyState.dragging = {
+            mode: resizeHandle ? "resize" : "drag",
+            entityId,
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            startY: event.clientY,
+            startLayout,
+            element: button,
+        };
+
+        try {
+            button.setPointerCapture(event.pointerId);
+        } catch (error) {
+            // Ignore capture failures.
+        }
+
+        window.addEventListener("pointermove", handlePointerMove);
+        window.addEventListener("pointerup", handlePointerEnd);
+        window.addEventListener("pointercancel", handlePointerEnd);
+        event.preventDefault();
+        event.stopPropagation();
+    });
+}
+
+function setTopologyUnitFocus(unit) {
+    const normalizedUnit = normalizeTopologyUnit(unit);
+    topologyState.focusUnit = normalizedUnit;
+    if (normalizedUnit) {
+        topologyState.activeUnits = new Set([normalizedUnit]);
+    } else {
+        topologyState.activeUnits = new Set(TOPOLOGY_UNITS);
+    }
+}
+
+function updateTopologyUnitRoute(unit) {
+    const url = new URL(window.location.href);
+    if (unit) {
+        url.searchParams.set("unit", unit);
+    } else {
+        url.searchParams.delete("unit");
+    }
+    window.history.pushState({ unit: unit || null }, "", url);
 }
 
 function safeStart(loader, label) {
@@ -1761,6 +2118,7 @@ function renderTopologyFilterButtons(containerId, values, stateSet, filterType) 
                     class="topology-filter-chip ${stateSet.has(value) ? "active" : ""}"
                     data-topology-filter="${filterType}"
                     data-topology-value="${escapeHtml(value)}"
+                    aria-pressed="${stateSet.has(value) ? "true" : "false"}"
                 >
                     ${escapeHtml(value)}
                 </button>
@@ -1786,6 +2144,7 @@ function renderTopologyViewButtons() {
                     type="button"
                     class="topology-filter-chip ${topologyState.view === value ? "active" : ""}"
                     data-topology-view="${value}"
+                    aria-pressed="${topologyState.view === value ? "true" : "false"}"
                 >
                     ${label}
                 </button>
@@ -1799,7 +2158,20 @@ function renderTopologyLocationHeaders() {
     if (!container) {
         return;
     }
-    container.innerHTML = "";
+
+    const entities = getTopologyEntities();
+    container.innerHTML = (topologyPayload?.locations ?? TOPOLOGY_LOCATIONS)
+        .map((location) => {
+            const visibleCount = entities.filter((entity) => entity.location === location && isTopologyEntityVisible(entity)).length;
+            const totalCount = entities.filter((entity) => entity.location === location).length;
+            return `
+                <div class="topology-location-title ${topologyState.activeLocations.has(location) ? "" : "dim"}" data-topology-location="${escapeHtml(location)}">
+                    <span>${escapeHtml(location)}</span>
+                    <span class="topology-location-count">${visibleCount} visible${totalCount !== visibleCount ? ` of ${totalCount}` : ""}</span>
+                </div>
+            `;
+        })
+        .join("");
 }
 
 function getTopologyNodePosition(entity) {
@@ -1892,46 +2264,61 @@ function renderTopologyStage() {
         return;
     }
 
+    stage.classList.toggle("is-editing", topologyState.editMode);
     renderTopologyLocationHeaders();
 
     const entities = getTopologyEntities();
     const visibleEntities = entities.filter(isTopologyEntityVisible);
     const entityMap = new Map(entities.map((entity) => [entity.id, entity]));
+    const discoveryCounts = getTopologyDiscoveryCounts();
 
     layer.innerHTML = visibleEntities
         .map((entity) => {
-            const position = getTopologyNodePosition(entity);
+            const layout = getTopologyEntityLayout(entity);
+            const discoveredCount = getTopologyDiscoveryCount(entity, discoveryCounts);
             const isCluster = entity.level === 2;
             const isLvl1 = entity.level === 1;
+            const isFocusedUnit = entity.level === 2 && topologyState.focusUnit && topologyState.focusUnit === entity.unit;
             const classes = [
                 "topology-entity",
                 isCluster ? "topology-cluster" : "topology-node",
                 `topology-status-${entity.status || "neutral"}`,
                 entity.level === 0 ? "topology-node-agg" : "",
                 isLvl1 ? "topology-node-lvl1" : "",
+                isFocusedUnit ? "is-selected" : "",
                 topologyState.selectedKind === "entity" && topologyState.selectedId === entity.id ? "is-selected" : "",
             ]
                 .filter(Boolean)
                 .join(" ");
 
-            const badge = isCluster ? `<span class="topology-count-badge">${entity.count}</span>` : "";
+            const badge = discoveredCount ? `<span class="topology-count-badge">${discoveredCount}</span>` : "";
             const subtitle = isCluster
-                ? "Aggregated Lvl2"
+                ? "Edge Nodes"
                 : entity.level === 1
-                    ? escapeHtml(entity.unit)
+                    ? escapeHtml(entity.location)
                     : `${escapeHtml(entity.location)} · ${escapeHtml(entity.unit)}`;
-            const displayName = entity.level === 1 ? escapeHtml(entity.location) : escapeHtml(entity.name);
+            const displayName = entity.level === 1 || isCluster ? escapeHtml(entity.unit) : escapeHtml(entity.name);
+            const nodeDots = getTopologyBubbleDotMarkup(discoveredCount);
+            const titleText = isCluster ? `${entity.unit} Edge Nodes` : entity.level === 1 ? `${entity.unit} / ${entity.location}` : entity.name;
+            const bubbleStyle = `left:${layout.x}px; top:${layout.y}px; --topology-bubble-size:${layout.size}px;`;
+            const resizeHandle = topologyState.editMode
+                ? '<span class="topology-resize-handle" data-topology-resize-handle="true" aria-hidden="true"></span>'
+                : "";
 
             return `
                 <button
                     type="button"
                     class="${classes}"
                     data-topology-id="${entity.id}"
-                    style="left:${position.x}px; top:${position.y}px;"
+                    aria-label="${escapeHtml(titleText)}"
+                    data-topology-editable="${topologyState.editMode ? "true" : "false"}"
+                    style="${bubbleStyle}"
                 >
                     <span class="topology-node-name">${displayName}</span>
                     <span class="topology-node-meta">${subtitle}</span>
+                    ${nodeDots}
                     ${badge}
+                    ${resizeHandle}
                 </button>
             `;
         })
@@ -1945,8 +2332,21 @@ function renderTopologyStage() {
 
     layer.querySelectorAll("[data-topology-id]").forEach((button) => {
         button.addEventListener("click", (event) => {
+            if (topologyState.editMode) {
+                return;
+            }
             event.stopPropagation();
             const nextId = button.getAttribute("data-topology-id");
+            const nextEntity = entityMap.get(nextId || "");
+            if (nextEntity?.level === 2) {
+                setTopologyUnitFocus(nextEntity.unit);
+                updateTopologyUnitRoute(nextEntity.unit);
+                topologyState.selectedKind = "entity";
+                topologyState.selectedId = nextId;
+                renderTopologyControls();
+                renderTopologyStage();
+                return;
+            }
             if (topologyState.selectedKind === "entity" && topologyState.selectedId === nextId) {
                 topologyState.selectedKind = null;
                 topologyState.selectedId = null;
@@ -1958,7 +2358,14 @@ function renderTopologyStage() {
         });
     });
 
+    if (topologyState.editMode) {
+        wireTopologyLayoutEditor(stage, layer, entityMap);
+    }
+
     stage.onclick = (event) => {
+        if (topologyState.editMode) {
+            return;
+        }
         const target = event.target;
         if (target instanceof Element && target.closest("[data-topology-id], [data-topology-link-id], #topology-drawer")) {
             return;
@@ -2051,6 +2458,7 @@ function renderTopologyDrawer() {
         return;
     }
 
+    const entityMap = new Map(getTopologyEntities().map((item) => [item.id, item]));
     const entity = topologyState.selectedKind === "entity"
         ? getTopologyEntities().find((item) => item.id === topologyState.selectedId)
         : null;
@@ -2070,6 +2478,8 @@ function renderTopologyDrawer() {
     });
 
     if (link) {
+        const fromEntity = entityMap.get(link.from);
+        const toEntity = entityMap.get(link.to);
         drawer.innerHTML = `
             <div class="topology-drawer-block">
                 <span class="dashboard-meta-label">Selected Link</span>
@@ -2092,6 +2502,14 @@ function renderTopologyDrawer() {
                     <span class="detail-summary-label">To</span>
                     <strong class="detail-summary-value">${escapeHtml(link.to || "--")}</strong>
                 </div>
+                <div class="detail-summary-item">
+                    <span class="detail-summary-label">From Name</span>
+                    <strong class="detail-summary-value">${escapeHtml(fromEntity?.name || "--")}</strong>
+                </div>
+                <div class="detail-summary-item">
+                    <span class="detail-summary-label">To Name</span>
+                    <strong class="detail-summary-value">${escapeHtml(toEntity?.name || "--")}</strong>
+                </div>
             </div>
             <div class="topology-drawer-block">
                 <span class="dashboard-meta-label">Operational Notes</span>
@@ -2101,11 +2519,12 @@ function renderTopologyDrawer() {
         return;
     }
 
-    const levelLabel = entity.level === 0 ? "Lvl0" : entity.level === 1 ? "Lvl1" : "Lvl2 Cluster";
+    const levelLabel = entity.level === 0 ? "Lvl0" : entity.level === 1 ? "Lvl1" : "Edge Nodes";
+    const displayName = entity.level === 2 ? `${entity.unit || "Unit"} Edge Nodes` : entity.name;
     drawer.innerHTML = `
         <div class="topology-drawer-block">
             <span class="dashboard-meta-label">Selected</span>
-            <h3>${escapeHtml(entity.name)}</h3>
+            <h3>${escapeHtml(displayName)}</h3>
         </div>
         <div class="topology-drawer-grid">
             <div class="detail-summary-item">
@@ -2123,6 +2542,27 @@ function renderTopologyDrawer() {
             <div class="detail-summary-item">
                 <span class="detail-summary-label">Unit</span>
                 <strong class="detail-summary-value">${escapeHtml(entity.unit || "--")}</strong>
+            </div>
+            </div>
+        <div class="topology-drawer-block">
+            <span class="dashboard-meta-label">Inventory Binding</span>
+            <div class="topology-drawer-grid">
+                <div class="detail-summary-item">
+                    <span class="detail-summary-label">Inventory Node</span>
+                    <strong class="detail-summary-value">${escapeHtml(entity.inventory_node_id || "--")}</strong>
+                </div>
+                <div class="detail-summary-item">
+                    <span class="detail-summary-label">Inventory Name</span>
+                    <strong class="detail-summary-value">${escapeHtml(entity.inventory_name || "--")}</strong>
+                </div>
+                <div class="detail-summary-item">
+                    <span class="detail-summary-label">Included</span>
+                    <strong class="detail-summary-value">${escapeHtml(entity.include_in_topology ? "Yes" : "No")}</strong>
+                </div>
+                <div class="detail-summary-item">
+                    <span class="detail-summary-label">Anchor State</span>
+                    <strong class="detail-summary-value">${escapeHtml(entity.inventory_node_id ? "Bound" : "Awaiting anchor")}</strong>
+                </div>
             </div>
         </div>
         <div class="topology-drawer-block">
@@ -2159,6 +2599,10 @@ function wireTopologyControls() {
                 return;
             }
 
+            if (filterType === "unit") {
+                topologyState.focusUnit = null;
+                updateTopologyUnitRoute(null);
+            }
             toggleTopologySetValue(targetSet, value);
             renderTopologyControls();
             renderTopologyStage();
@@ -2224,6 +2668,27 @@ function wireTopologyBarToggle() {
     });
 }
 
+function wireTopologyLayoutControls() {
+    const editButton = document.getElementById("topology-layout-edit-toggle");
+    const resetButton = document.getElementById("topology-layout-reset");
+
+    if (editButton && editButton.dataset.bound !== "true") {
+        editButton.dataset.bound = "true";
+        editButton.addEventListener("click", () => {
+            setTopologyEditMode(!topologyState.editMode);
+            renderTopologyStage();
+        });
+    }
+
+    if (resetButton && resetButton.dataset.bound !== "true") {
+        resetButton.dataset.bound = "true";
+        resetButton.addEventListener("click", () => {
+            clearTopologyLayoutOverrides();
+            renderTopologyStage();
+        });
+    }
+}
+
 async function loadTopologyPage() {
     const root = document.getElementById("topology-root");
     if (!root) {
@@ -2231,14 +2696,31 @@ async function loadTopologyPage() {
     }
 
     try {
-        topologyPayload = await apiRequest("/api/topology");
+        const requestedUnit = normalizeTopologyUnit(new URL(window.location.href).searchParams.get("unit"));
+        const [topologyResult, discoveryResult] = await Promise.allSettled([
+            apiRequest("/api/topology"),
+            apiRequest("/api/topology/discovery"),
+        ]);
+        if (topologyResult.status !== "fulfilled") {
+            throw topologyResult.reason;
+        }
+        topologyPayload = topologyResult.value;
+        topologyDiscoveryPayload = discoveryResult.status === "fulfilled"
+            ? discoveryResult.value
+            : { anchors: [], discovered: [] };
         topologyState.activeLocations = new Set(TOPOLOGY_LOCATIONS);
-        topologyState.activeUnits = new Set(TOPOLOGY_UNITS);
+        setTopologyUnitFocus(requestedUnit);
+        if (!topologyState.focusUnit) {
+            topologyState.activeUnits = new Set(TOPOLOGY_UNITS);
+        }
+        topologyState.layoutOverrides = getSavedTopologyLayoutOverrides();
         topologyState.view = "backbone+l2";
         topologyState.selectedKind = null;
         topologyState.selectedId = null;
         renderTopologyControls();
         wireTopologyBarToggle();
+        wireTopologyLayoutControls();
+        setTopologyEditMode(getSavedTopologyEditMode());
         setTopologyControlsCollapsed(getTopologyControlsCollapsed());
         renderTopologyStage();
     } catch (error) {
@@ -2259,6 +2741,19 @@ async function loadTopologyPage() {
             }
         });
         topologyResizeListenerBound = true;
+    }
+
+    if (!topologyRouteListenerBound) {
+        window.addEventListener("popstate", () => {
+            const requestedUnit = normalizeTopologyUnit(new URL(window.location.href).searchParams.get("unit"));
+            setTopologyUnitFocus(requestedUnit);
+            if (!topologyState.focusUnit) {
+                topologyState.activeUnits = new Set(TOPOLOGY_UNITS);
+            }
+            renderTopologyControls();
+            renderTopologyStage();
+        });
+        topologyRouteListenerBound = true;
     }
 }
 
@@ -2500,6 +2995,7 @@ function nodeListMatches(row, query) {
     const haystacks = [
         row.site_name,
         row.site_id,
+        row.unit,
         row.version,
         row.host,
         row.discovered_parent_name,
@@ -2547,6 +3043,9 @@ function renderNodeDashboardRow(row, pinnedKeys) {
     const rttState = row.ping_state || (String(row.ping || "").toLowerCase() === "up" ? "good" : "down");
     const txDisplay = row.tx_display || formatRate(row.tx_bps || row.tx_rate || 0);
     const rxDisplay = row.rx_display || formatRate(row.rx_bps || row.rx_rate || 0);
+    const unitMarkup = !isAnchor
+        ? `<div class="node-list-meta"><span class="node-list-meta-label">Unit</span><strong>${escapeHtml(row.unit || "--")}</strong></div>`
+        : "";
     return `
         <article class="node-list-row${indentClass}" ${isAnchor ? `data-node-pin-key="${escapeHtml(pinKey)}" draggable="true"` : ""}>
             <div class="node-list-main node-list-main-inline">
@@ -2559,6 +3058,7 @@ function renderNodeDashboardRow(row, pinnedKeys) {
                 <div class="node-list-meta-grid node-list-meta-grid-inline ${!isAnchor ? "node-list-meta-grid-inline-discovered" : ""}">
                     <div class="node-list-meta"><span class="node-list-meta-label">Site ID</span><strong>${escapeHtml(row.site_id || "--")}</strong></div>
                     <div class="node-list-meta"><span class="node-list-meta-label">Site IP</span><strong>${escapeHtml(row.host || "--")}</strong></div>
+                    ${unitMarkup}
                     <div class="node-list-meta"><span class="node-list-meta-label">Version</span><strong>${escapeHtml(row.version || "--")}</strong></div>
                     <div class="node-list-meta">
                         <span class="node-list-meta-label">RTT</span>
@@ -2806,24 +3306,24 @@ async function loadMainDashboard() {
         return;
     }
 
+    const pinnedNodeKeys = getPinnedNodeKeys();
+    const watchlistParams = new URLSearchParams();
+    pinnedNodeKeys.forEach((pinKey) => {
+        watchlistParams.append("pin_key", pinKey);
+    });
+
     const [nodesResult, servicesResult] = await Promise.allSettled([
-        apiRequest("/api/node-dashboard"),
+        apiRequest(`/api/dashboard/nodes/watchlist${watchlistParams.toString() ? `?${watchlistParams.toString()}` : ""}`),
         apiRequest("/api/dashboard/services"),
     ]);
 
     if (nodesResult.status === "fulfilled") {
-        const pinnedNodeKeys = new Set(getPinnedNodeKeys());
-        const allNodes = [
-            ...(Array.isArray(nodesResult.value?.anchors) ? nodesResult.value.anchors : []),
-            ...(Array.isArray(nodesResult.value?.discovered) ? nodesResult.value.discovered : []),
-        ];
-        const pinnedNodes = allNodes.filter((node) => pinnedNodeKeys.has(String(node.pin_key || `anchor:${node.id}`)));
-        renderDashboard(pinnedNodes, {
+        renderDashboard(Array.isArray(nodesResult.value?.nodes) ? nodesResult.value.nodes : [], {
             gridId: "mainNodeGrid",
             lastUpdatedId: "main-dashboard-last-updated",
             countId: "main-dashboard-node-count",
             showPin: true,
-            pinnedNodeKeys: Array.from(pinnedNodeKeys),
+            pinnedNodeKeys,
             emptyTitle: "No pinned nodes",
             emptySubtitle: "Pin nodes from the full Node Dashboard to build this watchlist.",
         });
