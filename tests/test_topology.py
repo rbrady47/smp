@@ -3,6 +3,7 @@ import unittest
 from app.topology import (
     TOPOLOGY_LOCATIONS,
     TOPOLOGY_UNITS,
+    _merge_topology_statuses,
     build_mock_topology_payload,
     build_topology_discovery_payload,
     normalize_topology_location,
@@ -23,6 +24,13 @@ class TopologyHelpersTest(unittest.TestCase):
         self.assertEqual(topology_status_from_node_status("offline"), "down")
         self.assertEqual(topology_status_from_node_status("disabled"), "down")
         self.assertEqual(topology_status_from_node_status("unknown"), "neutral")
+
+    def test_merge_topology_statuses_prefers_down_then_degraded(self) -> None:
+        self.assertEqual(_merge_topology_statuses("healthy", "healthy"), "healthy")
+        self.assertEqual(_merge_topology_statuses("healthy", "degraded"), "degraded")
+        self.assertEqual(_merge_topology_statuses("neutral", "degraded"), "degraded")
+        self.assertEqual(_merge_topology_statuses("healthy", "down"), "down")
+        self.assertEqual(_merge_topology_statuses("neutral", "neutral"), "neutral")
 
     def test_build_mock_topology_payload_filters_and_binds_inventory_nodes(self) -> None:
         payload = build_mock_topology_payload(
@@ -80,6 +88,46 @@ class TopologyHelpersTest(unittest.TestCase):
 
         self.assertTrue(all(node["inventory_node_id"] != "ignored-node" for node in payload["lvl0_nodes"]))
         self.assertTrue(all(node["inventory_node_id"] != "ignored-node" for node in payload["lvl1_nodes"]))
+
+    def test_build_mock_topology_payload_keeps_backbone_links_down_when_anchors_are_down(self) -> None:
+        payload = build_mock_topology_payload(
+            [
+                {
+                    "id": "agg-cloud",
+                    "name": "Cloud Aggregate",
+                    "host": "cloud-agg.example",
+                    "location": "cloud",
+                    "status": "offline",
+                    "include_in_topology": True,
+                    "topology_level": 0,
+                    "topology_unit": "AGG",
+                },
+                {
+                    "id": "agg-hsmc",
+                    "name": "HSMC Aggregate",
+                    "host": "hsmc-agg.example",
+                    "location": "hsmc",
+                    "status": "offline",
+                    "include_in_topology": True,
+                    "topology_level": 0,
+                    "topology_unit": "AGG",
+                },
+                {
+                    "id": "agg-episodic",
+                    "name": "Episodic Aggregate",
+                    "host": "episodic-agg.example",
+                    "location": "episodic",
+                    "status": "offline",
+                    "include_in_topology": True,
+                    "topology_level": 0,
+                    "topology_unit": "AGG",
+                },
+            ]
+        )
+
+        mesh_links = [link for link in payload["links"] if link["kind"] == "backbone"]
+        self.assertTrue(mesh_links)
+        self.assertTrue(all(link["status"] == "down" for link in mesh_links))
 
     def test_build_topology_discovery_payload_projects_dashboard_rows(self) -> None:
         payload = build_topology_discovery_payload(

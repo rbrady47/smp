@@ -42,6 +42,17 @@ def topology_status_from_node_status(status: str | None) -> str:
     return "neutral"
 
 
+def _merge_topology_statuses(*statuses: str | None) -> str:
+    normalized = [str(status or "neutral").strip().lower() for status in statuses]
+    if any(status == "down" for status in normalized):
+        return "down"
+    if any(status == "degraded" for status in normalized):
+        return "degraded"
+    if normalized and all(status == "healthy" for status in normalized):
+        return "healthy"
+    return "neutral"
+
+
 def _resolve_discovered_unit(
     site_id: str,
     discovered_by_site_id: dict[str, dict[str, Any]],
@@ -290,7 +301,7 @@ def build_mock_topology_payload(inventory_nodes: list[dict[str, Any]]) -> dict[s
                 "from": left["id"],
                 "to": right["id"],
                 "kind": "backbone",
-                "status": "healthy" if left["status"] == right["status"] == "healthy" else "neutral",
+                "status": _merge_topology_statuses(left["status"], right["status"]),
             }
         )
 
@@ -331,7 +342,10 @@ def build_mock_topology_payload(inventory_nodes: list[dict[str, Any]]) -> dict[s
                     "from": f"lvl0-{location.lower()}",
                     "to": node_id,
                     "kind": "uplink",
-                    "status": "healthy" if (inventory or {}).get("status") == "online" else "neutral",
+                    "status": _merge_topology_statuses(
+                        next(level0["status"] for level0 in lvl0_nodes if level0["location"] == location),
+                        topology_status_from_node_status((inventory or {}).get("status")),
+                    ),
                 }
             )
             links.append(
@@ -343,24 +357,6 @@ def build_mock_topology_payload(inventory_nodes: list[dict[str, Any]]) -> dict[s
                     "status": topology_status_from_node_status((inventory or {}).get("status")),
                 }
             )
-
-    # Phase 1 visual demo: bias link colors toward healthy so the topology
-    # reads as an operational network, while leaving a few obvious exceptions
-    # to preview degraded/down styling before real link health is wired in.
-    demo_status_overrides = {
-        "mesh-lvl0-cloud-lvl0-hsmc": "healthy",
-        "mesh-lvl0-cloud-lvl0-episodic": "healthy",
-        "mesh-lvl0-hsmc-lvl0-episodic": "healthy",
-        "agg-cloud-lvl1-cloud-div-hq": "down",
-        "agg-hsmc-lvl1-hsmc-2bct": "degraded",
-        "lvl1-episodic-sustainment-lvl2-sustainment": "down",
-    }
-
-    for link in links:
-        if link["id"] in demo_status_overrides:
-            link["status"] = demo_status_overrides[link["id"]]
-        elif link.get("status") == "neutral":
-            link["status"] = "healthy"
 
     return {
         "locations": TOPOLOGY_LOCATIONS,

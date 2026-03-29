@@ -43,5 +43,7 @@ Prototype – Milestone 1 (Platform Shell)
 ## Documentation
 - User guide: `docs/USER_GUIDE.md`
 - Change history: `CHANGELOG.md`
+- Agent handoff log: `docs/AGENT_HANDOFF.md`
+- Agent working instructions: `docs/AGENT_INSTRUCTIONS.md`
 - Going forward, user-visible behavior changes should be reflected in both files so they remain reviewable in version control.
 

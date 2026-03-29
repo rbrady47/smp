@@ -181,6 +181,7 @@ async def refresh_discovered_inventory(backend: Any, db: Session, nodes: list[No
     }
     discovery_candidates = build_discovery_candidates(backend, nodes, anchor_by_site_id)
     now = datetime.now(timezone.utc)
+    refreshed_site_ids: set[str] = set()
 
     for site_id, candidate in discovery_candidates.items():
         ping_payload = await backend.get_discovered_ping_snapshot(site_id, str(candidate["host"]))
@@ -201,14 +202,14 @@ async def refresh_discovered_inventory(backend: Any, db: Session, nodes: list[No
             "location": str(candidate.get("location") or cached.get("location") or "--"),
             "unit": str(candidate.get("unit") or cached.get("unit") or "--"),
             "version": str(cached.get("version") or "--"),
-            "latency_ms": ping_payload.get("latency_ms") if ping_payload.get("latency_ms") is not None else cached.get("latency_ms"),
-            "tx_bps": cached.get("tx_bps", 0),
-            "rx_bps": cached.get("rx_bps", 0),
-            "tx_display": str(cached.get("tx_display") or "--"),
-            "rx_display": str(cached.get("rx_display") or "--"),
-            "ping": "Up" if ping_up else str(cached.get("ping") or "Down"),
-            "web_ok": bool(cached.get("web_ok")),
-            "ssh_ok": bool(cached.get("ssh_ok")),
+            "latency_ms": ping_payload.get("latency_ms") if ping_up else None,
+            "tx_bps": cached.get("tx_bps", 0) if ping_up else 0,
+            "rx_bps": cached.get("rx_bps", 0) if ping_up else 0,
+            "tx_display": str(cached.get("tx_display") or "--") if ping_up else "--",
+            "rx_display": str(cached.get("rx_display") or "--") if ping_up else "--",
+            "ping": "Up" if ping_up else "Down",
+            "web_ok": bool(cached.get("web_ok")) if ping_up else False,
+            "ssh_ok": bool(cached.get("ssh_ok")) if ping_up else False,
             "last_seen": cached.get("last_seen"),
             "last_ping_up": cached.get("last_ping_up"),
             "ping_down_since": cached.get("ping_down_since"),
@@ -229,6 +230,7 @@ async def refresh_discovered_inventory(backend: Any, db: Session, nodes: list[No
         backend._update_discovered_ping_timestamps(entry, ping_up=ping_up, observed_at=observed_at)
         backend._store_discovered_node_cache(site_id, entry)
         backend._upsert_discovered_record(db, entry)
+        refreshed_site_ids.add(site_id)
         if ping_up and isinstance(candidate.get("source_node"), Node):
             backend._schedule_discovered_node_probe(
                 candidate["source_node"],
@@ -238,6 +240,57 @@ async def refresh_discovered_inventory(backend: Any, db: Session, nodes: list[No
                 surfaced_by_site_id=str(candidate.get("surfaced_by_site_id") or "").strip() or None,
                 surfaced_by_name=str(candidate.get("surfaced_by_name") or "").strip() or None,
             )
+
+    stale_site_ids = {
+        *persisted_discovered.keys(),
+        *(site_id for site_id, row in backend.discovered_node_cache.items() if isinstance(row, dict)),
+    } - refreshed_site_ids
+    for site_id in stale_site_ids:
+        if site_id in anchor_by_site_id or site_id in backend.discovered_node_tombstones:
+            continue
+        cached = {
+            **persisted_discovered.get(site_id, {}),
+            **(backend.discovered_node_cache.get(site_id, {}) if isinstance(backend.discovered_node_cache.get(site_id), dict) else {}),
+        }
+        if not cached:
+            continue
+        observed_at = now
+        entry = {
+            **cached,
+            "row_type": "discovered",
+            "pin_key": backend._discovered_pin_key(site_id),
+            "detail_url": f"/nodes/discovered/{site_id}",
+            "site_id": site_id,
+            "site_name": backend._prefer_discovered_site_name(cached.get("site_name"), None, site_id) or f"Site {site_id}",
+            "host": str(cached.get("host") or "--"),
+            "location": str(cached.get("location") or "--"),
+            "unit": str(cached.get("unit") or "--"),
+            "version": str(cached.get("version") or "--"),
+            "latency_ms": None,
+            "tx_bps": 0,
+            "rx_bps": 0,
+            "tx_display": "--",
+            "rx_display": "--",
+            "ping": "Down",
+            "web_ok": False,
+            "ssh_ok": False,
+            "last_seen": cached.get("last_seen"),
+            "last_ping_up": cached.get("last_ping_up"),
+            "ping_down_since": cached.get("ping_down_since"),
+            "discovered_parent_site_id": cached.get("discovered_parent_site_id") or cached.get("surfaced_by_site_id"),
+            "discovered_parent_name": cached.get("discovered_parent_name") or cached.get("surfaced_by_name"),
+            "surfaced_by_names": backend._merge_discovered_sources(cached.get("surfaced_by_names")),
+            "surfaced_by_sources": _merge_source_entries(cached.get("surfaced_by_sources"), None),
+            "discovered_level": int(cached.get("discovered_level") or cached.get("level") or 2),
+            "detail": cached.get("detail", {}),
+            "probed_at": cached.get("probed_at"),
+            "level": int(cached.get("discovered_level") or cached.get("level") or 2),
+            "surfaced_by_site_id": cached.get("surfaced_by_site_id"),
+            "surfaced_by_name": cached.get("surfaced_by_name"),
+        }
+        backend._update_discovered_ping_timestamps(entry, ping_up=False, observed_at=observed_at)
+        backend._store_discovered_node_cache(site_id, entry)
+        backend._upsert_discovered_record(db, entry)
 
     db.commit()
 

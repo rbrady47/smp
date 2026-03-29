@@ -63,6 +63,7 @@ class NodeDashboardBackendTest(unittest.TestCase):
                 site_id="4001",
                 ping="Up",
                 last_seen=datetime.now(timezone.utc),
+                last_ping_up=datetime.now(timezone.utc),
             )
         )
         self.session.commit()
@@ -245,6 +246,7 @@ class NodeDashboardBackendTest(unittest.TestCase):
                 site_id="4001",
                 ping="Up",
                 last_seen=datetime.now(timezone.utc),
+                last_ping_up=datetime.now(timezone.utc),
             )
         )
         self.session.commit()
@@ -367,3 +369,240 @@ class NodeDashboardBackendTest(unittest.TestCase):
                 },
             )
         )
+
+    def test_get_discovered_ping_snapshot_does_not_reuse_stale_positive_cache(self) -> None:
+        backend = self._build_backend()
+        stale_checked_at = datetime.now(timezone.utc).replace(year=2025).isoformat()
+        backend.discovered_ping_cache["4001"] = {
+            "host": "10.10.10.10",
+            "reachable": True,
+            "latency_ms": 15,
+            "checked_at": stale_checked_at,
+        }
+
+        snapshot = asyncio.run(backend.get_discovered_ping_snapshot("4001", "10.10.10.10"))
+
+        self.assertFalse(snapshot["reachable"])
+        self.assertIsNone(snapshot["latency_ms"])
+
+    def test_refresh_discovered_inventory_marks_node_down_when_ping_fails(self) -> None:
+        anchor = Node(
+            id=1,
+            name="Anchor A",
+            node_id="1001",
+            host="10.0.0.1",
+            web_port=443,
+            ssh_port=22,
+            location="Cloud",
+            include_in_topology=True,
+            topology_level=1,
+            topology_unit="DIV HQ",
+            enabled=True,
+            notes=None,
+            api_username=None,
+            api_password=None,
+            api_use_https=False,
+            last_checked=datetime.now(timezone.utc),
+            latency_ms=12,
+        )
+
+        async def summarize_dashboard_node(node: Node) -> dict[str, object]:
+            return {
+                "id": node.id,
+                "name": node.name,
+                "host": node.host,
+                "web_port": node.web_port,
+                "ssh_port": node.ssh_port,
+                "web_scheme": "http",
+                "ssh_username": node.api_username,
+                "site": node.location,
+                "status": "healthy",
+                "web_ok": True,
+                "ssh_ok": True,
+                "ping_ok": True,
+                "ping_state": "good",
+                "ping_avg_ms": 12,
+                "latency_ms": 12,
+                "tx_bps": 1000,
+                "rx_bps": 2000,
+                "cpu_avg": 10.0,
+                "version": "1.0.0",
+                "sites_up": 1,
+                "sites_total": 1,
+                "wan_up": 1,
+                "wan_total": 1,
+                "last_seen": datetime.now(timezone.utc).isoformat(),
+            }
+
+        backend = NodeDashboardBackend(
+            seeker_detail_cache={
+                1: {
+                    "config_summary": {"site_id": "1001", "site_name": "Anchor A"},
+                    "tunnels": [
+                        {"mate_site_id": "4001", "mate_ip": "10.10.10.10"},
+                    ],
+                }
+            },
+            summarize_dashboard_node=summarize_dashboard_node,
+            ping_host=lambda host: {"reachable": False, "latency_ms": None},
+            check_tcp_port=lambda host, port: {"reachable": False, "latency_ms": None},
+            get_bwv_cfg=_unused_async,
+            get_bwv_stats=_unused_async,
+            normalize_bwv_stats=lambda payload: {},
+            build_detail_payload=lambda *args, **kwargs: {},
+        )
+        now = datetime.now(timezone.utc).isoformat()
+        backend.discovered_ping_cache["4001"] = {
+            "host": "10.10.10.10",
+            "reachable": False,
+            "latency_ms": None,
+            "checked_at": now,
+        }
+        backend.discovered_node_cache["4001"] = {
+            "row_type": "discovered",
+            "pin_key": "discovered:4001",
+            "detail_url": "/nodes/discovered/4001",
+            "site_id": "4001",
+            "site_name": "Delta",
+            "host": "10.10.10.10",
+            "location": "Cloud",
+            "unit": "DIV HQ",
+            "version": "1.2.3",
+            "discovered_level": 2,
+            "discovered_parent_site_id": "1001",
+            "discovered_parent_name": "Anchor A",
+            "surfaced_by_names": ["Anchor A"],
+            "latency_ms": 15,
+            "tx_bps": 1200,
+            "rx_bps": 3400,
+            "tx_display": "1.2 Kbps",
+            "rx_display": "3.4 Kbps",
+            "web_ok": True,
+            "ssh_ok": True,
+            "ping": "Up",
+            "last_seen": now,
+            "last_ping_up": now,
+            "ping_down_since": None,
+            "detail": {},
+            "probed_at": now,
+            "level": 2,
+            "surfaced_by_site_id": "1001",
+            "surfaced_by_name": "Anchor A",
+        }
+
+        asyncio.run(backend.refresh_discovered_inventory(self.session, [anchor]))
+
+        row = backend.discovered_node_cache["4001"]
+        self.assertEqual(row["ping"], "Down")
+        self.assertFalse(row["web_ok"])
+        self.assertFalse(row["ssh_ok"])
+        self.assertIsNone(row["latency_ms"])
+        self.assertEqual(row["tx_display"], "--")
+        self.assertEqual(row["rx_display"], "--")
+
+    def test_refresh_discovered_inventory_forces_stale_persisted_rows_down_when_not_refreshed(self) -> None:
+        anchor = Node(
+            id=1,
+            name="Anchor A",
+            node_id="1001",
+            host="10.0.0.1",
+            web_port=443,
+            ssh_port=22,
+            location="Cloud",
+            include_in_topology=True,
+            topology_level=1,
+            topology_unit="DIV HQ",
+            enabled=True,
+            notes=None,
+            api_username=None,
+            api_password=None,
+            api_use_https=False,
+            last_checked=datetime.now(timezone.utc),
+            latency_ms=12,
+        )
+
+        async def summarize_dashboard_node(node: Node) -> dict[str, object]:
+            return {
+                "id": node.id,
+                "name": node.name,
+                "host": node.host,
+                "web_port": node.web_port,
+                "ssh_port": node.ssh_port,
+                "web_scheme": "http",
+                "ssh_username": node.api_username,
+                "site": node.location,
+                "status": "healthy",
+                "web_ok": True,
+                "ssh_ok": True,
+                "ping_ok": True,
+                "ping_state": "good",
+                "ping_avg_ms": 12,
+                "latency_ms": 12,
+                "tx_bps": 1000,
+                "rx_bps": 2000,
+                "cpu_avg": 10.0,
+                "version": "1.0.0",
+                "sites_up": 1,
+                "sites_total": 1,
+                "wan_up": 1,
+                "wan_total": 1,
+                "last_seen": datetime.now(timezone.utc).isoformat(),
+            }
+
+        backend = NodeDashboardBackend(
+            seeker_detail_cache={
+                1: {
+                    "config_summary": {"site_id": "1001", "site_name": "Anchor A"},
+                    "tunnels": [],
+                }
+            },
+            summarize_dashboard_node=summarize_dashboard_node,
+            ping_host=lambda host: {"reachable": False, "latency_ms": None},
+            check_tcp_port=lambda host, port: {"reachable": False, "latency_ms": None},
+            get_bwv_cfg=_unused_async,
+            get_bwv_stats=_unused_async,
+            normalize_bwv_stats=lambda payload: {},
+            build_detail_payload=lambda *args, **kwargs: {},
+        )
+        last_ping_up = datetime.now(timezone.utc).isoformat()
+        self.session.add(
+            DiscoveredNode(
+                site_id="4001",
+                site_name="Delta",
+                host="10.10.10.10",
+                location="Cloud",
+                unit="DIV HQ",
+                version="1.2.3",
+                discovered_level=2,
+                discovered_parent_site_id="1001",
+                discovered_parent_name="Anchor A",
+                surfaced_by_names_json='["Anchor A"]',
+            )
+        )
+        self.session.add(
+            DiscoveredNodeObservation(
+                site_id="4001",
+                latency_ms=15,
+                tx_bps=1200,
+                rx_bps=3400,
+                tx_display="1.2 Kbps",
+                rx_display="3.4 Kbps",
+                web_ok=True,
+                ssh_ok=True,
+                ping="Up",
+                last_seen=datetime.now(timezone.utc),
+                last_ping_up=datetime.now(timezone.utc),
+            )
+        )
+        self.session.commit()
+
+        asyncio.run(backend.refresh_discovered_inventory(self.session, [anchor]))
+
+        row = backend.ensure_discovered_node_cached(self.session, "4001")
+        self.assertIsNotNone(row)
+        self.assertEqual(row["ping"], "Down")
+        self.assertFalse(row["web_ok"])
+        self.assertFalse(row["ssh_ok"])
+        self.assertIsNone(row["latency_ms"])
+        self.assertEqual(row["tx_display"], "--")
+        self.assertEqual(row["rx_display"], "--")

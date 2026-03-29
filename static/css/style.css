@@ -858,9 +858,50 @@ a {
     z-index: 2;
 }
 
+.topology-edit-hint {
+    margin: 0.55rem 0 0;
+    color: #9ec5f5;
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+.topology-selection-status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 5.5rem;
+    padding: 0.45rem 0.8rem;
+    border-radius: 999px;
+    border: 1px solid rgba(124, 183, 255, 0.28);
+    background: rgba(41, 65, 110, 0.72);
+    color: #dcecff;
+    font-size: 0.8rem;
+    font-weight: 800;
+}
+
+.topology-selection-status[hidden] {
+    display: none !important;
+}
+
+.topology-selection-clear[hidden] {
+    display: none !important;
+}
+
+.topology-selection-box {
+    position: absolute;
+    z-index: 2;
+    border: 1px dashed rgba(123, 214, 255, 0.78);
+    background: rgba(98, 214, 255, 0.12);
+    box-shadow: inset 0 0 0 1px rgba(98, 214, 255, 0.14);
+    pointer-events: none;
+}
+
 .topology-entity {
     position: absolute;
     transform: translate(-50%, -50%);
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
     border-radius: 18px;
     border: 1px solid rgba(86, 118, 172, 0.25);
     background:
@@ -902,8 +943,16 @@ a {
         0 0 24px rgba(98, 214, 255, 0.24);
 }
 
+.topology-stage.is-editing .topology-entity.is-multi-selected {
+    border-color: rgba(123, 214, 255, 0.82);
+    box-shadow:
+        0 0 0 2px rgba(98, 214, 255, 0.18),
+        0 18px 40px rgba(8, 20, 42, 0.42),
+        0 0 28px rgba(98, 214, 255, 0.26);
+}
+
 .topology-stage.is-editing {
-    cursor: move;
+    cursor: crosshair;
 }
 
 .topology-stage.is-editing .topology-entity {
@@ -915,9 +964,59 @@ a {
     transform: translate(-50%, -50%);
 }
 
+.topology-demo-control {
+    position: relative;
+}
+
+.topology-demo-control[hidden],
+.topology-demo-menu[hidden] {
+    display: none !important;
+}
+
+.topology-demo-menu {
+    position: absolute;
+    top: calc(100% + 0.45rem);
+    right: 0;
+    display: grid;
+    gap: 0.25rem;
+    min-width: 9rem;
+    padding: 0.4rem;
+    border-radius: 14px;
+    border: 1px solid rgba(86, 118, 172, 0.34);
+    background: rgba(16, 27, 46, 0.98);
+    box-shadow: 0 18px 34px rgba(4, 12, 24, 0.34);
+    z-index: 20;
+}
+
+.topology-demo-option {
+    border: 1px solid rgba(86, 118, 172, 0.18);
+    border-radius: 10px;
+    background: rgba(33, 47, 74, 0.78);
+    color: #eff6ff;
+    font: inherit;
+    font-weight: 700;
+    text-align: left;
+    padding: 0.55rem 0.7rem;
+    cursor: pointer;
+    transition: background-color 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+}
+
+.topology-demo-option:hover,
+.topology-demo-option:focus-visible {
+    background: rgba(52, 74, 112, 0.92);
+    border-color: rgba(123, 214, 255, 0.36);
+    transform: translateY(-1px);
+    outline: none;
+}
+
+.topology-demo-option.is-active {
+    background: rgba(41, 103, 88, 0.72);
+    border-color: rgba(74, 222, 128, 0.3);
+}
+
 .topology-node-agg {
     min-width: 170px;
-    padding: 1rem 1.15rem;
+    padding: 1rem 1.15rem 0.85rem;
     border-radius: 22px;
 }
 
@@ -940,22 +1039,100 @@ a {
 
 .topology-node-name {
     display: block;
+    width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
     font-size: 0.98rem;
     font-weight: 800;
 }
 
+.topology-node-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    margin-top: auto;
+    align-self: center;
+    margin-bottom: 0.22rem;
+    color: #8b5cf6;
+    filter: drop-shadow(0 0 12px rgba(139, 92, 246, 0.18));
+}
+
+.topology-node-icon svg {
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+}
+
+.topology-node-icon-ring,
+.topology-node-icon-stroke {
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.topology-node-icon-ring {
+    stroke-width: 3.4;
+    opacity: 0.92;
+}
+
+.topology-node-icon-stroke {
+    stroke-width: 3;
+    opacity: 0.9;
+}
+
+.topology-node-icon-node {
+    fill: currentColor;
+}
+
+.topology-node-icon-agg {
+    width: 2.65rem;
+    height: 2.65rem;
+    color: #9d74ff;
+}
+
+.topology-node-icon-anchor {
+    width: 1.9rem;
+    height: 1.9rem;
+    margin-inline: auto;
+    margin-bottom: 0;
+}
+
+.topology-node-icon-status-up {
+    color: #4ade80;
+    filter: drop-shadow(0 0 12px rgba(74, 222, 128, 0.22));
+}
+
+.topology-node-icon-status-degraded {
+    color: #fbbf24;
+    filter: drop-shadow(0 0 12px rgba(251, 191, 36, 0.22));
+}
+
+.topology-node-icon-status-down {
+    color: #f87171;
+    filter: drop-shadow(0 0 12px rgba(248, 113, 113, 0.22));
+}
+
 .topology-node-meta {
     display: block;
-    margin-top: 0.25rem;
+    margin-top: 0.15rem;
     color: #9cb3d8;
     font-size: 0.78rem;
     font-weight: 700;
+    line-height: 1.15;
 }
 
 .topology-node-lvl1 .topology-node-name {
     font-size: 0.86rem;
     line-height: 1.05;
     text-transform: uppercase;
+}
+
+.topology-node-lvl1 .topology-node-icon {
+    margin-bottom: 0;
 }
 
 .topology-node-lvl1 .topology-node-meta {
@@ -998,20 +1175,75 @@ a {
     font-weight: 800;
 }
 
-.topology-bubble-dots {
+.topology-cluster-footer {
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.22rem;
-    margin-top: 0.62rem;
-    min-height: 1rem;
+    align-items: center;
+    gap: 0.48rem;
+    margin-top: auto;
+    padding-top: 0.78rem;
+    min-height: 2.25rem;
 }
 
-.topology-bubble-dot {
-    width: 0.46rem;
-    height: 0.46rem;
-    border-radius: 50%;
-    background: rgba(92, 255, 146, 0.9);
-    box-shadow: 0 0 0 1px rgba(92, 255, 146, 0.18), 0 0 10px rgba(92, 255, 146, 0.25);
+.topology-cluster-footer .topology-count-badge {
+    margin-top: 0;
+}
+
+.topology-cluster-health-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.3rem;
+    padding: 0.24rem 0.62rem;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.14);
+    color: #d7e3f7;
+    font-size: 0.86rem;
+    font-weight: 800;
+}
+
+.topology-cluster-health-icons {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.24rem;
+}
+
+.topology-cluster-health-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.42rem;
+    height: 1.42rem;
+    color: #59f58a;
+    filter: drop-shadow(0 0 10px rgba(89, 245, 138, 0.18));
+}
+
+.topology-cluster-health-icon svg {
+    width: 100%;
+    height: 100%;
+}
+
+.topology-cluster-health-icon .topology-node-icon-ring,
+.topology-cluster-health-icon .topology-node-icon-stroke {
+    stroke-width: 4.2;
+}
+
+.topology-cluster-health-icon .topology-node-icon-node {
+    transform-origin: center;
+}
+
+.topology-cluster-health-icon-up {
+    color: #4ade80;
+    filter: drop-shadow(0 0 10px rgba(74, 222, 128, 0.18));
+}
+
+.topology-cluster-health-icon-degraded {
+    color: #fbbf24;
+    filter: drop-shadow(0 0 10px rgba(251, 191, 36, 0.18));
+}
+
+.topology-cluster-health-icon-down {
+    color: #f87171;
+    filter: drop-shadow(0 0 10px rgba(248, 113, 113, 0.18));
 }
 
 .topology-status-healthy {
@@ -2709,6 +2941,69 @@ body.modal-open {
     color: #b7c8e4;
     font-size: 0.76rem;
     font-weight: 700;
+}
+
+.operational-map-links {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    overflow: visible;
+    pointer-events: none;
+}
+
+.operational-map-link {
+    pointer-events: auto;
+    cursor: pointer;
+}
+
+.operational-map-link-line {
+    stroke: rgba(122, 189, 255, 0.78);
+    stroke-width: 3;
+    stroke-linecap: round;
+    filter: drop-shadow(0 6px 14px rgba(5, 12, 24, 0.28));
+}
+
+.operational-map-link.is-selected .operational-map-link-line {
+    stroke: #ffffff;
+    stroke-width: 4;
+}
+
+.operational-map-link-label {
+    fill: #dcecff;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    paint-order: stroke;
+    stroke: rgba(10, 18, 34, 0.85);
+    stroke-width: 4px;
+    stroke-linejoin: round;
+}
+
+.operational-map-object {
+    z-index: 2;
+}
+
+.operational-map-connection-point {
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(213, 235, 255, 0.92);
+    border-radius: 999px;
+    background: rgba(49, 120, 202, 0.96);
+    box-shadow: 0 4px 10px rgba(7, 14, 28, 0.26);
+    opacity: 0.92;
+}
+
+.operational-map-connection-point:hover,
+.operational-map-connection-point.is-source {
+    background: #ffffff;
+    border-color: #7bd8ff;
+}
+
+#operational-map-link-mode-button.is-active {
+    background: rgba(53, 94, 161, 0.95);
+    border-color: rgba(142, 206, 255, 0.6);
+    color: #ffffff;
 }
 
 @media (max-width: 700px) {

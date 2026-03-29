@@ -361,9 +361,12 @@ class NodeDashboardBackend:
         if not value:
             return None
         try:
-            return datetime.fromisoformat(str(value))
+            parsed = datetime.fromisoformat(str(value))
         except ValueError:
             return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed
 
     @staticmethod
     def _discovered_pin_key(site_id: str) -> str:
@@ -433,8 +436,6 @@ class NodeDashboardBackend:
             entry["ping_down_since"] = observed_at.isoformat()
 
     def _should_keep_discovered(self, entry: dict[str, object]) -> bool:
-        if str(entry.get("ping") or "").strip().lower() == "up":
-            return True
         last_ping_up = self._safe_parse_iso(entry.get("last_ping_up"))
         if last_ping_up is None:
             return False
@@ -509,18 +510,10 @@ class NodeDashboardBackend:
             }
 
         self._schedule_discovered_ping_refresh(site_id, normalized_host)
-
-        if cached and cached_host == normalized_host:
-            return {
-                "reachable": bool(cached.get("reachable")),
-                "latency_ms": cached.get("latency_ms") if cached.get("latency_ms") is not None else None,
-                "checked_at": cached.get("checked_at"),
-            }
-
         return {
             "reachable": False,
             "latency_ms": None,
-            "checked_at": None,
+            "checked_at": now.isoformat(),
         }
 
     async def probe_discovered_node_detail(

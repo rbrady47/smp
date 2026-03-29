@@ -71,6 +71,10 @@ const topologyState = {
     editMode: false,
     layoutOverrides: {},
     dragging: null,
+    selectedEntityIds: new Set(),
+    demoMode: "off",
+    demoMenuOpen: false,
+    demoSnapshot: null,
 };
 
 const statusPriority = {
@@ -373,19 +377,273 @@ function getTopologyBubbleSize(entity, discoveredCount) {
     return Math.round(Math.max(146, Math.min(220, 122 + scale * 10)));
 }
 
-function getTopologyBubbleDotCount(discoveredCount) {
-    return Math.max(0, Math.min(18, Math.round(discoveredCount / 3)));
+function getTopologyClusterStatusCounts() {
+    const counts = {
+        totalByUnit: new Map(),
+        upByUnit: new Map(),
+    };
+
+    const discoveredRows = topologyDiscoveryPayload?.discovered ?? [];
+    discoveredRows.forEach((row) => {
+        if (!row || typeof row !== "object") {
+            return;
+        }
+
+        const unit = String(row.resolved_unit || row.unit || "").trim();
+        if (!unit || unit === "--") {
+            return;
+        }
+
+        counts.totalByUnit.set(unit, (counts.totalByUnit.get(unit) || 0) + 1);
+        const ping = String(row.ping || "").trim().toLowerCase();
+        if (ping === "up") {
+            counts.upByUnit.set(unit, (counts.upByUnit.get(unit) || 0) + 1);
+        }
+    });
+
+    return counts;
 }
 
-function getTopologyBubbleDotMarkup(discoveredCount) {
-    const dotCount = getTopologyBubbleDotCount(discoveredCount);
-    if (!dotCount) {
-        return "";
+function hashTopologyString(value) {
+    let hash = 0;
+    const input = String(value || "");
+    for (let index = 0; index < input.length; index += 1) {
+        hash = ((hash << 5) - hash + input.charCodeAt(index)) | 0;
+    }
+    return Math.abs(hash);
+}
+
+function getTopologyDemoRatio(seedKey, minRatio, maxRatio) {
+    const range = Math.max(maxRatio - minRatio, 0);
+    const hash = hashTopologyString(seedKey) % 1000;
+    return minRatio + (hash / 1000) * range;
+}
+
+function buildTopologyDemoSnapshot(mode) {
+    if (!topologyPayload || mode === "off") {
+        return null;
     }
 
+    const entities = getTopologyEntities();
+    const clusterCounts = getTopologyClusterStatusCounts();
+    const entityStatusById = new Map();
+    const linkStatusById = new Map();
+    const clusterUpByUnit = new Map();
+
+    if (mode === "all-down") {
+        entities.forEach((entity) => {
+            entityStatusById.set(entity.id, "down");
+            if (entity.level === 2) {
+                clusterUpByUnit.set(entity.unit, 0);
+            }
+        });
+        (topologyPayload.links ?? []).forEach((link, index) => {
+            linkStatusById.set(getTopologyLinkId(link, index), "down");
+        });
+        return { entityStatusById, linkStatusById, clusterUpByUnit };
+    }
+
+    if (mode === "all-up") {
+        const scriptedUpCounts = {
+            "DIV HQ": 50,
+            "1BCT": 7,
+            "2BCT": 25,
+            "3BCT": 12,
+            "CAB/DIVARTY": 55,
+            "Sustainment": 60,
+        };
+        entities.forEach((entity) => {
+            entityStatusById.set(entity.id, "healthy");
+            if (entity.level === 2) {
+                clusterUpByUnit.set(
+                    entity.unit,
+                    scriptedUpCounts[entity.unit] ?? Math.max(1, Math.round(getTopologyDemoRatio(`all-up:${entity.unit}`, 20, 60))),
+                );
+            }
+        });
+        (topologyPayload.links ?? []).forEach((link, index) => {
+            linkStatusById.set(getTopologyLinkId(link, index), "healthy");
+        });
+        return { entityStatusById, linkStatusById, clusterUpByUnit };
+    }
+
+    const mixClusterUpCounts = {
+        "DIV HQ": 44,
+        "1BCT": 3,
+        "2BCT": 23,
+        "3BCT": 19,
+        "CAB/DIVARTY": 41,
+        "Sustainment": 36,
+    };
+    const mixLvl0StatusByLocation = {
+        Cloud: "healthy",
+        HSMC: "healthy",
+        Episodic: "degraded",
+    };
+    const mixLvl1StatusByKey = {
+        "Cloud::DIV HQ": "healthy",
+        "Cloud::1BCT": "degraded",
+        "Cloud::2BCT": "healthy",
+        "Cloud::3BCT": "healthy",
+        "Cloud::CAB/DIVARTY": "healthy",
+        "Cloud::Sustainment": "healthy",
+        "HSMC::DIV HQ": "healthy",
+        "HSMC::1BCT": "healthy",
+        "HSMC::2BCT": "healthy",
+        "HSMC::3BCT": "healthy",
+        "HSMC::CAB/DIVARTY": "healthy",
+        "HSMC::Sustainment": "healthy",
+        "Episodic::DIV HQ": "degraded",
+        "Episodic::1BCT": "degraded",
+        "Episodic::2BCT": "degraded",
+        "Episodic::3BCT": "degraded",
+        "Episodic::CAB/DIVARTY": "degraded",
+        "Episodic::Sustainment": "degraded",
+    };
+
+    entities.forEach((entity) => {
+        let status = "healthy";
+        if (entity.level === 0) {
+            status = mixLvl0StatusByLocation[entity.location] || "healthy";
+        } else if (entity.level === 1) {
+            status = mixLvl1StatusByKey[`${entity.location}::${entity.unit}`] || "healthy";
+        } else if (entity.level === 2) {
+            const total = clusterCounts.totalByUnit.get(entity.unit) || 0;
+            const upCount = mixClusterUpCounts[entity.unit] ?? 0;
+            status = upCount <= 0 ? "down" : upCount < total ? "degraded" : "healthy";
+            clusterUpByUnit.set(entity.unit, upCount);
+        }
+        entityStatusById.set(entity.id, status);
+    });
+    (topologyPayload.links ?? []).forEach((link, index) => {
+        const fromStatus = entityStatusById.get(link.from) || "healthy";
+        const toStatus = entityStatusById.get(link.to) || "healthy";
+        let status = "healthy";
+        if (fromStatus === "down" || toStatus === "down") {
+            status = link.kind === "cluster" ? "degraded" : "down";
+        } else if (fromStatus === "degraded" || toStatus === "degraded") {
+            status = "degraded";
+        } else if (link.kind === "peer" && hashTopologyString(`mix-peer:${getTopologyLinkId(link, index)}`) % 6 === 0) {
+            status = "degraded";
+        }
+
+        if (link.kind === "peer") {
+            const fromEntity = entities.find((entity) => entity.id === link.from);
+            const toEntity = entities.find((entity) => entity.id === link.to);
+            const peerLocations = [fromEntity?.location, toEntity?.location].filter(Boolean);
+            if (peerLocations.includes("Episodic")) {
+                status = status === "down" ? "down" : "degraded";
+            } else if (peerLocations.includes("Cloud") && hashTopologyString(`mix-cloud-peer:${getTopologyLinkId(link, index)}`) % 7 === 0 && status === "healthy") {
+                status = "degraded";
+            }
+        }
+
+        if (link.kind === "uplink" || link.kind === "cluster") {
+            const targetEntity = entities.find((entity) => entity.id === link.to);
+            if (targetEntity?.location === "Episodic") {
+                status = status === "down" ? "down" : "degraded";
+            }
+            if (targetEntity?.unit === "1BCT" && targetEntity?.location === "Cloud") {
+                status = link.kind === "uplink" ? "down" : "degraded";
+            }
+        }
+
+        linkStatusById.set(getTopologyLinkId(link, index), status);
+    });
+    return { entityStatusById, linkStatusById, clusterUpByUnit };
+}
+
+function setTopologyDemoMode(mode) {
+    const normalized = ["off", "all-up", "all-down", "mix"].includes(mode) ? mode : "off";
+    topologyState.demoMode = normalized;
+    topologyState.demoSnapshot = buildTopologyDemoSnapshot(normalized);
+    topologyState.demoMenuOpen = false;
+}
+
+function getEffectiveTopologyEntityStatus(entity) {
+    return topologyState.demoSnapshot?.entityStatusById?.get(entity.id) || entity.status || "neutral";
+}
+
+function getEffectiveTopologyLinkStatus(link, index) {
+    return topologyState.demoSnapshot?.linkStatusById?.get(getTopologyLinkId(link, index)) || link.status || "neutral";
+}
+
+function getEffectiveTopologyClusterUpCount(unit, fallbackCount) {
+    if (!topologyState.demoSnapshot?.clusterUpByUnit) {
+        return fallbackCount;
+    }
+    return topologyState.demoSnapshot.clusterUpByUnit.get(unit) ?? fallbackCount;
+}
+
+function getEffectiveTopologyClusterIconStatus(discoveredCount, upCount) {
+    if (topologyState.demoMode === "all-up") {
+        return "up";
+    }
+    if (topologyState.demoMode === "all-down") {
+        return "down";
+    }
+    return getTopologyClusterIconStatus(discoveredCount, upCount);
+}
+
+function getTopologyClusterHealthIconCount(upCount) {
+    if (upCount <= 9) {
+        return 1;
+    }
+    if (upCount <= 19) {
+        return 2;
+    }
+    return 3;
+}
+
+function getTopologyIconStatus(status) {
+    const normalized = String(status || "neutral").trim().toLowerCase();
+    if (normalized === "healthy") {
+        return "up";
+    }
+    if (normalized === "degraded") {
+        return "degraded";
+    }
+    if (normalized === "down") {
+        return "down";
+    }
+    return "degraded";
+}
+
+function getTopologyClusterIconStatus(discoveredCount, upCount) {
+    if (discoveredCount <= 0 || upCount <= 0) {
+        return "down";
+    }
+    if (upCount < discoveredCount) {
+        return "degraded";
+    }
+    return "up";
+}
+
+function getTopologyClusterFooterMarkup(discoveredCount, upCount) {
+    const iconCount = getTopologyClusterHealthIconCount(upCount);
+    const iconStatus = getEffectiveTopologyClusterIconStatus(discoveredCount, upCount);
     return `
-        <span class="topology-bubble-dots" aria-hidden="true">
-            ${Array.from({ length: dotCount }, () => "<span class=\"topology-bubble-dot\"></span>").join("")}
+        <span class="topology-cluster-footer" aria-label="${upCount} reachable nodes">
+            <span class="topology-cluster-health-chip">${upCount}</span>
+            <span class="topology-cluster-health-icons" aria-hidden="true">
+                ${Array.from({ length: iconCount }, () => `
+                    <span class="topology-cluster-health-icon topology-cluster-health-icon-${iconStatus}">
+                        <svg viewBox="0 0 64 64" focusable="false">
+                            <circle cx="32" cy="32" r="27" class="topology-node-icon-ring"></circle>
+                            <path d="M20 24v15l12 7 12-7" class="topology-node-icon-stroke"></path>
+                            <path d="M32 17v29" class="topology-node-icon-stroke"></path>
+                            <path d="M32 31l11-8" class="topology-node-icon-stroke"></path>
+                            <circle cx="20" cy="24" r="3.2" class="topology-node-icon-node"></circle>
+                            <circle cx="20" cy="39" r="3.2" class="topology-node-icon-node"></circle>
+                            <circle cx="32" cy="17" r="3.2" class="topology-node-icon-node"></circle>
+                            <circle cx="32" cy="31" r="3.2" class="topology-node-icon-node"></circle>
+                            <circle cx="32" cy="46" r="3.2" class="topology-node-icon-node"></circle>
+                            <circle cx="44" cy="23" r="3.2" class="topology-node-icon-node"></circle>
+                            <circle cx="44" cy="38" r="3.2" class="topology-node-icon-node"></circle>
+                        </svg>
+                    </span>
+                `).join("")}
+            </span>
         </span>
     `;
 }
@@ -436,8 +694,14 @@ function clearTopologyLayoutOverrides() {
 function setTopologyEditMode(editMode) {
     topologyState.editMode = Boolean(editMode);
     saveTopologyEditMode(topologyState.editMode);
+    if (!topologyState.editMode) {
+        clearTopologyEntitySelection();
+        syncTopologySelectionBox(null);
+        topologyState.demoMenuOpen = false;
+    }
 
     const stage = document.getElementById("topology-stage");
+    const layer = document.getElementById("topology-node-layer");
     const button = document.getElementById("topology-layout-edit-toggle");
     const resetButton = document.getElementById("topology-layout-reset");
 
@@ -451,6 +715,10 @@ function setTopologyEditMode(editMode) {
     if (resetButton) {
         resetButton.hidden = !topologyState.editMode;
     }
+    if (layer) {
+        syncTopologyEntitySelectionStyles(layer);
+    }
+    updateTopologyEditStatus();
 }
 
 function getTopologyBaseLayout(entity) {
@@ -510,6 +778,116 @@ function applyTopologyEntityStyles(button, layout) {
     button.style.setProperty("--topology-bubble-size", `${layout.size}px`);
 }
 
+function clearTopologyEntitySelection() {
+    topologyState.selectedEntityIds = new Set();
+}
+
+function updateTopologyEditStatus() {
+    const hint = document.getElementById("topology-edit-hint");
+    const status = document.getElementById("topology-selection-status");
+    const clearButton = document.getElementById("topology-selection-clear");
+    const demoControl = document.getElementById("topology-demo-control");
+    const demoToggle = document.getElementById("topology-demo-toggle");
+    const demoMenu = document.getElementById("topology-demo-menu");
+    const selectedCount = topologyState.selectedEntityIds.size;
+    if (hint) {
+        hint.hidden = !topologyState.editMode;
+    }
+    if (status) {
+        status.hidden = !topologyState.editMode;
+        status.textContent = `${selectedCount} selected`;
+    }
+    if (clearButton) {
+        clearButton.hidden = !topologyState.editMode || selectedCount === 0;
+    }
+    if (demoControl) {
+        demoControl.hidden = !topologyState.editMode;
+    }
+    if (demoToggle) {
+        const label = topologyState.demoMode === "off"
+            ? "Demo"
+            : `Demo: ${topologyState.demoMode === "all-up" ? "All Up" : topologyState.demoMode === "all-down" ? "All Down" : "Mix"}`;
+        demoToggle.textContent = label;
+        demoToggle.setAttribute("aria-expanded", topologyState.demoMenuOpen ? "true" : "false");
+    }
+    if (demoMenu) {
+        demoMenu.hidden = !topologyState.editMode || !topologyState.demoMenuOpen;
+        demoMenu.querySelectorAll("[data-topology-demo-mode]").forEach((option) => {
+            option.classList.toggle("is-active", option.getAttribute("data-topology-demo-mode") === topologyState.demoMode);
+        });
+    }
+}
+
+function syncTopologyEntitySelectionStyles(layer) {
+    if (!(layer instanceof HTMLElement)) {
+        return;
+    }
+    layer.querySelectorAll("[data-topology-id]").forEach((button) => {
+        const entityId = button.getAttribute("data-topology-id") || "";
+        button.classList.toggle("is-multi-selected", topologyState.selectedEntityIds.has(entityId));
+    });
+    updateTopologyEditStatus();
+}
+
+function getTopologySelectionRect(drag, event) {
+    const stageBounds = getTopologyStageBounds();
+    if (!stageBounds) {
+        return null;
+    }
+    const startX = drag.stageStartX;
+    const startY = drag.stageStartY;
+    const currentX = event.clientX - stageBounds.left;
+    const currentY = event.clientY - stageBounds.top;
+    return {
+        left: Math.min(startX, currentX),
+        top: Math.min(startY, currentY),
+        width: Math.abs(currentX - startX),
+        height: Math.abs(currentY - startY),
+    };
+}
+
+function syncTopologySelectionBox(rect) {
+    const selectionBox = document.getElementById("topology-selection-box");
+    if (!(selectionBox instanceof HTMLElement)) {
+        return;
+    }
+    if (!rect) {
+        selectionBox.hidden = true;
+        return;
+    }
+    selectionBox.hidden = false;
+    selectionBox.style.left = `${rect.left}px`;
+    selectionBox.style.top = `${rect.top}px`;
+    selectionBox.style.width = `${rect.width}px`;
+    selectionBox.style.height = `${rect.height}px`;
+}
+
+function nudgeTopologySelection(deltaX, deltaY) {
+    if (!topologyState.editMode || !topologyState.selectedEntityIds.size) {
+        return;
+    }
+    const entities = getTopologyEntities();
+    const entityMap = new Map(entities.map((entity) => [entity.id, entity]));
+    topologyState.selectedEntityIds.forEach((entityId) => {
+        const entity = entityMap.get(entityId);
+        if (!entity) {
+            return;
+        }
+        const layout = getTopologyEntityLayout(entity);
+        setTopologyEntityLayout(
+            entityId,
+            {
+                ...layout,
+                x: layout.x + deltaX,
+                y: layout.y + deltaY,
+            },
+            { persist: false },
+        );
+    });
+    saveTopologyLayoutOverrides();
+    renderTopologyStage();
+}
+
 function getTopologyStageBounds() {
     const stage = document.getElementById("topology-stage");
     return stage ? stage.getBoundingClientRect() : null;
@@ -534,6 +912,32 @@ function wireTopologyLayoutEditor(stage, layer, entityMap) {
             return;
         }
 
+        if (drag.mode === "select") {
+            const rect = getTopologySelectionRect(drag, event);
+            if (!rect) {
+                return;
+            }
+            topologyState.selectedEntityIds = new Set(
+                drag.visibleEntityIds.filter((entityId) => {
+                    const entity = entityMap.get(entityId);
+                    if (!entity) {
+                        return false;
+                    }
+                    const layout = getTopologyEntityLayout(entity);
+                    return (
+                        layout.x >= rect.left &&
+                        layout.x <= rect.left + rect.width &&
+                        layout.y >= rect.top &&
+                        layout.y <= rect.top + rect.height
+                    );
+                }),
+            );
+            syncTopologySelectionBox(rect);
+            syncTopologyEntitySelectionStyles(layer);
+            event.preventDefault();
+            return;
+        }
+
         const deltaX = event.clientX - drag.startX;
         const deltaY = event.clientY - drag.startY;
         const nextLayout = { ...drag.startLayout };
@@ -549,8 +953,21 @@ function wireTopologyLayoutEditor(stage, layer, entityMap) {
             nextLayout.y = drag.startLayout.y + deltaY;
         }
 
-        setTopologyEntityLayout(drag.entityId, nextLayout, { persist: false });
-        applyTopologyEntityStyles(drag.element, nextLayout);
+        if (drag.mode === "drag-group") {
+            drag.entities.forEach((item) => {
+                const groupLayout = {
+                    ...item.startLayout,
+                    x: item.startLayout.x + deltaX,
+                    y: item.startLayout.y + deltaY,
+                    size: item.startLayout.size,
+                };
+                setTopologyEntityLayout(item.entityId, groupLayout, { persist: false });
+                applyTopologyEntityStyles(item.element, groupLayout);
+            });
+        } else {
+            setTopologyEntityLayout(drag.entityId, nextLayout, { persist: false });
+            applyTopologyEntityStyles(drag.element, nextLayout);
+        }
         drawTopologyLinks(entityMap);
         event.preventDefault();
     };
@@ -562,11 +979,12 @@ function wireTopologyLayoutEditor(stage, layer, entityMap) {
         }
 
         try {
-            drag.element.releasePointerCapture(drag.pointerId);
+            drag.element?.releasePointerCapture?.(drag.pointerId);
         } catch (error) {
             // Ignore capture failures.
         }
 
+        syncTopologySelectionBox(null);
         saveTopologyLayoutOverrides();
         topologyState.dragging = null;
         clearDragListeners();
@@ -581,6 +999,34 @@ function wireTopologyLayoutEditor(stage, layer, entityMap) {
         const target = event.target;
         const button = target instanceof Element ? target.closest("[data-topology-id]") : null;
         if (!(button instanceof HTMLElement)) {
+            const stageBounds = getTopologyStageBounds();
+            if (!stageBounds) {
+                return;
+            }
+            topologyState.selectedKind = null;
+            topologyState.selectedId = null;
+            topologyState.dragging = {
+                mode: "select",
+                pointerId: event.pointerId,
+                stageStartX: event.clientX - stageBounds.left,
+                stageStartY: event.clientY - stageBounds.top,
+                element: layer,
+                visibleEntityIds: Array.from(layer.querySelectorAll("[data-topology-id]"))
+                    .map((item) => item.getAttribute("data-topology-id") || "")
+                    .filter(Boolean),
+            };
+            clearTopologyEntitySelection();
+            syncTopologyEntitySelectionStyles(layer);
+            syncTopologySelectionBox({
+                left: topologyState.dragging.stageStartX,
+                top: topologyState.dragging.stageStartY,
+                width: 0,
+                height: 0,
+            });
+            window.addEventListener("pointermove", handlePointerMove);
+            window.addEventListener("pointerup", handlePointerEnd);
+            window.addEventListener("pointercancel", handlePointerEnd);
+            event.preventDefault();
             return;
         }
 
@@ -590,17 +1036,53 @@ function wireTopologyLayoutEditor(stage, layer, entityMap) {
             return;
         }
 
+        if (event.shiftKey) {
+            if (topologyState.selectedEntityIds.has(entityId)) {
+                topologyState.selectedEntityIds.delete(entityId);
+            } else {
+                topologyState.selectedEntityIds.add(entityId);
+            }
+            syncTopologyEntitySelectionStyles(layer);
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+        }
+
         const resizeHandle = target instanceof Element ? target.closest("[data-topology-resize-handle]") : null;
         const startLayout = getTopologyEntityLayout(entity);
+        if (!resizeHandle) {
+            if (!topologyState.selectedEntityIds.has(entityId)) {
+                topologyState.selectedEntityIds = new Set([entityId]);
+            }
+            syncTopologyEntitySelectionStyles(layer);
+        }
+
+        const dragEntities = !resizeHandle && topologyState.selectedEntityIds.size > 1
+            ? Array.from(topologyState.selectedEntityIds)
+                .map((selectedEntityId) => {
+                    const selectedEntity = entityMap.get(selectedEntityId);
+                    const selectedElement = layer.querySelector(`[data-topology-id="${CSS.escape(selectedEntityId)}"]`);
+                    if (!selectedEntity || !(selectedElement instanceof HTMLElement)) {
+                        return null;
+                    }
+                    return {
+                        entityId: selectedEntityId,
+                        element: selectedElement,
+                        startLayout: getTopologyEntityLayout(selectedEntity),
+                    };
+                })
+                .filter(Boolean)
+            : null;
 
         topologyState.dragging = {
-            mode: resizeHandle ? "resize" : "drag",
+            mode: resizeHandle ? "resize" : dragEntities ? "drag-group" : "drag",
             entityId,
             pointerId: event.pointerId,
             startX: event.clientX,
             startY: event.clientY,
             startLayout,
             element: button,
+            entities: dragEntities,
         };
 
         try {
@@ -2468,6 +2950,7 @@ function renderTopologyStage() {
     const visibleEntities = entities.filter(isTopologyEntityVisible);
     const entityMap = new Map(entities.map((entity) => [entity.id, entity]));
     const discoveryCounts = getTopologyDiscoveryCounts();
+    const clusterStatusCounts = getTopologyClusterStatusCounts();
 
     layer.innerHTML = visibleEntities
         .map((entity) => {
@@ -2477,25 +2960,29 @@ function renderTopologyStage() {
             const isLvl1 = entity.level === 1;
             const isFocusedUnit = entity.level === 2 && topologyState.focusUnit && topologyState.focusUnit === entity.unit;
             const classes = [
-                "topology-entity",
-                isCluster ? "topology-cluster" : "topology-node",
-                `topology-status-${entity.status || "neutral"}`,
-                entity.level === 0 ? "topology-node-agg" : "",
-                isLvl1 ? "topology-node-lvl1" : "",
-                isFocusedUnit ? "is-selected" : "",
-                topologyState.selectedKind === "entity" && topologyState.selectedId === entity.id ? "is-selected" : "",
-            ]
+                  "topology-entity",
+                  isCluster ? "topology-cluster" : "topology-node",
+                  `topology-status-${getEffectiveTopologyEntityStatus(entity) || "neutral"}`,
+                  entity.level === 0 ? "topology-node-agg" : "",
+                  isLvl1 ? "topology-node-lvl1" : "",
+                  isFocusedUnit ? "is-selected" : "",
+                  topologyState.selectedEntityIds.has(entity.id) ? "is-multi-selected" : "",
+                  topologyState.selectedKind === "entity" && topologyState.selectedId === entity.id ? "is-selected" : "",
+              ]
                 .filter(Boolean)
                 .join(" ");
 
-            const badge = isCluster && discoveredCount ? `<span class="topology-count-badge">${discoveredCount}</span>` : "";
             const subtitle = isCluster
                 ? "Edge Nodes"
                 : entity.level === 1
                     ? escapeHtml(entity.location)
                     : `${escapeHtml(entity.location)} · ${escapeHtml(entity.unit)}`;
             const displayName = entity.level === 1 || isCluster ? escapeHtml(entity.unit) : escapeHtml(entity.name);
-            const nodeDots = isCluster ? getTopologyBubbleDotMarkup(discoveredCount) : "";
+            const clusterUpCount = isCluster
+                ? getEffectiveTopologyClusterUpCount(entity.unit, clusterStatusCounts.upByUnit.get(entity.unit) || 0)
+                : 0;
+            const clusterFooter = isCluster ? getTopologyClusterFooterMarkup(discoveredCount, clusterUpCount) : "";
+            const nodeIcon = !isCluster ? getTopologyAnchorIconMarkup({ ...entity, status: getEffectiveTopologyEntityStatus(entity) }) : "";
             const titleText = isCluster ? `${entity.unit} Edge Nodes` : entity.level === 1 ? `${entity.unit} / ${entity.location}` : entity.name;
             const bubbleStyle = `left:${layout.x}px; top:${layout.y}px; --topology-bubble-size:${layout.size}px;`;
             const resizeHandle = topologyState.editMode
@@ -2513,8 +3000,8 @@ function renderTopologyStage() {
                 >
                     <span class="topology-node-name">${displayName}</span>
                     <span class="topology-node-meta">${subtitle}</span>
-                    ${nodeDots}
-                    ${badge}
+                    ${nodeIcon}
+                    ${clusterFooter}
                     ${resizeHandle}
                 </button>
             `;
@@ -2526,14 +3013,18 @@ function renderTopologyStage() {
         topologyState.selectedKind = null;
         topologyState.selectedId = null;
     }
+    topologyState.selectedEntityIds = new Set(
+        Array.from(topologyState.selectedEntityIds).filter((entityId) => visibleIds.has(entityId)),
+    );
 
-    layer.querySelectorAll("[data-topology-id]").forEach((button) => {
-        button.addEventListener("click", (event) => {
-            if (topologyState.editMode) {
-                return;
-            }
-            event.stopPropagation();
-            const nextId = button.getAttribute("data-topology-id");
+      layer.querySelectorAll("[data-topology-id]").forEach((button) => {
+          button.addEventListener("click", (event) => {
+              if (topologyState.editMode) {
+                  event.stopPropagation();
+                  return;
+              }
+              event.stopPropagation();
+              const nextId = button.getAttribute("data-topology-id");
             const nextEntity = entityMap.get(nextId || "");
             if (nextEntity?.level === 2) {
                 setTopologyUnitFocus(nextEntity.unit);
@@ -2557,6 +3048,9 @@ function renderTopologyStage() {
 
     if (topologyState.editMode) {
         wireTopologyLayoutEditor(stage, layer, entityMap);
+        syncTopologyEntitySelectionStyles(layer);
+    } else {
+        syncTopologySelectionBox(null);
     }
 
     stage.onclick = (event) => {
@@ -2624,7 +3118,7 @@ function drawTopologyLinks(entityMap) {
         shape.setAttribute("y2", String(y2));
         shape.setAttribute(
             "class",
-            `topology-link topology-link-${link.kind} topology-link-${link.status || "neutral"} ${topologyState.selectedKind === "link" && topologyState.selectedId === linkId ? "is-selected" : ""}`,
+            `topology-link topology-link-${link.kind} topology-link-${getEffectiveTopologyLinkStatus(link, index) || "neutral"} ${topologyState.selectedKind === "link" && topologyState.selectedId === linkId ? "is-selected" : ""}`,
         );
         shape.setAttribute("data-topology-link-id", linkId);
         svg.appendChild(shape);
@@ -2647,6 +3141,32 @@ function drawTopologyLinks(entityMap) {
             renderTopologyStage();
         });
     });
+}
+
+function getTopologyAnchorIconMarkup(entity) {
+    if (!entity || entity.level >= 2) {
+        return "";
+    }
+
+    const accentClass = entity.level === 0 ? "topology-node-icon-agg" : "topology-node-icon-anchor";
+    const statusClass = `topology-node-icon-status-${getTopologyIconStatus(entity.status)}`;
+    return `
+        <span class="topology-node-icon ${accentClass} ${statusClass}" aria-hidden="true">
+            <svg viewBox="0 0 64 64" focusable="false">
+                <circle cx="32" cy="32" r="27" class="topology-node-icon-ring"></circle>
+                <path d="M20 24v15l12 7 12-7" class="topology-node-icon-stroke"></path>
+                <path d="M32 17v29" class="topology-node-icon-stroke"></path>
+                <path d="M32 31l11-8" class="topology-node-icon-stroke"></path>
+                <circle cx="20" cy="24" r="3.2" class="topology-node-icon-node"></circle>
+                <circle cx="20" cy="39" r="3.2" class="topology-node-icon-node"></circle>
+                <circle cx="32" cy="17" r="3.2" class="topology-node-icon-node"></circle>
+                <circle cx="32" cy="31" r="3.2" class="topology-node-icon-node"></circle>
+                <circle cx="32" cy="46" r="3.2" class="topology-node-icon-node"></circle>
+                <circle cx="44" cy="23" r="3.2" class="topology-node-icon-node"></circle>
+                <circle cx="44" cy="38" r="3.2" class="topology-node-icon-node"></circle>
+            </svg>
+        </span>
+    `;
 }
 
 function renderTopologyDrawer() {
@@ -2821,6 +3341,7 @@ function renderTopologyControls() {
     renderTopologyFilterButtons("topology-unit-filters", TOPOLOGY_UNITS, topologyState.activeUnits, "unit");
     renderTopologyViewButtons();
     wireTopologyControls();
+    updateTopologyEditStatus();
 }
 
 function getTopologyControlsCollapsed() {
@@ -2869,6 +3390,9 @@ function wireTopologyBarToggle() {
 function wireTopologyLayoutControls() {
     const editButton = document.getElementById("topology-layout-edit-toggle");
     const resetButton = document.getElementById("topology-layout-reset");
+    const clearButton = document.getElementById("topology-selection-clear");
+    const demoToggle = document.getElementById("topology-demo-toggle");
+    const demoMenu = document.getElementById("topology-demo-menu");
 
     if (editButton && editButton.dataset.bound !== "true") {
         editButton.dataset.bound = "true";
@@ -2883,6 +3407,109 @@ function wireTopologyLayoutControls() {
         resetButton.addEventListener("click", () => {
             clearTopologyLayoutOverrides();
             renderTopologyStage();
+        });
+    }
+
+    if (clearButton && clearButton.dataset.bound !== "true") {
+        clearButton.dataset.bound = "true";
+        clearButton.addEventListener("click", () => {
+            clearTopologyEntitySelection();
+            const layer = document.getElementById("topology-node-layer");
+            if (layer) {
+                syncTopologyEntitySelectionStyles(layer);
+            } else {
+                updateTopologyEditStatus();
+            }
+        });
+    }
+
+    if (demoToggle && demoToggle.dataset.bound !== "true") {
+        demoToggle.dataset.bound = "true";
+        demoToggle.addEventListener("click", (event) => {
+            event.stopPropagation();
+            if (!topologyState.editMode) {
+                return;
+            }
+            topologyState.demoMenuOpen = !topologyState.demoMenuOpen;
+            updateTopologyEditStatus();
+        });
+    }
+
+    if (demoMenu && demoMenu.dataset.bound !== "true") {
+        demoMenu.dataset.bound = "true";
+        demoMenu.addEventListener("click", (event) => {
+            const button = event.target instanceof Element ? event.target.closest("[data-topology-demo-mode]") : null;
+            if (!(button instanceof HTMLElement)) {
+                return;
+            }
+            event.stopPropagation();
+            setTopologyDemoMode(button.getAttribute("data-topology-demo-mode") || "off");
+            renderTopologyControls();
+            renderTopologyStage();
+        });
+    }
+
+    if (document.body && document.body.dataset.topologyDemoDismissBound !== "true") {
+        document.body.dataset.topologyDemoDismissBound = "true";
+        document.addEventListener("click", (event) => {
+            const target = event.target;
+            if (!(target instanceof Element)) {
+                return;
+            }
+            if (target.closest("#topology-demo-control")) {
+                return;
+            }
+            if (topologyState.demoMenuOpen) {
+                topologyState.demoMenuOpen = false;
+                updateTopologyEditStatus();
+            }
+        });
+    }
+
+    if (document.body && document.body.dataset.topologyNudgeBound !== "true") {
+        document.body.dataset.topologyNudgeBound = "true";
+        document.addEventListener("keydown", (event) => {
+            if (!topologyState.editMode || !topologyState.selectedEntityIds.size) {
+                return;
+            }
+            const target = event.target;
+            if (
+                target instanceof HTMLElement &&
+                (
+                    target.isContentEditable ||
+                    /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) ||
+                    (target.tagName === "BUTTON" && !target.hasAttribute("data-topology-id"))
+                )
+            ) {
+                return;
+            }
+            const step = event.shiftKey ? 10 : 2;
+            switch (event.key) {
+                case "ArrowLeft":
+                    nudgeTopologySelection(-step, 0);
+                    break;
+                case "ArrowRight":
+                    nudgeTopologySelection(step, 0);
+                    break;
+                case "ArrowUp":
+                    nudgeTopologySelection(0, -step);
+                    break;
+                case "ArrowDown":
+                    nudgeTopologySelection(0, step);
+                    break;
+                case "Escape":
+                    clearTopologyEntitySelection();
+                    const layer = document.getElementById("topology-node-layer");
+                    if (layer) {
+                        syncTopologyEntitySelectionStyles(layer);
+                    } else {
+                        updateTopologyEditStatus();
+                    }
+                    break;
+                default:
+                    return;
+            }
+            event.preventDefault();
         });
     }
 }
@@ -2915,6 +3542,7 @@ async function loadTopologyPage() {
         topologyState.view = "backbone+l2";
         topologyState.selectedKind = null;
         topologyState.selectedId = null;
+        topologyState.demoSnapshot = buildTopologyDemoSnapshot(topologyState.demoMode);
         renderTopologyControls();
         wireTopologyBarToggle();
         wireTopologyLayoutControls();
