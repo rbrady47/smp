@@ -81,3 +81,103 @@ class DiscoveredNodeObservation(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class NodeRelationship(Base):
+    __tablename__ = "node_relationships"
+
+    source_site_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    target_site_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    relationship_kind: Mapped[str] = mapped_column(String(32), primary_key=True)
+    source_row_type: Mapped[str] = mapped_column(String(16), nullable=False, default="anchor")
+    target_row_type: Mapped[str] = mapped_column(String(16), nullable=False, default="discovered")
+    source_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    target_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    target_unit: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    target_location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    discovered_level: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class OperationalMapView(Base):
+    __tablename__ = "operational_map_views"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    slug: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
+    map_type: Mapped[str] = mapped_column(String(32), nullable=False, default="custom")
+    parent_map_id: Mapped[int | None] = mapped_column(ForeignKey("operational_map_views.id"), nullable=True, index=True)
+    background_image_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    canvas_width: Mapped[int] = mapped_column(Integer, nullable=False, default=1920)
+    canvas_height: Mapped[int] = mapped_column(Integer, nullable=False, default=1080)
+    default_zoom: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class OperationalMapObject(Base):
+    __tablename__ = "operational_map_objects"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    map_view_id: Mapped[int] = mapped_column(ForeignKey("operational_map_views.id"), nullable=False, index=True)
+    object_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    x: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    y: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    width: Mapped[int] = mapped_column(Integer, nullable=False, default=160)
+    height: Mapped[int] = mapped_column(Integer, nullable=False, default=96)
+    z_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    node_site_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    binding_key: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    child_map_view_id: Mapped[int | None] = mapped_column(ForeignKey("operational_map_views.id"), nullable=True, index=True)
+    connection_points_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    style_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class OperationalMapLink(Base):
+    __tablename__ = "operational_map_links"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    map_view_id: Mapped[int] = mapped_column(ForeignKey("operational_map_views.id"), nullable=False, index=True)
+    source_object_id: Mapped[int] = mapped_column(ForeignKey("operational_map_objects.id"), nullable=False, index=True)
+    source_port: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_object_id: Mapped[int] = mapped_column(ForeignKey("operational_map_objects.id"), nullable=False, index=True)
+    target_port: Mapped[str] = mapped_column(String(64), nullable=False)
+    label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    style_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    points_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class OperationalMapObjectBinding(Base):
+    __tablename__ = "operational_map_object_bindings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    object_id: Mapped[int] = mapped_column(ForeignKey("operational_map_objects.id"), nullable=False, index=True)
+    slot: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False, default="node")
+    field_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    display_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    settings_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class OperationalMapLinkBinding(Base):
+    __tablename__ = "operational_map_link_bindings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    link_id: Mapped[int] = mapped_column(ForeignKey("operational_map_links.id"), nullable=False, index=True)
+    slot: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_side: Mapped[str] = mapped_column(String(32), nullable=False, default="target")
+    field_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    display_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    settings_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)

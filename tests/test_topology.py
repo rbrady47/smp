@@ -110,13 +110,34 @@ class TopologyHelpersTest(unittest.TestCase):
                         "ssh_ok": False,
                     }
                 ],
-            }
+            },
+            [
+                {
+                    "source_site_id": "1001",
+                    "target_site_id": "4001",
+                    "relationship_kind": "surfaced_by",
+                    "source_row_type": "anchor",
+                    "target_row_type": "discovered",
+                    "source_name": "Anchor A",
+                    "target_name": "Delta",
+                    "target_unit": "DIV HQ",
+                    "target_location": "cloud",
+                    "discovered_level": 2,
+                }
+            ]
         )
 
         self.assertEqual(payload["summary"]["total_discovered"], 1)
+        self.assertEqual(payload["summary"]["total_relationships"], 1)
+        self.assertEqual(payload["summary"]["by_relationship_kind"]["surfaced_by"], 1)
         self.assertEqual(payload["summary"]["by_location"]["Cloud"], 1)
         self.assertEqual(payload["summary"]["by_unit"]["DIV HQ"], 1)
         self.assertEqual(payload["summary"]["by_location_unit"]["Cloud::DIV HQ"], 1)
+        self.assertEqual(payload["summary"]["by_unit_source"]["anchor"], 1)
         self.assertEqual(payload["anchors"][0]["location"], "Cloud")
         self.assertEqual(payload["anchors"][0]["inventory_node_id"], 1)
         self.assertEqual(payload["discovered"][0]["surfaced_by_site_id"], "1001")
+        self.assertEqual(payload["discovered"][0]["resolved_unit"], "DIV HQ")
+        self.assertEqual(payload["discovered"][0]["unit_source"], "anchor")
+        self.assertEqual(payload["relationships"][0]["source_site_id"], "1001")
+        self.assertEqual(payload["relationships"][0]["target_site_id"], "4001")

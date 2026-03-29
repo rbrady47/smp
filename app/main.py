@@ -15,7 +15,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, s
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import inspect, select, text
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import Base, SessionLocal, engine, get_db
@@ -23,6 +23,23 @@ from app.bwvstats_ingest import collect_bwvstats_phase1, get_raw_bwvstats_snapsh
 from app.models import Node, ServiceCheck
 from app.node_dashboard_backend import NodeDashboardBackend
 from app.node_watchlist_projection_service import build_node_watchlist_payload
+from app.operational_map_service import (
+    create_map_link,
+    create_map_link_binding,
+    create_map_object,
+    create_map_object_binding,
+    create_map_view,
+    delete_map_link,
+    delete_map_link_binding,
+    delete_map_object,
+    delete_map_object_binding,
+    delete_map_view,
+    get_map_view_detail,
+    list_map_views,
+    update_map_link,
+    update_map_object,
+    update_map_view,
+)
 from app.seeker_api import (
     build_detail_payload,
     get_bwv_cfg,
@@ -33,6 +50,16 @@ from app.seeker_api import (
     resolve_site_name_map,
 )
 from app.schemas import NodeCreate, NodeUpdate, ServiceCheckCreate
+from app.schemas import (
+    OperationalMapLinkBindingCreate,
+    OperationalMapLinkCreate,
+    OperationalMapLinkUpdate,
+    OperationalMapObjectBindingCreate,
+    OperationalMapObjectCreate,
+    OperationalMapObjectUpdate,
+    OperationalMapViewCreate,
+    OperationalMapViewUpdate,
+)
 from app.topology import build_mock_topology_payload, build_topology_discovery_payload, normalize_topology_location
 
 app = FastAPI(title="Seeker Management Platform", version="0.1.0")
@@ -103,6 +130,15 @@ async def topology_page(request: Request) -> HTMLResponse:
         request=request,
         name="topology.html",
         context={"page_title": "Division C2 Information Network | Seeker Management Platform"},
+    )
+
+
+@app.get("/operational-maps", response_class=HTMLResponse)
+async def operational_maps_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request=request,
+        name="operational_maps.html",
+        context={"page_title": "Operational Maps | Seeker Management Platform"},
     )
 
 
@@ -353,36 +389,6 @@ def serialize_node(node: Node, health: dict[str, object]) -> dict[str, object]:
         "ping_avg_ms": health["ping_avg_ms"],
     }
 
-
-def ensure_node_topology_columns() -> None:
-    inspector = inspect(engine)
-    existing_columns = {column["name"] for column in inspector.get_columns("nodes")}
-    dialect = engine.dialect.name
-
-    include_default = "FALSE" if dialect == "postgresql" else "0"
-    statements: list[str] = []
-    if "node_id" not in existing_columns:
-        statements.append("ALTER TABLE nodes ADD COLUMN node_id VARCHAR(64)")
-    if "include_in_topology" not in existing_columns:
-        statements.append(f"ALTER TABLE nodes ADD COLUMN include_in_topology BOOLEAN NOT NULL DEFAULT {include_default}")
-    if "topology_level" not in existing_columns:
-        statements.append("ALTER TABLE nodes ADD COLUMN topology_level INTEGER")
-    if "topology_unit" not in existing_columns:
-        statements.append("ALTER TABLE nodes ADD COLUMN topology_unit VARCHAR(64)")
-
-    if not statements:
-        return
-
-    with engine.begin() as connection:
-        for statement in statements:
-            connection.execute(text(statement))
-        connection.execute(
-            text(
-                "UPDATE nodes SET include_in_topology = "
-                + ("FALSE" if dialect == "postgresql" else "0")
-                + " WHERE include_in_topology IS NULL"
-            )
-        )
 
 
 def apply_health_to_node(node: Node, health: dict[str, object]) -> None:
@@ -931,7 +937,6 @@ async def node_dashboard_polling_loop() -> None:
 async def startup_ping_monitor() -> None:
     global ping_monitor_task, seeker_poll_task, service_poll_task, node_dashboard_poll_task
     Base.metadata.create_all(bind=engine)
-    ensure_node_topology_columns()
 
     if ping_monitor_task is None or ping_monitor_task.done():
         ping_monitor_task = asyncio.create_task(ping_monitor_loop())
@@ -1160,7 +1165,10 @@ async def node_dashboard_payload(db: Session = Depends(get_db)) -> dict[str, lis
 @app.get("/api/topology/discovery")
 async def topology_discovery_payload(db: Session = Depends(get_db)) -> dict[str, object]:
     db.commit()
-    return build_topology_discovery_payload(node_dashboard_backend.get_cached_payload())
+    return build_topology_discovery_payload(
+        node_dashboard_backend.get_cached_payload(),
+        node_dashboard_backend.get_topology_relationships(db),
+    )
 
 
 @app.get("/api/node-dashboard/stream")
@@ -1204,6 +1212,113 @@ async def topology_payload(db: Session = Depends(get_db)) -> dict[str, object]:
         )
     db.commit()
     return build_mock_topology_payload(inventory_nodes)
+
+
+@app.get("/api/operational-maps/views")
+async def operational_map_views(db: Session = Depends(get_db)) -> list[dict[str, object]]:
+    return list_map_views(db)
+
+
+@app.post("/api/operational-maps/views", status_code=status.HTTP_201_CREATED)
+async def create_operational_map_view(
+    payload: OperationalMapViewCreate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return create_map_view(payload, db)
+
+
+@app.put("/api/operational-maps/views/{map_view_id}")
+async def update_operational_map_view(
+    map_view_id: int,
+    payload: OperationalMapViewUpdate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return update_map_view(map_view_id, payload, db)
+
+
+@app.delete("/api/operational-maps/views/{map_view_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_operational_map_view(map_view_id: int, db: Session = Depends(get_db)) -> Response:
+    delete_map_view(map_view_id, db)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.get("/api/operational-maps/views/{map_view_id}")
+async def operational_map_view_detail(map_view_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+    return get_map_view_detail(map_view_id, db)
+
+
+@app.post("/api/operational-maps/objects", status_code=status.HTTP_201_CREATED)
+async def create_operational_map_object(
+    payload: OperationalMapObjectCreate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return create_map_object(payload, db)
+
+
+@app.put("/api/operational-maps/objects/{object_id}")
+async def update_operational_map_object(
+    object_id: int,
+    payload: OperationalMapObjectUpdate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return update_map_object(object_id, payload, db)
+
+
+@app.delete("/api/operational-maps/objects/{object_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_operational_map_object(object_id: int, db: Session = Depends(get_db)) -> Response:
+    delete_map_object(object_id, db)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.post("/api/operational-maps/object-bindings", status_code=status.HTTP_201_CREATED)
+async def create_operational_map_object_binding(
+    payload: OperationalMapObjectBindingCreate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return create_map_object_binding(payload, db)
+
+
+@app.delete("/api/operational-maps/object-bindings/{binding_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_operational_map_object_binding(binding_id: int, db: Session = Depends(get_db)) -> Response:
+    delete_map_object_binding(binding_id, db)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.post("/api/operational-maps/links", status_code=status.HTTP_201_CREATED)
+async def create_operational_map_link(
+    payload: OperationalMapLinkCreate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return create_map_link(payload, db)
+
+
+@app.put("/api/operational-maps/links/{link_id}")
+async def update_operational_map_link(
+    link_id: int,
+    payload: OperationalMapLinkUpdate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return update_map_link(link_id, payload, db)
+
+
+@app.delete("/api/operational-maps/links/{link_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_operational_map_link(link_id: int, db: Session = Depends(get_db)) -> Response:
+    delete_map_link(link_id, db)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.post("/api/operational-maps/link-bindings", status_code=status.HTTP_201_CREATED)
+async def create_operational_map_link_binding(
+    payload: OperationalMapLinkBindingCreate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return create_map_link_binding(payload, db)
+
+
+@app.delete("/api/operational-maps/link-bindings/{binding_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_operational_map_link_binding(binding_id: int, db: Session = Depends(get_db)) -> Response:
+    delete_map_link_binding(binding_id, db)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.get("/api/services")
@@ -1280,3 +1395,4 @@ async def delete_node(node_id: int, db: Session = Depends(get_db)) -> Response:
     db.delete(node)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+

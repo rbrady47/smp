@@ -7,9 +7,10 @@ import logging
 import re
 from typing import Any, Awaitable, Callable
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import DiscoveredNode, DiscoveredNodeObservation, Node
+from app.models import DiscoveredNode, DiscoveredNodeObservation, Node, NodeRelationship
 from app.node_discovery_service import refresh_discovered_inventory
 from app.node_projection_service import build_anchor_records, build_projection
 from app.schemas import NodeDashboardDiscoveredRow
@@ -86,6 +87,12 @@ class NodeDashboardBackend:
         self.discovered_node_cache.pop(site_id, None)
         self.discovered_node_tombstones[site_id] = datetime.now(timezone.utc).isoformat()
         self.mark_projection_dirty()
+        for relationship in db.scalars(
+            select(NodeRelationship).where(
+                (NodeRelationship.source_site_id == site_id) | (NodeRelationship.target_site_id == site_id)
+            )
+        ).all():
+            db.delete(relationship)
         observation_record = db.get(DiscoveredNodeObservation, site_id)
         if observation_record is not None:
             db.delete(observation_record)
@@ -165,6 +172,72 @@ class NodeDashboardBackend:
             **observation_payload,
         })
 
+    def _serialize_relationship_record(self, record: NodeRelationship) -> dict[str, object]:
+        return {
+            "source_site_id": record.source_site_id,
+            "target_site_id": record.target_site_id,
+            "relationship_kind": record.relationship_kind,
+            "source_row_type": record.source_row_type,
+            "target_row_type": record.target_row_type,
+            "source_name": record.source_name,
+            "target_name": record.target_name,
+            "target_unit": record.target_unit,
+            "target_location": record.target_location,
+            "discovered_level": record.discovered_level,
+        }
+
+    def get_topology_relationships(self, db: Session) -> list[dict[str, object]]:
+        return [
+            self._serialize_relationship_record(record)
+            for record in db.scalars(
+                select(NodeRelationship).order_by(
+                    NodeRelationship.relationship_kind,
+                    NodeRelationship.source_site_id,
+                    NodeRelationship.target_site_id,
+                )
+            ).all()
+        ]
+
+    def _upsert_discovered_relationships(self, db: Session, row: dict[str, object]) -> None:
+        target_site_id = str(row.get("site_id") or "").strip()
+        source_site_id = str(row.get("discovered_parent_site_id") or row.get("surfaced_by_site_id") or "").strip()
+        relationship_kind = "surfaced_by"
+
+        existing_relationships = db.scalars(
+            select(NodeRelationship).where(
+                (NodeRelationship.target_site_id == target_site_id)
+                & (NodeRelationship.relationship_kind == relationship_kind)
+            )
+        ).all()
+
+        for relationship in existing_relationships:
+            if not source_site_id or relationship.source_site_id != source_site_id:
+                db.delete(relationship)
+
+        if not target_site_id or not source_site_id:
+            return
+
+        record = db.get(NodeRelationship, {
+            "source_site_id": source_site_id,
+            "target_site_id": target_site_id,
+            "relationship_kind": relationship_kind,
+        })
+        if record is None:
+            record = NodeRelationship(
+                source_site_id=source_site_id,
+                target_site_id=target_site_id,
+                relationship_kind=relationship_kind,
+            )
+            db.add(record)
+
+        record.source_row_type = str(row.get("source_row_type") or "anchor").strip() or "anchor"
+        record.target_row_type = "discovered"
+        record.source_name = str(row.get("discovered_parent_name") or row.get("surfaced_by_name") or "").strip() or None
+        record.target_name = str(row.get("site_name") or "").strip() or None
+        record.target_unit = str(row.get("unit") or "").strip() or None
+        record.target_location = str(row.get("location") or "").strip() or None
+        record.discovered_level = int(row.get("discovered_level") or row.get("level") or 2)
+
     def _upsert_discovered_record(self, db: Session, row: dict[str, object]) -> None:
         site_id = str(row.get("site_id") or "").strip()
         if not site_id:
@@ -172,6 +245,7 @@ class NodeDashboardBackend:
 
         self._upsert_discovered_inventory_record(db, row)
         self._upsert_discovered_observation_record(db, row)
+        self._upsert_discovered_relationships(db, row)
 
     def _upsert_discovered_inventory_record(self, db: Session, row: dict[str, object]) -> None:
         site_id = str(row.get("site_id") or "").strip()
@@ -336,7 +410,10 @@ class NodeDashboardBackend:
 
     @staticmethod
     def _normalize_discovered_row(row: dict[str, object]) -> dict[str, object]:
-        return NodeDashboardDiscoveredRow.model_validate(row).model_dump()
+        sanitized_row = dict(row)
+        sanitized_row.pop("source_row_type", None)
+        sanitized_row.pop("surfaced_by_sources", None)
+        return NodeDashboardDiscoveredRow.model_validate(sanitized_row).model_dump()
 
     def _store_discovered_node_cache(self, site_id: str, row: dict[str, object]) -> bool:
         normalized = self._normalize_discovered_row(row)
@@ -607,3 +684,7 @@ class NodeDashboardBackend:
 
     async def build_payload(self, db: Session, nodes: list[Node]) -> dict[str, list[dict[str, object]]]:
         return await self.build_projection(db, nodes)
+
+
+
+

@@ -10,6 +10,106 @@ from app.models import DiscoveredNode, DiscoveredNodeObservation, Node
 from app.node_projection_service import build_anchor_records
 
 
+def _merge_source_entries(existing: object, new_source: dict[str, object] | None = None) -> list[dict[str, object]]:
+    merged: list[dict[str, object]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for item in existing if isinstance(existing, list) else []:
+        if not isinstance(item, dict):
+            continue
+        site_id = str(item.get("site_id") or "").strip()
+        name = str(item.get("name") or "").strip()
+        row_type = str(item.get("row_type") or "anchor").strip() or "anchor"
+        key = (site_id, row_type)
+        if not site_id or key in seen:
+            continue
+        seen.add(key)
+        merged.append({
+            "site_id": site_id,
+            "name": name or None,
+            "row_type": row_type,
+        })
+
+    if isinstance(new_source, dict):
+        site_id = str(new_source.get("site_id") or "").strip()
+        row_type = str(new_source.get("row_type") or "anchor").strip() or "anchor"
+        key = (site_id, row_type)
+        if site_id and key not in seen:
+            seen.add(key)
+            merged.append({
+                "site_id": site_id,
+                "name": str(new_source.get("name") or "").strip() or None,
+                "row_type": row_type,
+            })
+
+    return merged
+
+
+def _candidate_source(site_id: str | None, name: str | None, row_type: str) -> dict[str, object] | None:
+    normalized_site_id = str(site_id or "").strip()
+    if not normalized_site_id:
+        return None
+    return {
+        "site_id": normalized_site_id,
+        "name": str(name or "").strip() or None,
+        "row_type": row_type,
+    }
+
+
+def _merge_discovered_candidate(
+    backend: Any,
+    discovery_candidates: dict[str, dict[str, object]],
+    *,
+    source_row_type: str,
+    source_site_id: str | None,
+    source_site_name: str | None,
+    source_location: str | None,
+    source_unit: str | None,
+    source_level: int,
+    tunnels: list[dict[str, object]],
+    source_node: Node | None,
+    anchor_by_site_id: dict[str, dict[str, object]],
+) -> None:
+    source_entry = _candidate_source(source_site_id, source_site_name, source_row_type)
+
+    for row in tunnels:
+        site_id = str(row.get("mate_site_id") or "").strip()
+        if not site_id or site_id in anchor_by_site_id or site_id in backend.discovered_node_tombstones:
+            continue
+        mate_ip = str(row.get("mate_ip") or "").strip()
+        if not mate_ip or mate_ip == "--":
+            continue
+        candidate = discovery_candidates.setdefault(
+            site_id,
+            {
+                "site_id": site_id,
+                "host": mate_ip,
+                "source_node": source_node,
+                "location": source_location,
+                "unit": source_unit or "--",
+                "discovered_level": min(max(source_level, 1) + 1, 3),
+                "surfaced_by_site_id": source_site_id or None,
+                "surfaced_by_name": source_site_name or None,
+                "surfaced_by_names": [source_site_name] if source_site_name else [],
+                "surfaced_by_sources": _merge_source_entries([], source_entry),
+                "source_row_type": source_row_type,
+            },
+        )
+        candidate["host"] = mate_ip
+        candidate["source_node"] = source_node or candidate.get("source_node")
+        candidate["location"] = source_location or candidate.get("location")
+        candidate["unit"] = source_unit or candidate.get("unit") or "--"
+        candidate["discovered_level"] = min(
+            int(candidate.get("discovered_level") or 2),
+            min(max(source_level, 1) + 1, 3),
+        )
+        candidate["surfaced_by_site_id"] = candidate.get("surfaced_by_site_id") or source_site_id or None
+        candidate["surfaced_by_name"] = candidate.get("surfaced_by_name") or source_site_name or None
+        candidate["surfaced_by_names"] = backend._merge_discovered_sources(candidate.get("surfaced_by_names"), source_site_name)
+        candidate["surfaced_by_sources"] = _merge_source_entries(candidate.get("surfaced_by_sources"), source_entry)
+        candidate["source_row_type"] = candidate.get("source_row_type") or source_row_type
+
+
 def build_discovery_candidates(
     backend: Any,
     nodes: list[Node],
@@ -20,40 +120,40 @@ def build_discovery_candidates(
     for node in nodes:
         detail = backend.seeker_detail_cache.get(node.id) or {}
         config_summary = detail.get("config_summary") if isinstance(detail.get("config_summary"), dict) else {}
-        parent_site_id = str(config_summary.get("site_id") or "")
-        parent_site_name = str(config_summary.get("site_name") or node.name)
-        for row in detail.get("tunnels") or []:
-            site_id = str(row.get("mate_site_id") or "").strip()
-            if not site_id or site_id in anchor_by_site_id or site_id in backend.discovered_node_tombstones:
-                continue
-            mate_ip = str(row.get("mate_ip") or "").strip()
-            if not mate_ip or mate_ip == "--":
-                continue
-            candidate = discovery_candidates.setdefault(
-                site_id,
-                {
-                    "site_id": site_id,
-                    "host": mate_ip,
-                    "source_node": node,
-                    "location": node.location,
-                    "unit": node.topology_unit or "--",
-                    "discovered_level": min((int(node.topology_level) if node.topology_level is not None else 1) + 1, 3),
-                    "surfaced_by_site_id": parent_site_id or None,
-                    "surfaced_by_name": parent_site_name or None,
-                    "surfaced_by_names": [parent_site_name] if parent_site_name else [],
-                },
-            )
-            candidate["host"] = mate_ip
-            candidate["source_node"] = node
-            candidate["location"] = node.location
-            candidate["unit"] = node.topology_unit or candidate.get("unit") or "--"
-            candidate["discovered_level"] = min(
-                candidate.get("discovered_level", 2),
-                min((int(node.topology_level) if node.topology_level is not None else 1) + 1, 3),
-            )
-            candidate["surfaced_by_site_id"] = candidate.get("surfaced_by_site_id") or parent_site_id or None
-            candidate["surfaced_by_name"] = candidate.get("surfaced_by_name") or parent_site_name or None
-            candidate["surfaced_by_names"] = backend._merge_discovered_sources(candidate.get("surfaced_by_names"), parent_site_name)
+        _merge_discovered_candidate(
+            backend,
+            discovery_candidates,
+            source_row_type="anchor",
+            source_site_id=str(config_summary.get("site_id") or node.node_id or "").strip() or None,
+            source_site_name=str(config_summary.get("site_name") or node.name or "").strip() or None,
+            source_location=node.location,
+            source_unit=node.topology_unit or "--",
+            source_level=int(node.topology_level) if node.topology_level is not None else 1,
+            tunnels=[row for row in (detail.get("tunnels") or []) if isinstance(row, dict)],
+            source_node=node,
+            anchor_by_site_id=anchor_by_site_id,
+        )
+
+    for cached in backend.discovered_node_cache.values():
+        if not isinstance(cached, dict):
+            continue
+        cached_detail = cached.get("detail") if isinstance(cached.get("detail"), dict) else {}
+        tunnels = cached_detail.get("tunnels") if isinstance(cached_detail.get("tunnels"), list) else []
+        if not tunnels:
+            continue
+        _merge_discovered_candidate(
+            backend,
+            discovery_candidates,
+            source_row_type="discovered",
+            source_site_id=str(cached.get("site_id") or "").strip() or None,
+            source_site_name=str(cached.get("site_name") or "").strip() or None,
+            source_location=str(cached.get("location") or "").strip() or None,
+            source_unit=str(cached.get("unit") or "").strip() or None,
+            source_level=int(cached.get("discovered_level") or cached.get("level") or 2),
+            tunnels=[row for row in tunnels if isinstance(row, dict)],
+            source_node=None,
+            anchor_by_site_id=anchor_by_site_id,
+        )
 
     return discovery_candidates
 
@@ -115,6 +215,7 @@ async def refresh_discovered_inventory(backend: Any, db: Session, nodes: list[No
             "discovered_parent_site_id": candidate.get("surfaced_by_site_id"),
             "discovered_parent_name": candidate.get("surfaced_by_name"),
             "surfaced_by_names": backend._merge_discovered_sources(cached.get("surfaced_by_names"), candidate.get("surfaced_by_names")),
+            "surfaced_by_sources": _merge_source_entries(cached.get("surfaced_by_sources"), None),
             "discovered_level": int(candidate.get("discovered_level") or 2),
             "detail": cached.get("detail", {}),
             "probed_at": cached.get("probed_at"),
@@ -122,10 +223,13 @@ async def refresh_discovered_inventory(backend: Any, db: Session, nodes: list[No
             "surfaced_by_site_id": candidate.get("surfaced_by_site_id"),
             "surfaced_by_name": candidate.get("surfaced_by_name"),
         }
+        entry["surfaced_by_sources"] = _merge_source_entries(entry.get("surfaced_by_sources"), None)
+        for source in candidate.get("surfaced_by_sources") if isinstance(candidate.get("surfaced_by_sources"), list) else []:
+            entry["surfaced_by_sources"] = _merge_source_entries(entry.get("surfaced_by_sources"), source)
         backend._update_discovered_ping_timestamps(entry, ping_up=ping_up, observed_at=observed_at)
         backend._store_discovered_node_cache(site_id, entry)
         backend._upsert_discovered_record(db, entry)
-        if ping_up:
+        if ping_up and isinstance(candidate.get("source_node"), Node):
             backend._schedule_discovered_node_probe(
                 candidate["source_node"],
                 site_id=site_id,
@@ -136,3 +240,4 @@ async def refresh_discovered_inventory(backend: Any, db: Session, nodes: list[No
             )
 
     db.commit()
+

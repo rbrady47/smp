@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page_title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260329-operational-maps1">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">SMP</div>
+        <nav class="nav">
+            <a href="/">Dashboard</a>
+            <a href="/nodes/dashboard">Node Dashboard</a>
+            <a href="/services/dashboard">Services Dashboard</a>
+            <a href="/topology">Topology</a>
+            <a href="/operational-maps">Operational Maps</a>
+            <a href="#health">Health</a>
+            <a href="#admin">Admin</a>
+        </nav>
+    </header>
+
+    <main class="container operational-maps-page" id="operational-maps-root">
+        <section class="dashboard-toolbar operational-maps-toolbar">
+            <div>
+                <p class="eyebrow">Authored Operations Map</p>
+                <h1>Operational Maps</h1>
+                <p class="subtitle">Start with a blank canvas, place node, submap, and label objects, then bind live SMP data to what matters.</p>
+            </div>
+            <div class="dashboard-toolbar-actions">
+                <button type="button" class="button-secondary" id="operational-map-back-button">Back</button>
+                <button type="button" class="button-secondary" id="operational-map-new-submap-button">New Submap</button>
+                <button type="button" class="button-primary" id="operational-map-new-map-button">New Map</button>
+            </div>
+        </section>
+
+        <section class="card operational-maps-shell">
+            <div class="operational-maps-sidebar">
+                <div class="operational-panel">
+                    <div class="section-heading operational-panel-heading">
+                        <div>
+                            <h2>Maps</h2>
+                            <p class="section-copy">Choose a canvas or create a new one.</p>
+                        </div>
+                    </div>
+                    <div class="operational-map-list" id="operational-map-list">
+                        <p class="table-message">Loading maps...</p>
+                    </div>
+                </div>
+
+                <div class="operational-panel">
+                    <div class="section-heading operational-panel-heading">
+                        <div>
+                            <h2>Palette</h2>
+                            <p class="section-copy">Add authored objects to the current canvas.</p>
+                        </div>
+                    </div>
+                    <div class="operational-palette">
+                        <button type="button" class="button-secondary operational-palette-button" data-create-object="node">Add Node</button>
+                        <button type="button" class="button-secondary operational-palette-button" data-create-object="submap">Add Submap</button>
+                        <button type="button" class="button-secondary operational-palette-button" data-create-object="label">Add Label</button>
+                    </div>
+                    <p class="table-message" id="operational-map-feedback" hidden></p>
+                </div>
+
+                <div class="operational-panel">
+                    <div class="section-heading operational-panel-heading">
+                        <div>
+                            <h2>Inspector</h2>
+                            <p class="section-copy">Assign node IDs, labels, and submap drill targets for the selected object.</p>
+                        </div>
+                    </div>
+                    <form class="node-form operational-inspector-form" id="operational-object-form">
+                        <label>
+                            Label
+                            <input type="text" id="operational-object-label" placeholder="Object label">
+                        </label>
+                        <label>
+                            Type
+                            <input type="text" id="operational-object-type" disabled>
+                        </label>
+                        <label>
+                            Node ID
+                            <select id="operational-object-node-site-id">
+                                <option value="">Not assigned</option>
+                            </select>
+                        </label>
+                        <label>
+                            Drill-In Submap
+                            <select id="operational-object-child-map-id">
+                                <option value="">None</option>
+                            </select>
+                        </label>
+                        <label>
+                            Width
+                            <input type="number" id="operational-object-width" min="24" max="4000">
+                        </label>
+                        <label>
+                            Height
+                            <input type="number" id="operational-object-height" min="24" max="4000">
+                        </label>
+                        <div class="full-width form-actions operational-inspector-actions">
+                            <button type="submit" class="button-primary">Save Object</button>
+                            <button type="button" class="button-secondary" id="operational-object-delete-button">Delete Object</button>
+                        </div>
+                    </form>
+                    <p class="table-message" id="operational-inspector-empty">Select an object on the canvas to edit it.</p>
+                </div>
+            </div>
+
+            <div class="operational-map-workspace">
+                <div class="operational-map-stage-header">
+                    <div>
+                        <span class="dashboard-meta-label">Canvas</span>
+                        <h2 id="operational-map-title">Loading map...</h2>
+                        <p class="section-copy" id="operational-map-subtitle">Preparing authored canvas.</p>
+                    </div>
+                    <div class="operational-map-stage-meta">
+                        <span class="dashboard-meta-label">Selected Map</span>
+                        <strong id="operational-map-slug">--</strong>
+                    </div>
+                </div>
+                <div class="operational-map-stage-wrap">
+                    <div class="operational-map-stage" id="operational-map-stage">
+                        <div class="operational-map-empty" id="operational-map-empty">
+                            <h3>Blank canvas</h3>
+                            <p>Add a node, submap, or label from the palette to start authoring this map.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src="{{ url_for('static', path='js/app.js') }}?v=20260329-operational-maps1-shared"></script>
+    <script src="{{ url_for('static', path='js/operational_maps.js') }}?v=20260329-operational-maps1"></script>
+</body>
+</html>

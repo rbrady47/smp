@@ -1075,6 +1075,131 @@ a {
     margin: 0;
 }
 
+.topology-discovery-panel {
+    margin-top: 1.15rem;
+    border-top: 1px solid rgba(86, 118, 172, 0.16);
+    padding-top: 1rem;
+}
+
+.topology-discovery-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 0.9rem;
+}
+
+.topology-discovery-panel-header strong {
+    min-width: 3rem;
+    padding: 0.55rem 0.8rem;
+    border-radius: 999px;
+    text-align: center;
+    background: rgba(218, 231, 248, 0.9);
+    color: #16365f;
+}
+
+.topology-discovery-list {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--surface-alt) 68%, transparent);
+    overflow: hidden;
+}
+
+.topology-discovery-list.node-list {
+    display: grid;
+}
+
+.topology-discovery-list .node-list-row {
+    width: 100%;
+}
+
+.topology-discovery-list .node-list-main-inline {
+    grid-template-columns: minmax(220px, 0.9fr) minmax(0, 2.2fr);
+}
+
+.topology-discovery-card {
+    display: grid;
+    gap: 0.6rem;
+    padding: 0.95rem 1rem;
+    border-radius: 18px;
+    border: 1px solid rgba(86, 118, 172, 0.18);
+    background: linear-gradient(180deg, rgba(247, 250, 255, 0.96) 0%, rgba(239, 245, 253, 0.98) 100%);
+    box-shadow: 0 14px 32px rgba(38, 69, 123, 0.08);
+}
+
+.topology-discovery-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.topology-discovery-kind {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.28rem 0.55rem;
+    border-radius: 999px;
+    background: rgba(18, 103, 197, 0.12);
+    color: #1267c5;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.topology-discovery-level {
+    color: #5f7698;
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+
+.topology-discovery-flow {
+    display: grid;
+    gap: 0.35rem;
+}
+
+.topology-discovery-endpoint {
+    display: grid;
+    gap: 0.08rem;
+}
+
+.topology-discovery-endpoint strong {
+    color: #16365f;
+}
+
+.topology-discovery-endpoint span {
+    color: #5f7698;
+    font-size: 0.82rem;
+}
+
+.topology-discovery-arrow {
+    color: #1267c5;
+    font-size: 1rem;
+    font-weight: 800;
+}
+
+.topology-discovery-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+}
+
+.topology-discovery-chip {
+    padding: 0.28rem 0.55rem;
+    border-radius: 999px;
+    background: rgba(18, 103, 197, 0.08);
+    color: #34557f;
+    font-size: 0.76rem;
+    font-weight: 700;
+}
+
+.topology-discovery-focus {
+    justify-self: start;
+}
+
 @media (max-width: 1200px) {
     .topology-drawer {
         width: min(340px, calc(100% - 2rem));
@@ -2356,6 +2481,236 @@ body.modal-open {
     background: #cbd5e1;
 }
 
+.operational-maps-page {
+    max-width: 1880px;
+}
+
+.operational-maps-shell {
+    display: grid;
+    grid-template-columns: 340px minmax(0, 1fr);
+    gap: 1rem;
+    min-height: 820px;
+    padding: 1rem;
+}
+
+.operational-maps-sidebar {
+    display: grid;
+    align-content: start;
+    gap: 0.9rem;
+}
+
+.operational-panel {
+    display: grid;
+    gap: 0.8rem;
+    padding: 0.95rem;
+    border-radius: 18px;
+    border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+    background: color-mix(in srgb, var(--surface-alt) 70%, transparent);
+}
+
+.operational-panel-heading {
+    margin-bottom: 0;
+}
+
+.operational-panel-heading h2 {
+    margin: 0 0 0.2rem;
+}
+
+.operational-map-list {
+    display: grid;
+    gap: 0.55rem;
+}
+
+.operational-map-list-item {
+    display: grid;
+    gap: 0.18rem;
+    width: 100%;
+    border: 1px solid rgba(94, 121, 168, 0.34);
+    border-radius: 14px;
+    background: rgba(46, 63, 94, 0.58);
+    color: var(--text);
+    padding: 0.8rem 0.9rem;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.18s ease, border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.operational-map-list-item:hover,
+.operational-map-list-item.is-active {
+    color: #ffffff;
+    background: rgba(59, 92, 146, 0.72);
+    border-color: rgba(118, 183, 255, 0.48);
+    box-shadow: 0 10px 24px rgba(8, 18, 36, 0.22);
+    transform: translateY(-1px);
+}
+
+.operational-map-list-name {
+    font-size: 0.96rem;
+    font-weight: 800;
+}
+
+.operational-map-list-meta {
+    color: color-mix(in srgb, var(--muted) 88%, white 12%);
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.operational-palette {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.55rem;
+}
+
+.operational-palette-button {
+    justify-content: center;
+    min-height: 3rem;
+}
+
+.operational-map-feedback.is-error {
+    color: #b42318;
+}
+
+.operational-inspector-form[hidden] {
+    display: none !important;
+}
+
+.operational-inspector-actions {
+    justify-content: flex-start;
+}
+
+.operational-map-workspace {
+    display: grid;
+    gap: 0.9rem;
+    min-width: 0;
+}
+
+.operational-map-stage-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 1rem;
+}
+
+.operational-map-stage-header h2 {
+    margin: 0 0 0.15rem;
+}
+
+.operational-map-stage-meta {
+    display: grid;
+    gap: 0.2rem;
+    justify-items: end;
+}
+
+.operational-map-stage-wrap {
+    overflow: auto;
+    border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+    border-radius: 22px;
+    background:
+        radial-gradient(circle at 18% 16%, rgba(72, 214, 255, 0.08), transparent 22%),
+        radial-gradient(circle at 82% 10%, rgba(156, 92, 255, 0.08), transparent 24%),
+        linear-gradient(180deg, rgba(15, 23, 41, 0.96) 0%, rgba(10, 20, 39, 0.98) 100%);
+    min-height: 680px;
+}
+
+.operational-map-stage {
+    position: relative;
+    min-width: 100%;
+    min-height: 680px;
+}
+
+.operational-map-stage::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+        linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+}
+
+.operational-map-empty {
+    position: absolute;
+    top: 2rem;
+    left: 2rem;
+    max-width: 360px;
+    padding: 1rem 1.1rem;
+    border-radius: 18px;
+    background: rgba(11, 20, 37, 0.78);
+    border: 1px solid rgba(118, 183, 255, 0.16);
+    color: #dfe9fa;
+    box-shadow: 0 18px 36px rgba(5, 10, 20, 0.22);
+}
+
+.operational-map-empty h3 {
+    margin: 0 0 0.35rem;
+    font-size: 1rem;
+}
+
+.operational-map-empty p {
+    color: #afc1dc;
+    font-weight: 600;
+}
+
+.operational-map-object {
+    position: absolute;
+    display: grid;
+    align-content: start;
+    gap: 0.28rem;
+    padding: 0.7rem 0.8rem;
+    border-radius: 18px;
+    border: 1px solid rgba(118, 183, 255, 0.22);
+    background: rgba(16, 27, 48, 0.92);
+    color: #e7f0ff;
+    box-shadow: 0 14px 30px rgba(6, 12, 24, 0.24);
+    text-align: left;
+    cursor: grab;
+    user-select: none;
+}
+
+.operational-map-object:active {
+    cursor: grabbing;
+}
+
+.operational-map-object.is-selected {
+    border-color: rgba(129, 198, 255, 0.78);
+    box-shadow: 0 0 0 2px rgba(129, 198, 255, 0.18), 0 18px 38px rgba(6, 12, 24, 0.28);
+}
+
+.operational-map-object-kind-node {
+    background: linear-gradient(180deg, rgba(28, 53, 89, 0.96) 0%, rgba(18, 36, 63, 0.98) 100%);
+}
+
+.operational-map-object-kind-submap {
+    background: linear-gradient(180deg, rgba(54, 38, 100, 0.96) 0%, rgba(32, 21, 74, 0.98) 100%);
+}
+
+.operational-map-object-kind-label {
+    background: linear-gradient(180deg, rgba(60, 52, 25, 0.92) 0%, rgba(43, 37, 18, 0.96) 100%);
+}
+
+.operational-map-object-type {
+    color: #8ebcf7;
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.operational-map-object-label {
+    font-size: 1rem;
+    font-weight: 800;
+    line-height: 1.1;
+}
+
+.operational-map-object-sub {
+    color: #b7c8e4;
+    font-size: 0.76rem;
+    font-weight: 700;
+}
+
 @media (max-width: 700px) {
     .topbar {
         flex-direction: column;
@@ -2431,4 +2786,14 @@ body.modal-open {
         max-height: calc(100vh - 1.25rem);
         padding: 1rem;
     }
+
+    .operational-maps-shell {
+        grid-template-columns: 1fr;
+    }
+
+    .operational-palette {
+        grid-template-columns: 1fr;
+    }
 }
+
+

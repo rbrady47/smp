@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ page_title }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260327-topology5">
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260327-topology9">
 </head>
 <body>
     <header class="topbar">
@@ -76,7 +76,6 @@
                     <div class="topology-stage-grid-label topology-label-lvl0">C2IN Aggregate</div>
                     <div class="topology-stage-grid-label topology-label-lvl1">C2IN VME</div>
                     <div class="topology-stage-grid-label topology-label-lvl2">C2IN Edge</div>
-                    <div class="topology-locations-header" id="topology-locations-header"></div>
                     <svg class="topology-links" id="topology-links" aria-hidden="true"></svg>
                     <div class="topology-layer topology-layer-nodes" id="topology-node-layer"></div>
                     <aside class="card topology-drawer" id="topology-drawer" hidden>
@@ -89,10 +88,27 @@
                         </div>
                     </aside>
                 </div>
+                <section class="topology-discovery-panel">
+                    <div class="topology-discovery-panel-header">
+                        <div>
+                            <span class="dashboard-meta-label">Unit Attribution Signals</span>
+                            <p class="section-copy">Anchor-first unit attribution with DN lineage fallback. Only exceptions that need attention are shown here.</p>
+                        </div>
+                        <strong id="topology-relationship-count">0</strong>
+                    </div>
+                    <div class="topology-discovery-list node-list" id="topology-discovery-relationships">
+                        <p class="table-message">Loading discovery relationships...</p>
+                    </div>
+                </section>
             </section>
         </section>
     </main>
 
-    <script src="{{ url_for('static', path='js/app.js') }}?v=20260327-topology4"></script>
+    <script src="{{ url_for('static', path='js/app.js') }}?v=20260327-topology9"></script>
 </body>
 </html>
+
+
+
+
+

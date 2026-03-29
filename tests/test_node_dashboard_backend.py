@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 os.environ.setdefault("DATABASE_URL", "sqlite:///smp-test.db")
 
 from app.db import Base
-from app.models import DiscoveredNode, DiscoveredNodeObservation, Node
+from app.models import DiscoveredNode, DiscoveredNodeObservation, Node, NodeRelationship
 from app.node_dashboard_backend import NodeDashboardBackend
 
 
@@ -152,13 +152,20 @@ class NodeDashboardBackendTest(unittest.TestCase):
         asyncio.run(backend.refresh_discovered_inventory(self.session, [anchor]))
         record = self.session.get(DiscoveredNode, "4001")
         observation = self.session.get(DiscoveredNodeObservation, "4001")
+        relationship = self.session.get(NodeRelationship, {
+            "source_site_id": "1001",
+            "target_site_id": "4001",
+            "relationship_kind": "surfaced_by",
+        })
         self.assertIsNotNone(record)
         self.assertIsNotNone(observation)
+        self.assertIsNotNone(relationship)
         self.assertEqual(record.host, "10.10.10.10")
         self.assertEqual(record.unit, "DIV HQ")
         self.assertEqual(record.discovered_parent_site_id, "1001")
         self.assertEqual(observation.ping, "Up")
         self.assertEqual(observation.latency_ms, 15)
+        self.assertEqual(relationship.target_unit, "DIV HQ")
 
     def test_build_projection_uses_persisted_and_cached_state_without_discovery_side_effects(self) -> None:
         anchor = Node(
@@ -331,13 +338,32 @@ class NodeDashboardBackendTest(unittest.TestCase):
         self.assertEqual(backend.discovered_node_cache["4001"]["last_seen"], first_last_seen)
         self.assertFalse(backend.projection_dirty)
 
-    def test_delete_discovered_node_removes_inventory_and_observation(self) -> None:
+    def test_delete_discovered_node_removes_inventory_observation_and_relationships(self) -> None:
         backend = self._build_backend()
         self.session.add(DiscoveredNode(site_id="4001", site_name="Delta"))
         self.session.add(DiscoveredNodeObservation(site_id="4001", ping="Up"))
+        self.session.add(
+            NodeRelationship(
+                source_site_id="1001",
+                target_site_id="4001",
+                relationship_kind="surfaced_by",
+                source_row_type="anchor",
+                target_row_type="discovered",
+            )
+        )
         self.session.commit()
 
         backend.delete_discovered_node(self.session, "4001")
 
         self.assertIsNone(self.session.get(DiscoveredNode, "4001"))
         self.assertIsNone(self.session.get(DiscoveredNodeObservation, "4001"))
+        self.assertIsNone(
+            self.session.get(
+                NodeRelationship,
+                {
+                    "source_site_id": "1001",
+                    "target_site_id": "4001",
+                    "relationship_kind": "surfaced_by",
+                },
+            )
+        )

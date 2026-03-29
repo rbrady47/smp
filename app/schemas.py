@@ -146,23 +146,46 @@ class TopologyDiscoveryDiscoveredNode(BaseModel):
 
     site_id: str
     site_name: str
+    host: str | None = None
+    version: str | None = None
     location: str | None = None
     unit: str | None = None
     discovered_level: int = 2
     surfaced_by_site_id: str | None = None
     surfaced_by_name: str | None = None
+    surfaced_by_names: list[str] = Field(default_factory=list)
+    resolved_unit: str | None = None
+    unit_source: str | None = None
     ping: str = "Down"
     web_ok: bool = False
     ssh_ok: bool = False
+
+
+class TopologyDiscoveryRelationship(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_site_id: str
+    target_site_id: str
+    relationship_kind: str
+    source_row_type: Literal["anchor", "discovered"]
+    target_row_type: Literal["anchor", "discovered"]
+    source_name: str | None = None
+    target_name: str | None = None
+    target_unit: str | None = None
+    target_location: str | None = None
+    discovered_level: int | None = None
 
 
 class TopologyDiscoverySummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     total_discovered: int = 0
+    total_relationships: int = 0
     by_location: dict[str, int] = Field(default_factory=dict)
     by_unit: dict[str, int] = Field(default_factory=dict)
     by_location_unit: dict[str, int] = Field(default_factory=dict)
+    by_relationship_kind: dict[str, int] = Field(default_factory=dict)
+    by_unit_source: dict[str, int] = Field(default_factory=dict)
 
 
 class TopologyDiscoveryPayload(BaseModel):
@@ -170,6 +193,7 @@ class TopologyDiscoveryPayload(BaseModel):
 
     anchors: list[TopologyDiscoveryAnchor]
     discovered: list[TopologyDiscoveryDiscoveredNode]
+    relationships: list[TopologyDiscoveryRelationship]
     summary: TopologyDiscoverySummary
 
 
@@ -210,3 +234,181 @@ class MainDashboardNodeWatchlistPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     nodes: list[MainDashboardNodeSummary]
+
+
+MapViewType = Literal["global", "unit", "custom"]
+MapObjectType = Literal["node", "submap", "label"]
+MapObjectBindingSlot = Literal["primary_status", "secondary_text", "badge", "hover"]
+MapLinkBindingSlot = Literal["line_status", "label", "hover"]
+MapBindingSourceType = Literal["node"]
+MapLinkBindingSourceSide = Literal["source", "target", "relationship"]
+
+
+class OperationalMapViewBase(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    slug: str = Field(..., min_length=1, max_length=120)
+    map_type: MapViewType = "custom"
+    parent_map_id: int | None = None
+    background_image_url: str | None = Field(default=None, max_length=512)
+    canvas_width: int = Field(default=1920, ge=320, le=10000)
+    canvas_height: int = Field(default=1080, ge=240, le=10000)
+    default_zoom: int = Field(default=100, ge=10, le=400)
+    notes: str | None = None
+
+
+class OperationalMapViewCreate(OperationalMapViewBase):
+    pass
+
+
+class OperationalMapViewUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    slug: str | None = Field(default=None, min_length=1, max_length=120)
+    map_type: MapViewType | None = None
+    parent_map_id: int | None = None
+    background_image_url: str | None = Field(default=None, max_length=512)
+    canvas_width: int | None = Field(default=None, ge=320, le=10000)
+    canvas_height: int | None = Field(default=None, ge=240, le=10000)
+    default_zoom: int | None = Field(default=None, ge=10, le=400)
+    notes: str | None = None
+
+
+class OperationalMapViewRead(OperationalMapViewBase):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+
+
+class OperationalMapObjectBase(BaseModel):
+    object_type: MapObjectType
+    label: str | None = Field(default=None, max_length=255)
+    x: int = Field(default=0, ge=0, le=10000)
+    y: int = Field(default=0, ge=0, le=10000)
+    width: int = Field(default=160, ge=24, le=4000)
+    height: int = Field(default=96, ge=24, le=4000)
+    z_index: int = Field(default=0, ge=0, le=100000)
+    node_site_id: str | None = Field(default=None, max_length=64)
+    binding_key: str | None = Field(default=None, max_length=128)
+    child_map_view_id: int | None = None
+    connection_points: list[str] = Field(default_factory=list)
+    style: dict[str, object] = Field(default_factory=dict)
+
+
+class OperationalMapObjectCreate(OperationalMapObjectBase):
+    map_view_id: int
+
+
+class OperationalMapObjectUpdate(BaseModel):
+    label: str | None = Field(default=None, max_length=255)
+    x: int | None = Field(default=None, ge=0, le=10000)
+    y: int | None = Field(default=None, ge=0, le=10000)
+    width: int | None = Field(default=None, ge=24, le=4000)
+    height: int | None = Field(default=None, ge=24, le=4000)
+    z_index: int | None = Field(default=None, ge=0, le=100000)
+    node_site_id: str | None = Field(default=None, max_length=64)
+    binding_key: str | None = Field(default=None, max_length=128)
+    child_map_view_id: int | None = None
+    connection_points: list[str] | None = None
+    style: dict[str, object] | None = None
+
+
+class OperationalMapObjectRead(OperationalMapObjectBase):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    map_view_id: int
+
+
+class OperationalMapObjectBindingBase(BaseModel):
+    slot: MapObjectBindingSlot
+    source_type: MapBindingSourceType = "node"
+    field_name: str = Field(..., min_length=1, max_length=64)
+    display_mode: str | None = Field(default=None, max_length=32)
+    settings: dict[str, object] = Field(default_factory=dict)
+
+
+class OperationalMapObjectBindingCreate(OperationalMapObjectBindingBase):
+    object_id: int
+
+
+class OperationalMapObjectBindingRead(OperationalMapObjectBindingBase):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    object_id: int
+
+
+class OperationalMapLinkBase(BaseModel):
+    source_object_id: int
+    source_port: str = Field(..., min_length=1, max_length=64)
+    target_object_id: int
+    target_port: str = Field(..., min_length=1, max_length=64)
+    label: str | None = Field(default=None, max_length=255)
+    points: list[dict[str, int]] = Field(default_factory=list)
+    style: dict[str, object] = Field(default_factory=dict)
+
+
+class OperationalMapLinkCreate(OperationalMapLinkBase):
+    map_view_id: int
+
+
+class OperationalMapLinkUpdate(BaseModel):
+    source_port: str | None = Field(default=None, min_length=1, max_length=64)
+    target_port: str | None = Field(default=None, min_length=1, max_length=64)
+    label: str | None = Field(default=None, max_length=255)
+    points: list[dict[str, int]] | None = None
+    style: dict[str, object] | None = None
+
+
+class OperationalMapLinkRead(OperationalMapLinkBase):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    map_view_id: int
+
+
+class OperationalMapLinkBindingBase(BaseModel):
+    slot: MapLinkBindingSlot
+    source_side: MapLinkBindingSourceSide = "target"
+    field_name: str = Field(..., min_length=1, max_length=64)
+    display_mode: str | None = Field(default=None, max_length=32)
+    settings: dict[str, object] = Field(default_factory=dict)
+
+
+class OperationalMapLinkBindingCreate(OperationalMapLinkBindingBase):
+    link_id: int
+
+
+class OperationalMapLinkBindingRead(OperationalMapLinkBindingBase):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    link_id: int
+
+
+class OperationalMapAvailableNodeRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_type: Literal["anchor", "discovered"]
+    site_id: str
+    display_name: str
+    binding_key: str
+    location: str | None = None
+    unit: str | None = None
+    status: str = "unknown"
+    discovered_level: int | None = None
+
+
+class OperationalMapViewDetailPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    map_view: OperationalMapViewRead
+    objects: list[OperationalMapObjectRead]
+    object_bindings: list[OperationalMapObjectBindingRead]
+    links: list[OperationalMapLinkRead]
+    link_bindings: list[OperationalMapLinkBindingRead]
+    available_nodes: list[OperationalMapAvailableNodeRead] = Field(default_factory=list)
+    available_submaps: list[OperationalMapViewRead] = Field(default_factory=list)
+    object_binding_catalog: dict[str, list[str]] = Field(default_factory=dict)
+    link_binding_catalog: dict[str, list[str]] = Field(default_factory=dict)
+
+

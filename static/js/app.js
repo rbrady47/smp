@@ -58,7 +58,7 @@ const TOPOLOGY_LOCATION_ALIASES = {
     epis: "Episodic",
 };
 let topologyPayload = null;
-let topologyDiscoveryPayload = { anchors: [], discovered: [] };
+let topologyDiscoveryPayload = { anchors: [], discovered: [], relationships: [], summary: {} };
 let topologyResizeListenerBound = false;
 let topologyRouteListenerBound = false;
 const topologyState = {
@@ -117,7 +117,6 @@ function getTopologyDiscoveryCounts() {
             byUnit: new Map(Object.entries(summary.by_unit || {})),
         };
     }
-
     const counts = {
         total: 0,
         byLocation: new Map(),
@@ -136,6 +135,213 @@ function getTopologyDiscoveryCounts() {
     });
 
     return counts;
+}
+
+function formatTopologyRelationshipKind(kind) {
+    const normalized = String(kind || "").trim().toLowerCase();
+    if (normalized === "surfaced_by") {
+        return "Surfaced By";
+    }
+    return normalized ? normalized.replace(/_/g, " ") : "Relationship";
+}
+
+function getTopologyDiscoveryRelationships() {
+    const relationships = Array.isArray(topologyDiscoveryPayload?.relationships)
+        ? topologyDiscoveryPayload.relationships
+        : [];
+
+    return relationships
+        .filter((relationship) => {
+            const targetUnit = normalizeTopologyUnit(relationship.target_unit);
+            const targetLocation = normalizeTopologyLocation(relationship.target_location);
+
+            if (topologyState.focusUnit && targetUnit && topologyState.focusUnit !== targetUnit) {
+                return false;
+            }
+            if (targetUnit && !topologyState.activeUnits.has(targetUnit)) {
+                return false;
+            }
+            if (targetLocation && !topologyState.activeLocations.has(targetLocation)) {
+                return false;
+            }
+            return true;
+        })
+        .sort((left, right) => {
+            const leftLevel = Number(left.discovered_level || 99);
+            const rightLevel = Number(right.discovered_level || 99);
+            if (leftLevel !== rightLevel) {
+                return leftLevel - rightLevel;
+            }
+            return `${left.source_name || left.source_site_id} ${left.target_name || left.target_site_id}`
+                .localeCompare(`${right.source_name || right.source_site_id} ${right.target_name || right.target_site_id}`);
+        });
+}
+
+function getTopologyDiscoveryRelationshipRows() {
+    const discoveredRows = Array.isArray(topologyDiscoveryPayload?.discovered)
+        ? topologyDiscoveryPayload.discovered
+        : [];
+    const discoveredBySiteId = new Map(
+        discoveredRows.map((row) => [String(row.site_id || ""), row]),
+    );
+    const grouped = new Map();
+
+    getTopologyDiscoveryRelationships().forEach((relationship) => {
+        const targetSiteId = String(relationship.target_site_id || "").trim();
+        if (!targetSiteId) {
+            return;
+        }
+        const discovered = discoveredBySiteId.get(targetSiteId) || {};
+        const existing = grouped.get(targetSiteId) || {
+            site_id: targetSiteId,
+            site_name: discovered.site_name || relationship.target_name || `Site ${targetSiteId}`,
+            host: discovered.host || "--",
+            version: discovered.version || "--",
+            location: normalizeTopologyLocation(discovered.location || relationship.target_location) || "--",
+            unit: normalizeTopologyUnit(discovered.unit || relationship.target_unit) || "--",
+            discovered_level: Number(discovered.discovered_level || relationship.discovered_level || 2),
+            ping: discovered.ping || "Down",
+            detail_url: `/nodes/discovered/${encodeURIComponent(targetSiteId)}`,
+            surfaced_by_non_anchor_names: [],
+            surfaced_by_names: Array.isArray(discovered.surfaced_by_names) ? [...discovered.surfaced_by_names] : [],
+        };
+
+        const sourceName = String(relationship.source_name || relationship.source_site_id || "").trim();
+        if (sourceName && !existing.surfaced_by_names.includes(sourceName)) {
+            existing.surfaced_by_names.push(sourceName);
+        }
+        if (String(relationship.source_row_type || "anchor").trim() !== "anchor" && sourceName && !existing.surfaced_by_non_anchor_names.includes(sourceName)) {
+            existing.surfaced_by_non_anchor_names.push(sourceName);
+        }
+        grouped.set(targetSiteId, existing);
+    });
+
+    return Array.from(grouped.values()).sort((left, right) => {
+        const leftLevel = Number(left.discovered_level || 99);
+        const rightLevel = Number(right.discovered_level || 99);
+        if (leftLevel !== rightLevel) {
+            return leftLevel - rightLevel;
+        }
+        return String(left.site_name || left.site_id).localeCompare(String(right.site_name || right.site_id));
+    });
+}
+
+function formatTopologyUnitSource(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === "anchor") {
+        return "Anchor-derived";
+    }
+    if (normalized === "dn_lineage") {
+        return "DN lineage";
+    }
+    if (normalized === "fallback") {
+        return "Fallback";
+    }
+    if (normalized === "ambiguous") {
+        return "Ambiguous";
+    }
+    if (normalized === "unresolved") {
+        return "Unresolved";
+    }
+    return normalized ? normalized : "Unknown";
+}
+
+function renderTopologyDiscoveryRelationships() {
+    const container = document.getElementById("topology-discovery-relationships");
+    const count = document.getElementById("topology-relationship-count");
+    if (!container || !count) {
+        return;
+    }
+
+    const discoveredRows = Array.isArray(topologyDiscoveryPayload?.discovered)
+        ? topologyDiscoveryPayload.discovered
+        : [];
+    const summary = topologyDiscoveryPayload?.summary && typeof topologyDiscoveryPayload.summary === "object"
+        ? topologyDiscoveryPayload.summary
+        : {};
+    const byUnitSource = summary.by_unit_source && typeof summary.by_unit_source === "object"
+        ? summary.by_unit_source
+        : {};
+    const exceptionRows = discoveredRows
+        .filter((row) => ["ambiguous", "unresolved"].includes(String(row.unit_source || "").trim().toLowerCase()))
+        .sort((left, right) => String(left.site_name || left.site_id).localeCompare(String(right.site_name || right.site_id)));
+
+    count.textContent = String(exceptionRows.length);
+
+    const summaryMarkup = `
+        <div class="topology-attribution-summary">
+            <span class="topology-discovery-chip">Anchor ${escapeHtml(String(byUnitSource.anchor || 0))}</span>
+            <span class="topology-discovery-chip">DN lineage ${escapeHtml(String(byUnitSource.dn_lineage || 0))}</span>
+            <span class="topology-discovery-chip">Fallback ${escapeHtml(String(byUnitSource.fallback || 0))}</span>
+            <span class="topology-discovery-chip">Ambiguous ${escapeHtml(String(byUnitSource.ambiguous || 0))}</span>
+            <span class="topology-discovery-chip">Unresolved ${escapeHtml(String(byUnitSource.unresolved || 0))}</span>
+        </div>
+    `;
+
+    if (!exceptionRows.length) {
+        container.innerHTML = `${summaryMarkup}<p class="table-message">All discovered nodes currently resolve to a unit lineage without attribution exceptions.</p>`;
+    } else {
+        container.innerHTML = summaryMarkup + exceptionRows.map((row) => {
+            const sourceText = formatTopologyUnitSource(row.unit_source);
+            const focusButton = row.resolved_unit && !["ambiguous", "unresolved"].includes(String(row.unit_source || "").trim().toLowerCase())
+                ? `<button type="button" class="button-secondary topology-discovery-focus" data-topology-focus-unit="${escapeHtml(row.resolved_unit)}">Focus ${escapeHtml(row.resolved_unit)}</button>`
+                : "";
+            return `
+                <article class="node-list-row">
+                    <div class="node-list-main node-list-main-inline">
+                        <div class="node-list-primary-cell">
+                            <button type="button" class="node-list-name-button" data-node-detail-url="/nodes/discovered/${encodeURIComponent(row.site_id || "")}">
+                                ${escapeHtml(row.site_name || row.site_id || "Unknown")}
+                            </button>
+                            <div class="node-list-parent">Attribution ${escapeHtml(sourceText)}</div>
+                        </div>
+                        <div class="node-list-meta-grid node-list-meta-grid-inline node-list-meta-grid-inline-discovered">
+                            <div class="node-list-meta"><span class="node-list-meta-label">Site ID</span><strong>${escapeHtml(row.site_id || "--")}</strong></div>
+                            <div class="node-list-meta"><span class="node-list-meta-label">Site IP</span><strong>${escapeHtml(row.host || "--")}</strong></div>
+                            <div class="node-list-meta"><span class="node-list-meta-label">Location</span><strong>${escapeHtml(row.location || "--")}</strong></div>
+                            <div class="node-list-meta"><span class="node-list-meta-label">Reported Unit</span><strong>${escapeHtml(row.unit || "--")}</strong></div>
+                            <div class="node-list-meta"><span class="node-list-meta-label">Resolved Unit</span><strong>${escapeHtml(row.resolved_unit || "--")}</strong></div>
+                            <div class="node-list-meta"><span class="node-list-meta-label">Source</span><strong>${escapeHtml(sourceText)}</strong></div>
+                        </div>
+                    </div>
+                    <div class="node-list-actions">
+                        ${focusButton}
+                    </div>
+                </article>
+            `;
+        }).join("");
+    }
+
+    if (!container.dataset.bound) {
+        container.dataset.bound = "true";
+        container.addEventListener("click", (event) => {
+            const target = event.target;
+            if (!(target instanceof Element)) {
+                return;
+            }
+
+            const detailButton = target.closest("[data-node-detail-url]");
+            if (detailButton instanceof HTMLElement) {
+                event.preventDefault();
+                event.stopPropagation();
+                openNodeDetail(detailButton.getAttribute("data-node-detail-url"));
+                return;
+            }
+
+            const focusButton = target.closest("[data-topology-focus-unit]");
+            if (!(focusButton instanceof HTMLElement)) {
+                return;
+            }
+            const nextUnit = normalizeTopologyUnit(focusButton.getAttribute("data-topology-focus-unit"));
+            if (!nextUnit) {
+                return;
+            }
+            setTopologyUnitFocus(nextUnit);
+            topologyState.activeUnits = new Set([nextUnit]);
+            renderTopologyControls();
+            renderTopologyStage();
+        });
+    }
 }
 
 function getTopologyDiscoveryCount(entity, discoveryCounts) {
@@ -660,6 +866,11 @@ function updateAnchorListOrderFromDom() {
 }
 
 function attachAnchorRowDragAndDrop(row) {
+    if (row.dataset.dragBound === "true") {
+        return;
+    }
+    row.dataset.dragBound = "true";
+
     row.addEventListener("dragstart", (event) => {
         row.classList.add("dragging");
         if (event.dataTransfer) {
@@ -2155,23 +2366,9 @@ function renderTopologyViewButtons() {
 
 function renderTopologyLocationHeaders() {
     const container = document.getElementById("topology-locations-header");
-    if (!container) {
-        return;
+    if (container) {
+        container.innerHTML = "";
     }
-
-    const entities = getTopologyEntities();
-    container.innerHTML = (topologyPayload?.locations ?? TOPOLOGY_LOCATIONS)
-        .map((location) => {
-            const visibleCount = entities.filter((entity) => entity.location === location && isTopologyEntityVisible(entity)).length;
-            const totalCount = entities.filter((entity) => entity.location === location).length;
-            return `
-                <div class="topology-location-title ${topologyState.activeLocations.has(location) ? "" : "dim"}" data-topology-location="${escapeHtml(location)}">
-                    <span>${escapeHtml(location)}</span>
-                    <span class="topology-location-count">${visibleCount} visible${totalCount !== visibleCount ? ` of ${totalCount}` : ""}</span>
-                </div>
-            `;
-        })
-        .join("");
 }
 
 function getTopologyNodePosition(entity) {
@@ -2291,14 +2488,14 @@ function renderTopologyStage() {
                 .filter(Boolean)
                 .join(" ");
 
-            const badge = discoveredCount ? `<span class="topology-count-badge">${discoveredCount}</span>` : "";
+            const badge = isCluster && discoveredCount ? `<span class="topology-count-badge">${discoveredCount}</span>` : "";
             const subtitle = isCluster
                 ? "Edge Nodes"
                 : entity.level === 1
                     ? escapeHtml(entity.location)
                     : `${escapeHtml(entity.location)} · ${escapeHtml(entity.unit)}`;
             const displayName = entity.level === 1 || isCluster ? escapeHtml(entity.unit) : escapeHtml(entity.name);
-            const nodeDots = getTopologyBubbleDotMarkup(discoveredCount);
+            const nodeDots = isCluster ? getTopologyBubbleDotMarkup(discoveredCount) : "";
             const titleText = isCluster ? `${entity.unit} Edge Nodes` : entity.level === 1 ? `${entity.unit} / ${entity.location}` : entity.name;
             const bubbleStyle = `left:${layout.x}px; top:${layout.y}px; --topology-bubble-size:${layout.size}px;`;
             const resizeHandle = topologyState.editMode
@@ -2377,6 +2574,7 @@ function renderTopologyStage() {
 
     drawTopologyLinks(entityMap);
     renderTopologyDrawer();
+    renderTopologyDiscoveryRelationships();
 }
 
 function drawTopologyLinks(entityMap) {
@@ -2707,7 +2905,7 @@ async function loadTopologyPage() {
         topologyPayload = topologyResult.value;
         topologyDiscoveryPayload = discoveryResult.status === "fulfilled"
             ? discoveryResult.value
-            : { anchors: [], discovered: [] };
+            : { anchors: [], discovered: [], relationships: [], summary: {} };
         topologyState.activeLocations = new Set(TOPOLOGY_LOCATIONS);
         setTopologyUnitFocus(requestedUnit);
         if (!topologyState.focusUnit) {
@@ -3127,6 +3325,127 @@ function renderNodeDashboardRow(row, pinnedKeys) {
     `;
 }
 
+function syncNodeDashboardListMarkup(container, markup) {
+    if (container.innerHTML !== markup) {
+        container.innerHTML = markup;
+        return true;
+    }
+
+    return false;
+}
+
+async function handleNodeDashboardListAction(button) {
+    const action = button.getAttribute("data-node-list-action");
+    if (action === "toggle-pin") {
+        togglePinnedNodeKey(button.getAttribute("data-node-pin-key") || "");
+        renderNodeDashboardLists(currentNodeDashboardPayload);
+        return;
+    }
+    if (action === "open-web") {
+        openWebForNode(
+            button.getAttribute("data-host") || "",
+            Number(button.getAttribute("data-web-port")),
+            button.getAttribute("data-web-scheme") || "https",
+        );
+        return;
+    }
+    if (action === "ssh") {
+        await copySshCommand(
+            button.getAttribute("data-host") || "",
+            button.getAttribute("data-ssh-username") || "",
+        ).catch(() => {});
+        return;
+    }
+    if (action === "edit-anchor") {
+        const nodeId = Number(button.getAttribute("data-node-id"));
+        if (Number.isFinite(nodeId)) {
+            if (!currentNodes.length) {
+                await loadNodes();
+            }
+            populateNodeForm(nodeId);
+        }
+        return;
+    }
+    if (action === "delete-anchor") {
+        const nodeId = Number(button.getAttribute("data-node-id"));
+        const nodeName = button.getAttribute("data-node-name") || "this node";
+        if (!Number.isFinite(nodeId)) {
+            return;
+        }
+        const confirmed = window.confirm(`Delete ${nodeName}?`);
+        if (!confirmed) {
+            return;
+        }
+        try {
+            await apiRequest(`/api/nodes/${nodeId}`, { method: "DELETE" });
+            await loadNodes();
+            await loadNodeDashboard();
+            await loadMainDashboard();
+            showDashboardFeedback("Node deleted");
+        } catch (error) {
+            const dashboardError = document.getElementById("dashboard-error");
+            if (dashboardError) {
+                dashboardError.textContent = error.message || "Unable to delete node";
+                dashboardError.hidden = false;
+            }
+        }
+        return;
+    }
+    if (action === "delete-discovered") {
+        const siteId = String(button.getAttribute("data-site-id") || "").trim();
+        const nodeName = button.getAttribute("data-node-name") || "this discovered node";
+        if (!siteId) {
+            return;
+        }
+        const confirmed = window.confirm(`Delete ${nodeName}?`);
+        if (!confirmed) {
+            return;
+        }
+        try {
+            await apiRequest(`/api/discovered-nodes/${encodeURIComponent(siteId)}`, { method: "DELETE" });
+            await loadNodeDashboard();
+            await loadMainDashboard();
+            showDashboardFeedback("Discovered node deleted");
+        } catch (error) {
+            const dashboardError = document.getElementById("dashboard-error");
+            if (dashboardError) {
+                dashboardError.textContent = error.message || "Unable to delete discovered node";
+                dashboardError.hidden = false;
+            }
+        }
+    }
+}
+
+function bindNodeDashboardListInteractions(listElement) {
+    if (!listElement || listElement._nodeDashboardBound) {
+        return;
+    }
+
+    listElement.addEventListener("click", (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) {
+            return;
+        }
+
+        const actionButton = target.closest("[data-node-list-action]");
+        if (actionButton instanceof HTMLElement) {
+            event.preventDefault();
+            event.stopPropagation();
+            void handleNodeDashboardListAction(actionButton);
+            return;
+        }
+
+        const detailButton = target.closest("[data-node-detail-url]");
+        if (detailButton instanceof HTMLElement) {
+            event.preventDefault();
+            event.stopPropagation();
+            openNodeDetail(detailButton.getAttribute("data-node-detail-url"));
+        }
+    });
+
+    listElement._nodeDashboardBound = true;
+}
+
 function renderNodeDashboardLists(payload) {
     const anchorList = document.getElementById("anchor-node-list");
     const discoveredList = document.getElementById("discovered-node-list");
@@ -3147,12 +3466,15 @@ function renderNodeDashboardLists(payload) {
     const filteredAnchors = anchors.filter((row) => nodeListMatches(row, anchorQuery));
     const filteredDiscovered = discovered.filter((row) => nodeListMatches(row, discoveredQuery));
 
-    anchorList.innerHTML = filteredAnchors.length
+    const anchorMarkup = filteredAnchors.length
         ? sortAnchorListRows(filteredAnchors).map((row) => renderNodeDashboardRow(row, pinnedKeys)).join("")
         : `<div class="table-message">No anchor nodes matched.</div>`;
-    discoveredList.innerHTML = filteredDiscovered.length
+    const discoveredMarkup = filteredDiscovered.length
         ? filteredDiscovered.map((row) => renderNodeDashboardRow(row, pinnedKeys)).join("")
         : `<div class="table-message">No discovered nodes matched.</div>`;
+
+    const anchorMarkupChanged = syncNodeDashboardListMarkup(anchorList, anchorMarkup);
+    syncNodeDashboardListMarkup(discoveredList, discoveredMarkup);
 
     if (anchorCount) {
         anchorCount.textContent = String(anchors.length);
@@ -3164,106 +3486,17 @@ function renderNodeDashboardLists(payload) {
         lastUpdated.textContent = new Date().toLocaleTimeString();
     }
 
-    document.querySelectorAll("[data-node-detail-url]").forEach((button) => {
-        button.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            openNodeDetail(button.getAttribute("data-node-detail-url"));
-        });
-    });
+    bindNodeDashboardListInteractions(anchorList);
+    bindNodeDashboardListInteractions(discoveredList);
 
-    document.querySelectorAll("[data-node-list-action]").forEach((button) => {
-        button.addEventListener("click", async (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            const action = button.getAttribute("data-node-list-action");
-            if (action === "toggle-pin") {
-                togglePinnedNodeKey(button.getAttribute("data-node-pin-key") || "");
-                renderNodeDashboardLists(currentNodeDashboardPayload);
+    if (anchorMarkupChanged) {
+        anchorList.querySelectorAll(".node-list-row[data-node-pin-key]").forEach((row) => {
+            if (!(row instanceof HTMLElement)) {
                 return;
             }
-            if (action === "open-web") {
-                openWebForNode(
-                    button.getAttribute("data-host") || "",
-                    Number(button.getAttribute("data-web-port")),
-                    button.getAttribute("data-web-scheme") || "https",
-                );
-                return;
-            }
-            if (action === "ssh") {
-                await copySshCommand(
-                    button.getAttribute("data-host") || "",
-                    button.getAttribute("data-ssh-username") || "",
-                ).catch(() => {});
-                return;
-            }
-            if (action === "edit-anchor") {
-                const nodeId = Number(button.getAttribute("data-node-id"));
-                if (Number.isFinite(nodeId)) {
-                    if (!currentNodes.length) {
-                        await loadNodes();
-                    }
-                    populateNodeForm(nodeId);
-                }
-                return;
-            }
-            if (action === "delete-anchor") {
-                const nodeId = Number(button.getAttribute("data-node-id"));
-                const nodeName = button.getAttribute("data-node-name") || "this node";
-                if (!Number.isFinite(nodeId)) {
-                    return;
-                }
-                const confirmed = window.confirm(`Delete ${nodeName}?`);
-                if (!confirmed) {
-                    return;
-                }
-                try {
-                    await apiRequest(`/api/nodes/${nodeId}`, { method: "DELETE" });
-                    await loadNodes();
-                    await loadNodeDashboard();
-                    await loadMainDashboard();
-                    showDashboardFeedback("Node deleted");
-                } catch (error) {
-                    const dashboardError = document.getElementById("dashboard-error");
-                    if (dashboardError) {
-                        dashboardError.textContent = error.message || "Unable to delete node";
-                        dashboardError.hidden = false;
-                    }
-                }
-                return;
-            }
-            if (action === "delete-discovered") {
-                const siteId = String(button.getAttribute("data-site-id") || "").trim();
-                const nodeName = button.getAttribute("data-node-name") || "this discovered node";
-                if (!siteId) {
-                    return;
-                }
-                const confirmed = window.confirm(`Delete ${nodeName}?`);
-                if (!confirmed) {
-                    return;
-                }
-                try {
-                    await apiRequest(`/api/discovered-nodes/${encodeURIComponent(siteId)}`, { method: "DELETE" });
-                    await loadNodeDashboard();
-                    await loadMainDashboard();
-                    showDashboardFeedback("Discovered node deleted");
-                } catch (error) {
-                    const dashboardError = document.getElementById("dashboard-error");
-                    if (dashboardError) {
-                        dashboardError.textContent = error.message || "Unable to delete discovered node";
-                        dashboardError.hidden = false;
-                    }
-                }
-            }
+            attachAnchorRowDragAndDrop(row);
         });
-    });
-
-    anchorList.querySelectorAll(".node-list-row[data-node-pin-key]").forEach((row) => {
-        if (!(row instanceof HTMLElement)) {
-            return;
-        }
-        attachAnchorRowDragAndDrop(row);
-    });
+    }
 
     if (anchorSearch && !anchorSearch._nodeDashboardSearchBound) {
         anchorSearch.addEventListener("input", () => renderNodeDashboardLists(currentNodeDashboardPayload));
@@ -3862,3 +4095,4 @@ window.addEventListener("DOMContentLoaded", () => {
         disconnectNodeDashboardStream();
     });
 });
+

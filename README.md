@@ -31,9 +31,17 @@ Prototype – Milestone 1 (Platform Shell)
 - The bootstrap script creates `.venv`, upgrades `pip`, and installs `requirements.txt`.
 
 ## Testing
-- Run `.\scripts\test.ps1`
+- Run the repo-local helper from PowerShell: `.\scripts\test.ps1`
 - The test helper expects `.venv` to already exist and will tell you to bootstrap first if it does not.
+- The helper will reuse `.venv\Scripts\python.exe` if it already exists.
 
 ## Running SMP
 - Set `DATABASE_URL` in your shell. `.env.example` shows the expected format.
+- Apply database migrations before first startup or after pulling schema changes: `./.venv/Scripts/alembic.exe upgrade head`
 - Start the app with `.\scripts\dev.ps1 -Reload`
+
+## Documentation
+- User guide: `docs/USER_GUIDE.md`
+- Change history: `CHANGELOG.md`
+- Going forward, user-visible behavior changes should be reflected in both files so they remain reviewable in version control.
+
