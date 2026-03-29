@@ -197,6 +197,22 @@ class TopologyDiscoveryPayload(BaseModel):
     summary: TopologyDiscoverySummary
 
 
+class TopologyEditorStateUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    layout_overrides: dict[str, dict[str, object]] = Field(default_factory=dict)
+    state_log_layout: dict[str, object] | None = None
+    link_anchor_assignments: dict[str, dict[str, str | None]] = Field(default_factory=dict)
+
+
+class TopologyEditorStatePayload(TopologyEditorStateUpdate):
+    model_config = ConfigDict(extra="forbid")
+
+    scope: str
+    exists: bool = False
+    updated_at: str | None = None
+
+
 class MainDashboardNodeSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

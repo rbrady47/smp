@@ -32,7 +32,8 @@ from app.seeker_api import (
     extract_static_routes_from_cfg,
     resolve_site_name_map,
 )
-from app.schemas import NodeCreate, NodeUpdate, ServiceCheckCreate
+from app.schemas import NodeCreate, NodeUpdate, ServiceCheckCreate, TopologyEditorStateUpdate
+from app.topology_editor_state_service import get_topology_editor_state_payload, upsert_topology_editor_state
 from app.topology import build_mock_topology_payload, build_topology_discovery_payload, normalize_topology_location
 
 app = FastAPI(title="Seeker Management Platform", version="0.1.0")
@@ -1139,6 +1140,19 @@ async def topology_discovery_payload(db: Session = Depends(get_db)) -> dict[str,
         node_dashboard_backend.get_cached_payload(),
         node_dashboard_backend.get_topology_relationships(db),
     )
+
+
+@app.get("/api/topology/editor-state")
+async def topology_editor_state_payload(db: Session = Depends(get_db)) -> dict[str, object]:
+    return get_topology_editor_state_payload(db)
+
+
+@app.put("/api/topology/editor-state")
+async def update_topology_editor_state(
+    payload: TopologyEditorStateUpdate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return upsert_topology_editor_state(payload, db)
 
 
 @app.get("/api/node-dashboard/stream")

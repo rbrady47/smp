@@ -101,6 +101,17 @@ class NodeRelationship(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
 
+class TopologyEditorState(Base):
+    __tablename__ = "topology_editor_state"
+
+    scope: Mapped[str] = mapped_column(String(64), primary_key=True)
+    layout_overrides_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    state_log_layout_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    link_anchor_assignments_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
 class OperationalMapView(Base):
     __tablename__ = "operational_map_views"
 

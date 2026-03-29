@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ page_title }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260329-topology31">
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260329-topology43">
 </head>
 <body>
     <header class="topbar">
@@ -90,6 +90,9 @@
                         <button type="button" class="button-secondary topology-layout-reset" id="topology-layout-reset" hidden>
                             Reset Layout
                         </button>
+                        <button type="button" class="button-secondary topology-fullscreen-toggle" id="topology-fullscreen-toggle" aria-pressed="false">
+                            Full Screen
+                        </button>
                         <button type="button" class="button-secondary topology-filter-toggle" id="topology-filter-toggle" aria-expanded="true">
                             Hide Controls
                         </button>
@@ -102,6 +105,28 @@
                     <svg class="topology-links" id="topology-links" aria-hidden="true"></svg>
                     <div class="topology-selection-box" id="topology-selection-box" hidden></div>
                     <div class="topology-layer topology-layer-nodes" id="topology-node-layer"></div>
+                    <div class="topology-layer topology-layer-handles" id="topology-link-handle-layer"></div>
+                    <button type="button" class="topology-state-log-preview" id="topology-state-log-preview">
+                        <div class="topology-state-log-preview-header">
+                            <span class="dashboard-meta-label">Network State Log</span>
+                            <strong id="topology-state-log-count">0</strong>
+                        </div>
+                        <div class="topology-state-log-preview-list" id="topology-state-log-preview-list">
+                            <p class="table-message">Loading network state events...</p>
+                        </div>
+                    </button>
+                    <section class="topology-state-log-flyout" id="topology-state-log-flyout" hidden>
+                        <div class="topology-state-log-flyout-header">
+                            <div>
+                                <span class="dashboard-meta-label">Network State Log</span>
+                                <p class="section-copy">Recent ping transitions and elevated RTT events from AN and DN telemetry.</p>
+                            </div>
+                            <button type="button" class="button-secondary topology-state-log-close" id="topology-state-log-close">Close</button>
+                        </div>
+                        <div class="topology-state-log-list" id="topology-state-log">
+                            <p class="table-message">Loading network state events...</p>
+                        </div>
+                    </section>
                     <aside class="card topology-drawer" id="topology-drawer" hidden>
                         <div class="section-heading">
                             <h2>Details</h2>
@@ -112,23 +137,11 @@
                         </div>
                     </aside>
                 </div>
-                <section class="topology-discovery-panel">
-                    <div class="topology-discovery-panel-header">
-                        <div>
-                            <span class="dashboard-meta-label">Unit Attribution Signals</span>
-                            <p class="section-copy">Anchor-first unit attribution with DN lineage fallback. Only exceptions that need attention are shown here.</p>
-                        </div>
-                        <strong id="topology-relationship-count">0</strong>
-                    </div>
-                    <div class="topology-discovery-list node-list" id="topology-discovery-relationships">
-                        <p class="table-message">Loading discovery relationships...</p>
-                    </div>
-                </section>
             </section>
         </section>
     </main>
 
-    <script src="{{ url_for('static', path='js/app.js') }}?v=20260329-topology31"></script>
+    <script src="{{ url_for('static', path='js/app.js') }}?v=20260329-topology43"></script>
 </body>
 </html>
 
