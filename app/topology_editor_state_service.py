@@ -35,6 +35,7 @@ def get_topology_editor_state_payload(
             layout_overrides={},
             state_log_layout=None,
             link_anchor_assignments={},
+            demo_mode="off",
             updated_at=None,
         ).model_dump()
 
@@ -45,6 +46,7 @@ def get_topology_editor_state_payload(
         layout_overrides=_decode_json_object(state.layout_overrides_json, {}) or {},
         state_log_layout=_decode_json_object(state.state_log_layout_json, None),
         link_anchor_assignments=_decode_json_object(state.link_anchor_assignments_json, {}) or {},
+        demo_mode=str(state.demo_mode_json or "off"),
         updated_at=updated_at,
     ).model_dump()
 
@@ -62,6 +64,7 @@ def upsert_topology_editor_state(
     state.layout_overrides_json = json.dumps(payload.layout_overrides or {})
     state.state_log_layout_json = json.dumps(payload.state_log_layout) if payload.state_log_layout is not None else None
     state.link_anchor_assignments_json = json.dumps(payload.link_anchor_assignments or {})
+    state.demo_mode_json = payload.demo_mode or "off"
 
     db.commit()
     db.refresh(state)

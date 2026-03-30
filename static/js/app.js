@@ -43,6 +43,7 @@ const dashboardOrderStorageKey = "smp-dashboard-order";
 const anchorListOrderStorageKey = "smp-anchor-list-order";
 const dashboardRefreshStorageKey = "smp-dashboard-refresh-seconds";
 const themeModeStorageKey = "smp-theme-mode";
+const themeOverlayStorageKey = "smp-theme-overlay";
 const pinnedNodesStorageKey = "smp-main-dashboard-node-ids";
 const pinnedServicesStorageKey = "smp-main-dashboard-service-ids";
 const topologyControlsCollapsedStorageKey = "smp-topology-controls-collapsed";
@@ -62,6 +63,7 @@ const TOPOLOGY_LOCATION_ALIASES = {
 let topologyPayload = null;
 let topologyDiscoveryPayload = { anchors: [], discovered: [], relationships: [], summary: {} };
 let topologyNodeDashboardPayload = { anchors: [], discovered: [] };
+let topologyDashboardServicesPayload = { summary: {}, services: [] };
 let topologyResizeListenerBound = false;
 let topologyRouteListenerBound = false;
 let topologyEditorStateLoaded = false;
@@ -443,17 +445,27 @@ function getTopologyDiscoveryCount(entity, discoveryCounts) {
     return 0;
 }
 
+function getTopologyLayoutScale() {
+    return topologyState.isFullscreen ? 1.08 : 1;
+}
+
 function getTopologyBubbleSize(entity, discoveredCount) {
+    const layoutScale = getTopologyLayoutScale();
+    if (entity.kind === "services-cloud") {
+        const total = Number(entity.service_summary?.total || 0);
+        return Math.round(Math.max(164, Math.min(228, (168 + total * 6) * layoutScale)));
+    }
+
     const scale = Math.sqrt(Math.max(discoveredCount, 0));
     if (entity.level === 0) {
-        return Math.round(Math.max(154, Math.min(228, 142 + scale * 12)));
+        return Math.round(Math.max(154, Math.min(228, (142 + scale * 12) * layoutScale)));
     }
 
     if (entity.level === 1) {
-        return Math.round(Math.max(104, Math.min(156, 94 + scale * 7)));
+        return Math.round(Math.max(104, Math.min(156, (94 + scale * 7) * layoutScale)));
     }
 
-    return Math.round(Math.max(146, Math.min(220, 122 + scale * 10)));
+    return Math.round(Math.max(146, Math.min(220, (122 + scale * 10) * layoutScale)));
 }
 
 function getTopologyClusterStatusCounts() {
@@ -637,6 +649,9 @@ function setTopologyDemoMode(mode) {
     topologyState.demoMode = normalized;
     topologyState.demoSnapshot = buildTopologyDemoSnapshot(normalized);
     topologyState.demoMenuOpen = false;
+    if (topologyEditorStateLoaded) {
+        queueTopologyEditorStateSave();
+    }
 }
 
 function getEffectiveTopologyEntityStatus(entity) {
@@ -810,6 +825,7 @@ function buildTopologyEditorStatePayload() {
         layout_overrides: topologyState.layoutOverrides || {},
         state_log_layout: topologyState.stateLogLayout || null,
         link_anchor_assignments: topologyState.linkAnchorAssignments || {},
+        demo_mode: topologyState.demoMode || "off",
     };
 }
 
@@ -946,11 +962,13 @@ function getTopologyStateLogLayout() {
     const saved = topologyState.stateLogLayout || {};
     const width = Number.isFinite(saved.width) ? saved.width : Math.min(860, stageWidth - 32);
     const height = Number.isFinite(saved.height) ? saved.height : 132;
+    const maxLeft = Math.max(8, stageWidth - width - 8);
+    const maxBottom = Math.max(8, stageHeight - height - 8);
     const left = Number.isFinite(saved.left) ? saved.left : 16;
     const bottom = Number.isFinite(saved.bottom) ? saved.bottom : 16;
     return {
-        left: Math.max(8, left),
-        bottom: Math.max(8, bottom),
+        left: Math.min(maxLeft, Math.max(8, left)),
+        bottom: Math.min(maxBottom, Math.max(8, bottom)),
         width: Math.max(320, Math.min(width, stageWidth - 16)),
         height: Math.max(110, Math.min(height, stageHeight - 16)),
     };
@@ -1024,14 +1042,26 @@ function getTopologyBaseLayout(entity) {
 function getTopologyEntityLayout(entity) {
     const baseLayout = getTopologyBaseLayout(entity);
     const override = topologyState.layoutOverrides?.[entity.id];
-    if (!override) {
-        return baseLayout;
-    }
-
-    return {
+    const logicalLayout = !override ? baseLayout : {
         x: Number.isFinite(override.x) ? override.x : baseLayout.x,
         y: Number.isFinite(override.y) ? override.y : baseLayout.y,
         size: Number.isFinite(override.size) ? override.size : baseLayout.size,
+    };
+    if (!topologyState.isFullscreen) {
+        return logicalLayout;
+    }
+
+    const stage = document.getElementById("topology-stage");
+    const stageWidth = Math.max(stage?.clientWidth || 1200, 600);
+    const centerX = stageWidth / 2;
+    const horizontalScale = 1;
+    const verticalScale = 1.35;
+    const sizeScale = getTopologyLayoutScale();
+
+    return {
+        x: centerX + ((logicalLayout.x - centerX) * horizontalScale),
+        y: logicalLayout.y * verticalScale,
+        size: logicalLayout.size * sizeScale,
     };
 }
 
@@ -1571,6 +1601,14 @@ function getSavedThemeMode() {
     }
 }
 
+function getSavedThemeOverlay() {
+    try {
+        return window.localStorage.getItem(themeOverlayStorageKey) || "off";
+    } catch (error) {
+        return "off";
+    }
+}
+
 function saveThemeMode(mode) {
     try {
         window.localStorage.setItem(themeModeStorageKey, mode);
@@ -1579,8 +1617,16 @@ function saveThemeMode(mode) {
     }
 }
 
+function saveThemeOverlay(overlay) {
+    try {
+        window.localStorage.setItem(themeOverlayStorageKey, overlay);
+    } catch (error) {
+        // Ignore storage failures and keep the app usable.
+    }
+}
+
 function getResolvedTheme(mode) {
-    if (mode === "light" || mode === "dark") {
+    if (mode === "light" || mode === "dark" || mode === "vader") {
         return mode;
     }
 
@@ -1589,21 +1635,35 @@ function getResolvedTheme(mode) {
 
 function applyThemeMode(mode = getSavedThemeMode()) {
     const resolvedTheme = getResolvedTheme(mode);
+    const overlay = getSavedThemeOverlay();
     document.documentElement.setAttribute("data-theme", resolvedTheme);
     document.documentElement.setAttribute("data-theme-mode", mode);
-    updateThemeControlUi(mode);
+    if (overlay === "4id") {
+        document.documentElement.setAttribute("data-theme-overlay", overlay);
+    } else {
+        document.documentElement.removeAttribute("data-theme-overlay");
+    }
+    updateThemeControlUi(mode, overlay);
 }
 
-function updateThemeControlUi(mode = getSavedThemeMode()) {
+function updateThemeControlUi(mode = getSavedThemeMode(), overlay = getSavedThemeOverlay()) {
     const button = document.getElementById("theme-mode-button");
     const menu = document.getElementById("theme-mode-menu");
     if (button) {
-        const label = mode.charAt(0).toUpperCase() + mode.slice(1);
-        button.textContent = `Theme: ${label}`;
+        const label = {
+            system: "System",
+            light: "Light",
+            dark: "Dark",
+            vader: "Vader",
+        }[mode] || mode;
+        button.textContent = `Theme: ${label}${overlay === "4id" ? " + 4ID" : ""}`;
     }
     if (menu) {
         menu.querySelectorAll("[data-theme-mode]").forEach((item) => {
             item.setAttribute("aria-pressed", item.getAttribute("data-theme-mode") === mode ? "true" : "false");
+        });
+        menu.querySelectorAll("[data-theme-overlay]").forEach((item) => {
+            item.setAttribute("aria-pressed", item.getAttribute("data-theme-overlay") === overlay ? "true" : "false");
         });
     }
 }
@@ -1631,6 +1691,9 @@ function mountThemeControl() {
             <button type="button" data-theme-mode="system">System</button>
             <button type="button" data-theme-mode="light">Light</button>
             <button type="button" data-theme-mode="dark">Dark</button>
+            <button type="button" data-theme-mode="vader">Vader</button>
+            <div class="theme-mode-menu-divider" role="presentation"></div>
+            <button type="button" class="theme-overlay-button" data-theme-overlay="4id">4ID Overlay</button>
         </div>
     `;
     topbar.appendChild(control);
@@ -1655,11 +1718,18 @@ function mountThemeControl() {
             return;
         }
         const mode = target.getAttribute("data-theme-mode");
-        if (!mode) {
+        const overlay = target.getAttribute("data-theme-overlay");
+        if (!mode && !overlay) {
             return;
         }
-        saveThemeMode(mode);
-        applyThemeMode(mode);
+        if (mode) {
+            saveThemeMode(mode);
+            applyThemeMode(mode);
+        } else if (overlay) {
+            const nextOverlay = getSavedThemeOverlay() === overlay ? "off" : overlay;
+            saveThemeOverlay(nextOverlay);
+            applyThemeMode(getSavedThemeMode());
+        }
         setThemeMenuOpen(false);
         button.setAttribute("aria-expanded", "false");
     });
@@ -2029,6 +2099,77 @@ function getPinnedNodeKeys() {
 
 function getPinnedServiceIds() {
     return getPinnedIds(pinnedServicesStorageKey);
+}
+
+function getPinnedTopologyServices() {
+    const services = Array.isArray(topologyDashboardServicesPayload?.services)
+        ? topologyDashboardServicesPayload.services
+        : [];
+    const pinnedIds = new Set(
+        getPinnedServiceIds()
+            .map((value) => Number(value))
+            .filter((value) => Number.isFinite(value)),
+    );
+
+    if (!services.length || !pinnedIds.size) {
+        return [];
+    }
+
+    return services.filter((service) => pinnedIds.has(Number(service.id)));
+}
+
+function getTopologyServiceCloudSummary() {
+    const services = getPinnedTopologyServices();
+    const summary = {
+        total: services.length,
+        healthy: 0,
+        degraded: 0,
+        down: 0,
+        status: "neutral",
+        services,
+    };
+
+    if (!services.length) {
+        return summary;
+    }
+
+    const normalizedStatuses = services.map((service) => String(service.status || "unknown").trim().toLowerCase());
+    normalizedStatuses.forEach((status) => {
+        if (status === "healthy") {
+            summary.healthy += 1;
+        } else if (status === "degraded") {
+            summary.degraded += 1;
+        } else {
+            summary.down += 1;
+        }
+    });
+
+    if (normalizedStatuses.every((status) => status === "healthy")) {
+        summary.status = "healthy";
+    } else if (normalizedStatuses.every((status) => ["failed", "unknown", "disabled"].includes(status))) {
+        summary.status = "down";
+    } else {
+        summary.status = "degraded";
+    }
+
+    return summary;
+}
+
+function buildTopologyServiceCloudEntity() {
+    const summary = getTopologyServiceCloudSummary();
+    return {
+        id: "services-cloud",
+        kind: "services-cloud",
+        name: "Services",
+        location: "Cloud",
+        level: 0,
+        unit: "Services",
+        status: summary.status,
+        service_summary: summary,
+        metrics_text: summary.total
+            ? `${summary.total} pinned service check${summary.total === 1 ? "" : "s"} from the main dashboard watchlist.`
+            : "Pin service checks from the Services Dashboard to bind this cloud status.",
+    };
 }
 
 function togglePinnedNodeId(nodeId) {
@@ -3292,6 +3433,7 @@ function getTopologyNodePosition(entity) {
 
     const width = Math.max(stage.clientWidth, 2140);
     const height = Math.max(stage.clientHeight, 940);
+    const isFullscreenLayout = topologyState.isFullscreen;
     const lvl1NodeWidth = 92;
     const lvl1TouchGap = 0;
     const aggXs = {
@@ -3309,12 +3451,19 @@ function getTopologyNodePosition(entity) {
         Episodic: lvl1NodeWidth + lvl1TouchGap,
     };
     const aggYs = {
-        Cloud: Math.round(height * 0.19),
-        HSMC: Math.round(height * 0.12),
-        Episodic: Math.round(height * 0.19),
+        Cloud: Math.round(height * (isFullscreenLayout ? 0.21 : 0.19)),
+        HSMC: Math.round(height * (isFullscreenLayout ? 0.14 : 0.12)),
+        Episodic: Math.round(height * (isFullscreenLayout ? 0.21 : 0.19)),
     };
-    const lvl1Y = Math.round(height * 0.44);
-    const lvl2Y = Math.round(height * 0.81);
+    const lvl1Y = Math.round(height * (isFullscreenLayout ? 0.5 : 0.44));
+    const lvl2Y = Math.round(height * (isFullscreenLayout ? 0.9 : 0.81));
+
+    if (entity.kind === "services-cloud") {
+        return {
+            x: Math.round(width * 0.08),
+            y: Math.round(height * 0.16),
+        };
+    }
 
     if (entity.level === 0) {
         return {
@@ -3342,6 +3491,7 @@ function getTopologyEntities() {
     }
 
     return [
+        buildTopologyServiceCloudEntity(),
         ...(topologyPayload.lvl0_nodes ?? []),
         ...(topologyPayload.lvl1_nodes ?? []),
         ...(topologyPayload.lvl2_clusters ?? []),
@@ -3353,6 +3503,10 @@ function getTopologyLinkId(link, index) {
 }
 
 function isTopologyEntityVisible(entity) {
+    if (entity.kind === "services-cloud") {
+        return topologyState.activeLocations.has("Cloud");
+    }
+
     if (entity.level === 0) {
         return topologyState.activeLocations.has(entity.location);
     }
@@ -3389,12 +3543,15 @@ function renderTopologyStage() {
         .map((entity) => {
             const layout = getTopologyEntityLayout(entity);
             const discoveredCount = getTopologyDiscoveryCount(entity, discoveryCounts);
+            const isServiceCloud = entity.kind === "services-cloud";
             const isCluster = entity.level === 2;
             const isLvl1 = entity.level === 1;
             const isFocusedUnit = entity.level === 2 && topologyState.focusUnit && topologyState.focusUnit === entity.unit;
+            const serviceSummary = isServiceCloud ? (entity.service_summary || getTopologyServiceCloudSummary()) : null;
             const classes = [
                   "topology-entity",
                   isCluster ? "topology-cluster" : "topology-node",
+                  isServiceCloud ? "topology-service-cloud" : "",
                   `topology-status-${getEffectiveTopologyEntityStatus(entity) || "neutral"}`,
                   entity.level === 0 ? "topology-node-agg" : "",
                   isLvl1 ? "topology-node-lvl1" : "",
@@ -3410,13 +3567,36 @@ function renderTopologyStage() {
                 : entity.level === 1
                     ? escapeHtml(entity.location)
                     : `${escapeHtml(entity.location)} · ${escapeHtml(entity.unit)}`;
-            const displayName = entity.level === 1 || isCluster ? escapeHtml(entity.unit) : escapeHtml(entity.name);
+            const displayName = isServiceCloud
+                ? "Services"
+                : entity.level === 1 || isCluster ? escapeHtml(entity.unit) : escapeHtml(entity.name);
             const clusterUpCount = isCluster
                 ? getEffectiveTopologyClusterUpCount(entity.unit, clusterStatusCounts.upByUnit.get(entity.unit) || 0)
                 : 0;
-            const clusterFooter = isCluster ? getTopologyClusterFooterMarkup(discoveredCount, clusterUpCount) : "";
+            const clusterFooter = isCluster
+                ? getTopologyClusterFooterMarkup(discoveredCount, clusterUpCount)
+                : "";
             const nodeIcon = !isCluster ? getTopologyAnchorIconMarkup({ ...entity, status: getEffectiveTopologyEntityStatus(entity) }) : "";
-            const titleText = isCluster ? `${entity.unit} Edge Nodes` : entity.level === 1 ? `${entity.unit} / ${entity.location}` : entity.name;
+            const titleText = isServiceCloud
+                ? "Services cloud"
+                : isCluster ? `${entity.unit} Edge Nodes` : entity.level === 1 ? `${entity.unit} / ${entity.location}` : entity.name;
+            const hoverPanel = isServiceCloud
+                ? `
+                    <span class="topology-service-cloud-tooltip" role="tooltip">
+                        <strong class="topology-service-cloud-tooltip-title">Pinned Services</strong>
+                        ${
+                            serviceSummary?.services?.length
+                                ? `<span class="topology-service-cloud-tooltip-list">${serviceSummary.services.map((service) => `
+                                    <span class="topology-service-cloud-tooltip-item">
+                                        <span class="topology-service-cloud-tooltip-name">${escapeHtml(service.name || `Service ${service.id}`)}</span>
+                                        <span class="topology-service-cloud-tooltip-status status-pill status-${escapeHtml(String(service.status || "unknown").toLowerCase())}">${escapeHtml(service.status || "unknown")}</span>
+                                    </span>
+                                `).join("")}</span>`
+                                : '<span class="topology-service-cloud-tooltip-empty">No services pinned yet.</span>'
+                        }
+                    </span>
+                `
+                : "";
             const bubbleStyle = `left:${layout.x}px; top:${layout.y}px; --topology-bubble-size:${layout.size}px;`;
             const resizeHandle = topologyState.editMode
                 ? '<span class="topology-resize-handle" data-topology-resize-handle="true" aria-hidden="true"></span>'
@@ -3446,9 +3626,10 @@ function renderTopologyStage() {
                     style="${bubbleStyle}"
                 >
                     <span class="topology-node-name">${displayName}</span>
-                    <span class="topology-node-meta">${subtitle}</span>
+                    ${isServiceCloud ? "" : `<span class="topology-node-meta">${subtitle}</span>`}
                     ${nodeIcon}
                     ${clusterFooter}
+                    ${hoverPanel}
                     ${anchorPoints}
                     ${resizeHandle}
                 </button>
@@ -3753,6 +3934,20 @@ function getTopologyAnchorIconMarkup(entity) {
         return "";
     }
 
+    if (entity.kind === "services-cloud") {
+        const statusClass = `topology-node-icon-status-${getTopologyIconStatus(entity.status)}`;
+        return `
+            <span class="topology-node-icon topology-node-icon-cloud ${statusClass}" aria-hidden="true">
+                <svg viewBox="0 0 64 64" focusable="false">
+                    <path d="M21 48h22.5c7 0 12.5-5 12.5-11.5 0-6.1-5-11.1-11.4-11.5C42.6 17.9 36.8 14 30.2 14c-8.1 0-14.8 5.7-16.4 13.2C8.8 28.1 5 32.4 5 37.7 5 43.4 9.9 48 16 48h5" class="topology-node-icon-stroke"></path>
+                    <circle cx="24" cy="48" r="4.2" class="topology-node-icon-node"></circle>
+                    <circle cx="34" cy="48" r="4.2" class="topology-node-icon-node"></circle>
+                    <circle cx="44" cy="48" r="4.2" class="topology-node-icon-node"></circle>
+                </svg>
+            </span>
+        `;
+    }
+
     const accentClass = entity.level === 0 ? "topology-node-icon-agg" : "topology-node-icon-anchor";
     const statusClass = `topology-node-icon-status-${getTopologyIconStatus(entity.status)}`;
     return `
@@ -3910,6 +4105,57 @@ function renderTopologyDrawer() {
 
     const levelLabel = entity.level === 0 ? "Lvl0" : entity.level === 1 ? "Lvl1" : "Edge Nodes";
     const displayName = entity.level === 2 ? `${entity.unit || "Unit"} Edge Nodes` : entity.name;
+    if (entity.kind === "services-cloud") {
+        const summary = entity.service_summary || getTopologyServiceCloudSummary();
+        const rows = Array.isArray(summary.services) ? summary.services : [];
+        drawer.innerHTML = `
+            <div class="topology-drawer-block">
+                <span class="dashboard-meta-label">Selected</span>
+                <h3>Services</h3>
+            </div>
+            <div class="topology-drawer-grid">
+                <div class="detail-summary-item">
+                    <span class="detail-summary-label">Binding</span>
+                    <strong class="detail-summary-value">Pinned Services</strong>
+                </div>
+                <div class="detail-summary-item">
+                    <span class="detail-summary-label">Status</span>
+                    <strong class="detail-summary-value">${escapeHtml(getEffectiveTopologyEntityStatus(entity) || "neutral")}</strong>
+                </div>
+                <div class="detail-summary-item">
+                    <span class="detail-summary-label">Pinned</span>
+                    <strong class="detail-summary-value">${escapeHtml(summary.total || 0)}</strong>
+                </div>
+                <div class="detail-summary-item">
+                    <span class="detail-summary-label">Healthy</span>
+                    <strong class="detail-summary-value">${escapeHtml(summary.healthy || 0)}</strong>
+                </div>
+                <div class="detail-summary-item">
+                    <span class="detail-summary-label">Degraded</span>
+                    <strong class="detail-summary-value">${escapeHtml(summary.degraded || 0)}</strong>
+                </div>
+                <div class="detail-summary-item">
+                    <span class="detail-summary-label">Down</span>
+                    <strong class="detail-summary-value">${escapeHtml(summary.down || 0)}</strong>
+                </div>
+            </div>
+            <div class="topology-drawer-block">
+                <span class="dashboard-meta-label">Pinned Watchlist</span>
+                ${
+                    rows.length
+                        ? `<div class="topology-service-cloud-list">${rows.map((service) => `
+                            <div class="topology-service-cloud-item">
+                                <strong>${escapeHtml(service.name || `Service ${service.id}`)}</strong>
+                                <span>${escapeHtml(service.target || service.service_type || "--")}</span>
+                                <span class="status-pill status-${escapeHtml(String(service.status || "unknown").toLowerCase())}">${escapeHtml(service.status || "unknown")}</span>
+                            </div>
+                        `).join("")}</div>`
+                        : `<p class="table-message">No services are pinned on the main dashboard yet. Pin checks from the Services Dashboard to drive this cloud icon.</p>`
+                }
+            </div>
+        `;
+        return;
+    }
     drawer.innerHTML = `
         <div class="topology-drawer-block">
             <span class="dashboard-meta-label">Selected</span>
@@ -4217,11 +4463,12 @@ async function loadTopologyPage() {
 
     try {
         const requestedUnit = normalizeTopologyUnit(new URL(window.location.href).searchParams.get("unit"));
-        const [topologyResult, discoveryResult, nodeDashboardResult, editorStateResult] = await Promise.allSettled([
+        const [topologyResult, discoveryResult, nodeDashboardResult, editorStateResult, dashboardServicesResult] = await Promise.allSettled([
             apiRequest("/api/topology"),
             apiRequest("/api/topology/discovery"),
             apiRequest("/api/node-dashboard"),
             apiRequest("/api/topology/editor-state"),
+            apiRequest("/api/dashboard/services"),
         ]);
         if (topologyResult.status !== "fulfilled") {
             throw topologyResult.reason;
@@ -4233,6 +4480,9 @@ async function loadTopologyPage() {
         topologyNodeDashboardPayload = nodeDashboardResult.status === "fulfilled"
             ? nodeDashboardResult.value
             : { anchors: [], discovered: [] };
+        topologyDashboardServicesPayload = dashboardServicesResult.status === "fulfilled"
+            ? dashboardServicesResult.value
+            : { summary: {}, services: [] };
         topologyState.activeLocations = new Set(TOPOLOGY_LOCATIONS);
         setTopologyUnitFocus(requestedUnit);
         if (!topologyState.focusUnit) {
@@ -4246,14 +4496,15 @@ async function loadTopologyPage() {
             topologyState.layoutOverrides = editorStateResult.value.layout_overrides || {};
             topologyState.stateLogLayout = editorStateResult.value.state_log_layout || null;
             topologyState.linkAnchorAssignments = editorStateResult.value.link_anchor_assignments || {};
+            topologyState.demoMode = editorStateResult.value.demo_mode || "off";
             saveTopologyLayoutOverrides();
             saveTopologyStateLogLayout();
             saveTopologyLinkAnchorAssignments();
+            topologyState.demoSnapshot = buildTopologyDemoSnapshot(topologyState.demoMode);
         }
         topologyState.view = "backbone+l2";
         topologyState.selectedKind = null;
         topologyState.selectedId = null;
-        topologyState.demoSnapshot = buildTopologyDemoSnapshot(topologyState.demoMode);
         topologyEditorStateLoaded = true;
         if (editorStateResult.status === "fulfilled" && !editorStateResult.value?.exists && hasLocalEditorState) {
             queueTopologyEditorStateSave();

@@ -8,6 +8,30 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-03-29 20:13 ET - Topology demo-mode persistence
+- Scope: Persisted the `/topology` demo-mode selector through the topology editor-state contract so preview mode survives reloads and can be replayed from saved state.
+- Branch/worktree: `C:\Users\rick4\.codex\worktrees\601a\smp`
+- Latest validated commit: working tree only, not yet committed
+- Files touched:
+  [app/models.py](C:\Users\rick4\.codex\worktrees\601a\smp\app\models.py)
+  [app/schemas.py](C:\Users\rick4\.codex\worktrees\601a\smp\app\schemas.py)
+  [app/topology_editor_state_service.py](C:\Users\rick4\.codex\worktrees\601a\smp\app\topology_editor_state_service.py)
+  [static/js/app.js](C:\Users\rick4\.codex\worktrees\601a\smp\static\js\app.js)
+  [tests/test_topology_editor_state_service.py](C:\Users\rick4\.codex\worktrees\601a\smp\tests\test_topology_editor_state_service.py)
+  [alembic/versions/20260329_0011_add_topology_editor_state_demo_mode.py](C:\Users\rick4\.codex\worktrees\601a\smp\alembic\versions\20260329_0011_add_topology_editor_state_demo_mode.py)
+  [docs/USER_GUIDE.md](C:\Users\rick4\.codex\worktrees\601a\smp\docs\USER_GUIDE.md)
+  [CHANGELOG.md](C:\Users\rick4\.codex\worktrees\601a\smp\CHANGELOG.md)
+- Verification run:
+  - `./scripts/test.ps1`
+  - `.\\.venv\\Scripts\\python.exe -m compileall app tests alembic`
+- Assumptions:
+  - Demo mode is an editor-facing preview state, not a separate public topology page.
+  - Persisting the selected mode alongside layout and link-anchor settings is the right long-term behavior.
+- Open risks / blockers:
+  - The worktree still contains unrelated in-flight edits from other agents.
+- Next recommended step:
+  - Decide whether demo mode should remain edit-only or also be exposed as a read-only viewer hint.
+
 ## Entry Template
 ```md
 ## YYYY-MM-DD HH:MM ET - Agent/Task
@@ -20,6 +44,28 @@ This file is the shared handoff log for agents working on SMP.
 - Open risks / blockers:
 - Next recommended step:
 ```
+
+## 2026-03-29 15:40 ET - Topology / Services cloud watchlist object
+- Scope: Added a moveable and resizable `Services` cloud object to `/topology` and bound its status to the service checks pinned on the main dashboard watchlist.
+- Branch/worktree: `C:\Users\rick4\.codex\worktrees\601a\smp`
+- Latest validated commit: `d792da9` plus local uncommitted sandbox changes
+- Files touched:
+  [static/js/app.js](C:\Users\rick4\.codex\worktrees\601a\smp\static\js\app.js)
+  [static/css/style.css](C:\Users\rick4\.codex\worktrees\601a\smp\static\css\style.css)
+  [templates/topology.html](C:\Users\rick4\.codex\worktrees\601a\smp\templates\topology.html)
+  [docs/USER_GUIDE.md](C:\Users\rick4\.codex\worktrees\601a\smp\docs\USER_GUIDE.md)
+  [CHANGELOG.md](C:\Users\rick4\.codex\worktrees\601a\smp\CHANGELOG.md)
+- Verification run:
+  - Attempted `.\scripts\test.ps1`
+  - Attempted `.\.venv\Scripts\python.exe -m compileall app tests alembic`
+- Assumptions:
+  - The "main dashboard pinned services" source of truth remains browser-local pinned service IDs plus `/api/dashboard/services`, so topology computes the bound status client-side.
+  - Red status should mean every pinned service is in a non-healthy state (`failed`, `unknown`, or `disabled`); mixed/partial service health should surface as yellow.
+- Open risks / blockers:
+  - The sandbox venv is broken and points to a missing `C:\Users\rick4\AppData\Local\Programs\Python\Python312\python.exe`, so the standard test and compile commands fail before running.
+  - The services cloud currently has no topology links; it is a status object and detail drawer binding only.
+- Next recommended step:
+  - Verify `/topology` in the running app with a pinned-service mix, then decide whether the services cloud should gain authored links into the topology graph or remain a standalone status object.
 
 ## 2026-03-29 10:11 ET - Node Dashboard / AN+DN fail-closed health
 - Scope: Extended the disconnected-network fix so both anchor and discovered rows fail closed instead of reusing stale live state when current reachability is unavailable.

@@ -20,6 +20,27 @@
     --shadow: 0 18px 44px rgba(0, 0, 0, 0.42);
 }
 
+:root[data-theme="vader"] {
+    --bg: #04070d;
+    --surface: rgba(9, 14, 24, 0.96);
+    --surface-alt: rgba(16, 23, 36, 0.92);
+    --text: #edf2fb;
+    --muted: #a4b0c5;
+    --accent: #9ec8ff;
+    --border: rgba(89, 104, 130, 0.5);
+    --shadow: 0 22px 56px rgba(0, 0, 0, 0.58);
+}
+
+:root[data-theme-overlay="4id"] {
+    --overlay-4id-green: #3f9b49;
+    --overlay-4id-gold: #c4a75d;
+    --overlay-4id-green-soft: rgba(63, 155, 73, 0.16);
+    --overlay-4id-gold-soft: rgba(196, 167, 93, 0.16);
+    --overlay-4id-border: rgba(111, 107, 68, 0.34);
+    --overlay-4id-crest: rgba(33, 70, 35, 0.09);
+    --overlay-4id-sheen: rgba(224, 196, 126, 0.11);
+}
+
 * {
     box-sizing: border-box;
 }
@@ -35,12 +56,34 @@ body {
     color: var(--text);
 }
 
+:root[data-theme-overlay="4id"] body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.55;
+    background:
+        radial-gradient(circle at 14% 18%, rgba(63, 155, 73, 0.10), transparent 18%),
+        radial-gradient(circle at 86% 14%, rgba(196, 167, 93, 0.10), transparent 14%),
+        linear-gradient(45deg, transparent 47%, rgba(196, 167, 93, 0.03) 49%, transparent 51%),
+        linear-gradient(-45deg, transparent 47%, rgba(63, 155, 73, 0.03) 49%, transparent 51%);
+}
+
 :root[data-theme="dark"] body {
     background:
         radial-gradient(circle at 15% 20%, rgba(32, 168, 216, 0.14), transparent 28%),
         radial-gradient(circle at 80% 12%, rgba(15, 108, 189, 0.12), transparent 24%),
         radial-gradient(circle at 70% 65%, rgba(30, 64, 175, 0.10), transparent 22%),
         linear-gradient(180deg, #08111e 0%, #0c1526 42%, #0a1322 100%);
+}
+
+:root[data-theme="vader"] body {
+    background:
+        radial-gradient(circle at 16% 16%, rgba(66, 96, 146, 0.10), transparent 24%),
+        radial-gradient(circle at 84% 12%, rgba(110, 130, 170, 0.07), transparent 18%),
+        radial-gradient(circle at 68% 72%, rgba(66, 96, 146, 0.06), transparent 20%),
+        linear-gradient(180deg, #02050a 0%, #050910 38%, #04070d 100%);
 }
 
 a {
@@ -65,6 +108,16 @@ a {
 :root[data-theme="dark"] .topbar {
     background: rgba(10, 17, 31, 0.9);
     border-bottom-color: rgba(37, 51, 76, 0.92);
+}
+
+:root[data-theme="vader"] .topbar {
+    background: rgba(4, 7, 13, 0.9);
+    border-bottom-color: rgba(37, 46, 63, 0.92);
+}
+
+:root[data-theme-overlay="4id"] .topbar {
+    border-bottom-color: color-mix(in srgb, var(--border) 60%, var(--overlay-4id-border));
+    box-shadow: inset 0 -1px 0 rgba(196, 167, 93, 0.08);
 }
 
 .brand {
@@ -124,6 +177,25 @@ a {
 .theme-mode-menu button[aria-pressed="true"] {
     background: var(--accent);
     color: #ffffff;
+}
+
+.theme-mode-menu-divider {
+    height: 1px;
+    margin: 0.15rem 0;
+    background: color-mix(in srgb, var(--border) 72%, transparent);
+}
+
+:root[data-theme-overlay="4id"] .theme-overlay-button {
+    border: 1px solid color-mix(in srgb, var(--overlay-4id-border) 92%, transparent);
+    background:
+        linear-gradient(135deg, rgba(63, 155, 73, 0.18), rgba(196, 167, 93, 0.12));
+    color: color-mix(in srgb, var(--text) 86%, var(--overlay-4id-gold));
+}
+
+:root[data-theme-overlay="4id"] .theme-overlay-button[aria-pressed="true"] {
+    background:
+        linear-gradient(135deg, rgba(63, 155, 73, 0.92), rgba(133, 115, 58, 0.88));
+    color: #f7f1dd;
 }
 
 .nav a {
@@ -196,6 +268,47 @@ a {
     gap: 1.25rem;
     margin-bottom: 0.7rem;
     padding: 0.35rem 0 0.2rem;
+}
+
+:root[data-theme-overlay="4id"] .hero h1,
+:root[data-theme-overlay="4id"] .dashboard-toolbar h1,
+:root[data-theme-overlay="4id"] .detail-hero h1,
+:root[data-theme-overlay="4id"] .inventory-header h2,
+:root[data-theme-overlay="4id"] .node-list-card-header h2,
+:root[data-theme-overlay="4id"] .card h2 {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.7rem;
+}
+
+:root[data-theme-overlay="4id"] .hero h1::after,
+:root[data-theme-overlay="4id"] .dashboard-toolbar h1::after,
+:root[data-theme-overlay="4id"] .detail-hero h1::after,
+:root[data-theme-overlay="4id"] .inventory-header h2::after,
+:root[data-theme-overlay="4id"] .node-list-card-header h2::after,
+:root[data-theme-overlay="4id"] .card h2::after {
+    content: "";
+    flex: 0 0 auto;
+    width: 1.9rem;
+    height: 1.9rem;
+    pointer-events: none;
+    opacity: 1;
+    background-image: url("../img/4id-patch.png");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
+}
+
+:root[data-theme-overlay="4id"] .hero h1::after,
+:root[data-theme-overlay="4id"] .dashboard-toolbar h1::after,
+:root[data-theme-overlay="4id"] .detail-hero h1::after {
+    width: 2.45rem;
+    height: 2.45rem;
+}
+
+:root[data-theme-overlay="4id"] .hero h1::after {
+    width: 4.35rem;
+    height: 4.35rem;
 }
 
 .dashboard-toolbar-actions {
@@ -292,48 +405,89 @@ a {
     pointer-events: none;
 }
 
+:root[data-theme-overlay="4id"] .card::before {
+    background: linear-gradient(90deg, transparent 0%, rgba(196, 167, 93, 0.28) 18%, rgba(63, 155, 73, 0.18) 82%, transparent 100%);
+}
+
+:root[data-theme-overlay="4id"] .card,
+:root[data-theme-overlay="4id"] .dashboard-meta {
+    border-color: color-mix(in srgb, var(--border) 78%, var(--overlay-4id-border));
+    box-shadow:
+        var(--shadow),
+        0 0 0 1px rgba(196, 167, 93, 0.05);
+}
+
+:root[data-theme-overlay="4id"] .eyebrow,
+:root[data-theme-overlay="4id"] .brand {
+    color: color-mix(in srgb, var(--text) 72%, var(--overlay-4id-green));
+}
+
+:root[data-theme-overlay="4id"] .button-primary {
+    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 72%, var(--overlay-4id-green)) 0%, color-mix(in srgb, var(--accent) 38%, var(--overlay-4id-gold)) 100%);
+}
+
 :root[data-theme="dark"] .dashboard-meta,
+:root[data-theme="vader"] .dashboard-meta,
 :root[data-theme="dark"] .detail-summary-item,
+:root[data-theme="vader"] .detail-summary-item,
 :root[data-theme="dark"] .node-summary-card,
+:root[data-theme="vader"] .node-summary-card,
 :root[data-theme="dark"] .metric-gauge-card,
+:root[data-theme="vader"] .metric-gauge-card,
 :root[data-theme="dark"] .node-summary-stat,
+:root[data-theme="vader"] .node-summary-stat,
 :root[data-theme="dark"] .telemetry-item,
+:root[data-theme="vader"] .telemetry-item,
 :root[data-theme="dark"] .node-form input,
+:root[data-theme="vader"] .node-form input,
 :root[data-theme="dark"] .node-form select,
+:root[data-theme="vader"] .node-form select,
 :root[data-theme="dark"] .node-form textarea,
+:root[data-theme="vader"] .node-form textarea,
 :root[data-theme="dark"] .dashboard-refresh-menu,
+:root[data-theme="vader"] .dashboard-refresh-menu,
 :root[data-theme="dark"] .dashboard-refresh-menu button,
+:root[data-theme="vader"] .dashboard-refresh-menu button,
 :root[data-theme="dark"] .theme-mode-menu,
-:root[data-theme="dark"] .theme-mode-menu button {
+:root[data-theme="vader"] .theme-mode-menu,
+:root[data-theme="dark"] .theme-mode-menu button,
+:root[data-theme="vader"] .theme-mode-menu button,
+:root[data-theme="dark"] .theme-mode-menu button,
+:root[data-theme="vader"] .theme-mode-menu button {
     background: var(--surface-alt);
     color: var(--text);
     border-color: var(--border);
 }
 
-:root[data-theme="dark"] .node-summary-chip {
+:root[data-theme="dark"] .node-summary-chip,
+:root[data-theme="vader"] .node-summary-chip {
     background: rgba(46, 63, 94, 0.72);
     border-color: rgba(94, 121, 168, 0.38);
     color: #a9bbd8;
 }
 
-:root[data-theme="dark"] .node-summary-health {
+:root[data-theme="dark"] .node-summary-health,
+:root[data-theme="vader"] .node-summary-health {
     background: rgba(41, 214, 127, 0.18);
     color: #59e29e;
 }
 
-:root[data-theme="dark"] .node-summary-health-chip {
+:root[data-theme="dark"] .node-summary-health-chip,
+:root[data-theme="vader"] .node-summary-health-chip {
     background: rgba(41, 214, 127, 0.18);
     border-color: rgba(65, 224, 145, 0.24);
     color: #59e29e;
 }
 
-:root[data-theme="dark"] .card {
+:root[data-theme="dark"] .card,
+:root[data-theme="vader"] .card {
     box-shadow:
         0 18px 42px rgba(3, 8, 18, 0.34),
         0 0 0 1px rgba(95, 132, 190, 0.05);
 }
 
-:root[data-theme="dark"] .card::before {
+:root[data-theme="dark"] .card::before,
+:root[data-theme="vader"] .card::before {
     background: linear-gradient(90deg, transparent 0%, rgba(118, 183, 255, 0.30) 18%, rgba(118, 183, 255, 0.16) 82%, transparent 100%);
 }
 
@@ -365,9 +519,16 @@ a {
     isolation: isolate;
 }
 
-:root[data-theme="dark"] .dashboard-meta {
+:root[data-theme="dark"] .dashboard-meta,
+:root[data-theme="vader"] .dashboard-meta {
     background: rgba(27, 40, 63, 0.88);
     box-shadow: 0 24px 50px rgba(0, 0, 0, 0.22);
+}
+
+:root[data-theme="vader"] .dashboard-meta {
+    background: rgba(10, 15, 24, 0.74);
+    backdrop-filter: blur(18px);
+    box-shadow: 0 28px 64px rgba(0, 0, 0, 0.34);
 }
 
 .detail-header-card {
@@ -543,13 +704,15 @@ a {
     opacity: 0.75;
 }
 
-:root[data-theme="dark"] .metric-gauge::before {
+:root[data-theme="dark"] .metric-gauge::before,
+:root[data-theme="vader"] .metric-gauge::before {
     background:
         radial-gradient(circle at center, rgba(7, 16, 33, 0.96) 0 58%, transparent 59%),
         repeating-conic-gradient(from -220deg, rgba(180, 194, 224, 0.2) 0deg 2deg, transparent 2deg 8deg);
 }
 
-:root[data-theme="dark"] .metric-gauge-card {
+:root[data-theme="dark"] .metric-gauge-card,
+:root[data-theme="vader"] .metric-gauge-card {
     background:
         radial-gradient(circle at 50% 14%, rgba(129, 90, 255, 0.18), transparent 40%),
         linear-gradient(180deg, rgba(34, 47, 71, 0.98) 0%, rgba(28, 39, 60, 0.98) 100%);
@@ -711,12 +874,39 @@ a {
     transition: 160ms ease;
 }
 
+:root[data-theme="vader"] .topology-filter-bar {
+    background: linear-gradient(180deg, rgba(9, 13, 20, 0.42) 0%, rgba(6, 10, 16, 0.28) 100%);
+    border-color: rgba(84, 99, 124, 0.18);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.03),
+        0 18px 42px rgba(0, 0, 0, 0.24);
+    backdrop-filter: blur(16px);
+}
+
+:root[data-theme="vader"] .topology-filter-chip {
+    border-color: rgba(104, 119, 148, 0.22);
+    background: linear-gradient(180deg, rgba(20, 27, 39, 0.62) 0%, rgba(11, 16, 24, 0.5) 100%);
+    color: #d8e3f7;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
 .topology-filter-chip:hover,
 .topology-filter-chip.active {
     border-color: rgba(98, 214, 255, 0.42);
     color: #f3f8ff;
     background: linear-gradient(180deg, rgba(43, 65, 102, 0.98) 0%, rgba(32, 52, 87, 0.98) 100%);
     box-shadow: 0 0 0 1px rgba(98, 214, 255, 0.08), 0 10px 28px rgba(12, 28, 56, 0.24);
+}
+
+:root[data-theme="vader"] .topology-filter-chip:hover,
+:root[data-theme="vader"] .topology-filter-chip.active {
+    border-color: rgba(140, 188, 255, 0.3);
+    color: #f3f8ff;
+    background: linear-gradient(180deg, rgba(29, 38, 54, 0.82) 0%, rgba(16, 23, 35, 0.68) 100%);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.06),
+        0 12px 28px rgba(0, 0, 0, 0.24),
+        0 0 16px rgba(132, 168, 216, 0.06);
 }
 
 .topology-layout {
@@ -727,7 +917,19 @@ a {
     overflow: hidden;
 }
 
+:root[data-theme="vader"] .topology-stage-card {
+    background:
+        linear-gradient(180deg, rgba(7, 10, 16, 0.42) 0%, rgba(4, 7, 12, 0.26) 100%);
+    border-color: rgba(84, 99, 124, 0.18);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.03),
+        0 24px 64px rgba(0, 0, 0, 0.38);
+    backdrop-filter: blur(18px);
+}
+
 .topology-stage-card.is-fullscreen {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
     width: 100vw;
     height: 100vh;
     max-width: none;
@@ -735,7 +937,8 @@ a {
     border-radius: 0;
     border: none;
     padding: 1rem 1rem 1.25rem;
-    overflow: auto;
+    box-sizing: border-box;
+    overflow: hidden;
 }
 
 .topology-stage-header {
@@ -746,12 +949,30 @@ a {
     margin-bottom: 0.9rem;
 }
 
+.topology-stage-header h2 {
+    margin: 0 0 0.25rem;
+    font-size: clamp(1.8rem, 2.4vw, 2.5rem);
+    font-family: "Aptos Display", "Segoe UI Variable Display", "Bahnschrift", "Aptos", "Segoe UI", sans-serif;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 0.95;
+}
+
+.topology-stage-header .section-copy {
+    font-size: 1rem;
+    line-height: 1.45;
+}
+
 .topology-stage-actions {
     display: flex;
     justify-content: flex-end;
     flex-shrink: 0;
     gap: 0.55rem;
     flex-wrap: wrap;
+}
+
+.topology-manage-nodes-link {
+    text-decoration: none;
 }
 
 .topology-stage {
@@ -767,8 +988,73 @@ a {
     overflow: hidden;
 }
 
+:root[data-theme="vader"] .topology-stage {
+    border-color: rgba(78, 94, 120, 0.16);
+    background:
+        radial-gradient(circle at 16% 20%, rgba(98, 128, 186, 0.12), transparent 18%),
+        radial-gradient(circle at 82% 16%, rgba(146, 54, 80, 0.10), transparent 18%),
+        radial-gradient(circle at 54% 60%, rgba(78, 96, 140, 0.08), transparent 24%),
+        radial-gradient(circle at 32% 76%, rgba(66, 94, 146, 0.08), transparent 20%),
+        radial-gradient(circle at 70% 78%, rgba(128, 48, 72, 0.06), transparent 16%),
+        linear-gradient(180deg, rgba(3, 6, 11, 0.98) 0%, rgba(6, 9, 15, 0.99) 100%);
+}
+
+:root[data-theme="vader"] .topology-stage::before {
+    opacity: 0.62;
+}
+
+:root[data-theme="vader"] .topology-stage::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+        radial-gradient(circle at 8% 18%, rgba(255, 255, 255, 0.38) 0 1.2px, transparent 1.8px),
+        radial-gradient(circle at 14% 52%, rgba(189, 208, 255, 0.28) 0 1px, transparent 1.7px),
+        radial-gradient(circle at 24% 66%, rgba(255, 255, 255, 0.24) 0 1.1px, transparent 1.6px),
+        radial-gradient(circle at 39% 18%, rgba(196, 214, 255, 0.26) 0 1.1px, transparent 1.6px),
+        radial-gradient(circle at 46% 82%, rgba(255, 255, 255, 0.22) 0 1px, transparent 1.5px),
+        radial-gradient(circle at 57% 72%, rgba(255, 255, 255, 0.24) 0 1.1px, transparent 1.7px),
+        radial-gradient(circle at 68% 28%, rgba(183, 204, 255, 0.26) 0 1.1px, transparent 1.7px),
+        radial-gradient(circle at 77% 58%, rgba(255, 255, 255, 0.20) 0 1px, transparent 1.5px),
+        radial-gradient(circle at 86% 24%, rgba(255, 255, 255, 0.28) 0 1.2px, transparent 1.8px),
+        radial-gradient(circle at 92% 74%, rgba(194, 210, 255, 0.22) 0 1px, transparent 1.5px),
+        radial-gradient(circle at 74% 84%, rgba(138, 160, 208, 0.14), transparent 18%),
+        radial-gradient(circle at 18% 86%, rgba(94, 114, 160, 0.12), transparent 16%),
+        radial-gradient(circle at 66% 14%, rgba(120, 48, 74, 0.10), transparent 14%);
+    opacity: 0.62;
+    pointer-events: none;
+    z-index: 0;
+    mix-blend-mode: screen;
+    animation: topology-vader-drift 30s ease-in-out infinite alternate;
+}
+
 .topology-stage-card.is-fullscreen .topology-stage {
-    min-height: calc(100vh - 12.5rem);
+    min-height: 0;
+    height: 100%;
+}
+
+.topology-stage-card.is-fullscreen .topology-entity {
+    padding: 1rem 1.15rem;
+}
+
+.topology-stage-card.is-fullscreen .topology-node-name {
+    font-size: 1.08rem;
+}
+
+.topology-stage-card.is-fullscreen .topology-node-meta {
+    font-size: 0.84rem;
+}
+
+.topology-stage-card.is-fullscreen .topology-node-lvl1 .topology-node-name {
+    font-size: 0.95rem;
+}
+
+.topology-stage-card.is-fullscreen .topology-node-lvl1 .topology-node-meta {
+    font-size: 0.74rem;
+}
+
+.topology-stage-card.is-fullscreen .topology-node-icon {
+    transform: scale(1.12);
 }
 
 .topology-stage-card.is-fullscreen .topology-discovery-panel {
@@ -787,6 +1073,18 @@ a {
         radial-gradient(circle at 58% 86%, rgba(255, 255, 255, 0.14) 0 1px, transparent 1px);
     opacity: 0.7;
     pointer-events: none;
+}
+
+@keyframes topology-vader-drift {
+    0% {
+        transform: translate3d(0, 0, 0) scale(1);
+        opacity: 0.34;
+    }
+
+    100% {
+        transform: translate3d(-1.2%, 1.4%, 0) scale(1.02);
+        opacity: 0.46;
+    }
 }
 
 .topology-stage-grid-label {
@@ -870,7 +1168,11 @@ a {
 .topology-link-cluster { stroke-dasharray: 8 8; }
 .topology-link-healthy { stroke: rgba(67, 227, 129, 0.72); }
 .topology-link-degraded { stroke: rgba(247, 193, 77, 0.72); }
-.topology-link-down { stroke: rgba(239, 86, 108, 0.7); }
+.topology-link-down { stroke: rgba(255, 59, 59, 0.82); }
+.topology-link-down {
+    animation: topology-link-down-pulse 2.2s ease-in-out infinite;
+    transform-origin: center;
+}
 .topology-link-neutral { stroke: rgba(102, 190, 255, 0.38); }
 .topology-link.is-selected {
     stroke-width: 4.4;
@@ -986,6 +1288,18 @@ a {
     overflow: visible;
 }
 
+:root[data-theme="vader"] .topology-entity {
+    border-color: rgba(104, 119, 148, 0.22);
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.055) 0%, rgba(255, 255, 255, 0.016) 26%, transparent 44%),
+        linear-gradient(180deg, rgba(18, 24, 36, 0.46) 0%, rgba(12, 17, 27, 0.30) 100%);
+    backdrop-filter: blur(16px) saturate(120%);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.08),
+        inset 0 -1px 0 rgba(255, 255, 255, 0.025),
+        0 18px 40px rgba(0, 0, 0, 0.32);
+}
+
 .topology-entity:hover,
 .topology-entity:focus-visible {
     transform: translate(-50%, -50%) scale(1.03);
@@ -1055,8 +1369,8 @@ a {
 }
 
 .topology-anchor-point.is-connected-down {
-    background: rgba(239, 86, 108, 0.88);
-    box-shadow: 0 0 0 1px rgba(239, 86, 108, 0.18), 0 0 10px rgba(239, 86, 108, 0.24);
+    background: rgba(255, 59, 59, 0.92);
+    box-shadow: 0 0 0 1px rgba(255, 59, 59, 0.2), 0 0 10px rgba(255, 59, 59, 0.28);
 }
 
 .topology-anchor-point.is-connected-neutral {
@@ -1125,6 +1439,24 @@ a {
     outline: none;
 }
 
+:root[data-theme="vader"] .topology-entity:hover,
+:root[data-theme="vader"] .topology-entity:focus-visible {
+    border-color: rgba(138, 188, 255, 0.36);
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.085) 0%, rgba(255, 255, 255, 0.024) 28%, transparent 46%),
+        linear-gradient(180deg, rgba(24, 31, 46, 0.40) 0%, rgba(14, 19, 30, 0.20) 100%);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.1),
+        0 22px 46px rgba(0, 0, 0, 0.38),
+        0 0 28px rgba(132, 168, 216, 0.10);
+}
+
+:root[data-theme="vader"] .topology-service-cloud {
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.055) 0%, rgba(255, 255, 255, 0.016) 26%, transparent 44%),
+        linear-gradient(180deg, rgba(18, 24, 36, 0.46) 0%, rgba(12, 17, 27, 0.30) 100%);
+}
+
 .topology-demo-option.is-active {
     background: rgba(41, 103, 88, 0.72);
     border-color: rgba(74, 222, 128, 0.3);
@@ -1142,6 +1474,27 @@ a {
     border-radius: 15px;
     text-align: center;
     box-sizing: border-box;
+}
+
+.topology-service-cloud {
+    min-width: 184px;
+    border-radius: 28px;
+    background:
+        radial-gradient(circle at 50% 0%, rgba(110, 214, 255, 0.18), transparent 42%),
+        linear-gradient(180deg, rgba(18, 44, 78, 0.98) 0%, rgba(12, 31, 56, 0.98) 100%);
+    z-index: 4;
+}
+
+.topology-service-cloud .topology-node-name {
+    text-align: center;
+    font-size: 1.02rem;
+    margin-top: auto;
+}
+
+.topology-service-cloud {
+    justify-content: center;
+    align-items: center;
+    gap: 0.45rem;
 }
 
 .topology-cluster {
@@ -1167,6 +1520,8 @@ a {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    position: relative;
+    isolation: isolate;
     width: 2.5rem;
     height: 2.5rem;
     margin-top: auto;
@@ -1174,6 +1529,19 @@ a {
     margin-bottom: 0.22rem;
     color: #8b5cf6;
     filter: drop-shadow(0 0 12px rgba(139, 92, 246, 0.18));
+}
+
+.topology-node-icon::before {
+    content: "";
+    position: absolute;
+    inset: 2%;
+    z-index: -1;
+    border-radius: 999px;
+    background: currentColor;
+    opacity: 0.34;
+    filter: blur(18px);
+    transform: scale(1.22);
+    pointer-events: none;
 }
 
 .topology-node-icon svg {
@@ -1217,9 +1585,23 @@ a {
     margin-bottom: 0;
 }
 
+.topology-node-icon-cloud {
+    width: 3.2rem;
+    height: 3.2rem;
+    color: #7dd3fc;
+    filter: drop-shadow(0 0 16px rgba(125, 211, 252, 0.24));
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
 .topology-node-icon-status-up {
     color: #4ade80;
     filter: drop-shadow(0 0 12px rgba(74, 222, 128, 0.22));
+}
+
+.topology-node-icon-status-up::before {
+    opacity: 0.4;
+    filter: blur(20px);
 }
 
 .topology-node-icon-status-degraded {
@@ -1227,9 +1609,20 @@ a {
     filter: drop-shadow(0 0 12px rgba(251, 191, 36, 0.22));
 }
 
+.topology-node-icon-status-degraded::before {
+    opacity: 0.38;
+    filter: blur(20px);
+}
+
 .topology-node-icon-status-down {
-    color: #f87171;
-    filter: drop-shadow(0 0 12px rgba(248, 113, 113, 0.22));
+    color: #ff4d4f;
+    filter: drop-shadow(0 0 12px rgba(255, 77, 79, 0.24));
+    animation: topology-status-pulse 2.2s ease-in-out infinite;
+}
+
+.topology-node-icon-status-down::before {
+    opacity: 0.36;
+    filter: blur(20px);
 }
 
 .topology-node-meta {
@@ -1327,10 +1720,25 @@ a {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    position: relative;
+    isolation: isolate;
     width: 1.42rem;
     height: 1.42rem;
     color: #59f58a;
     filter: drop-shadow(0 0 10px rgba(89, 245, 138, 0.18));
+}
+
+.topology-cluster-health-icon::before {
+    content: "";
+    position: absolute;
+    inset: 2%;
+    z-index: -1;
+    border-radius: 999px;
+    background: currentColor;
+    opacity: 0.34;
+    filter: blur(14px);
+    transform: scale(1.18);
+    pointer-events: none;
 }
 
 .topology-cluster-health-icon svg {
@@ -1352,14 +1760,90 @@ a {
     filter: drop-shadow(0 0 10px rgba(74, 222, 128, 0.18));
 }
 
+.topology-cluster-health-icon-up::before {
+    opacity: 0.4;
+    filter: blur(16px);
+}
+
 .topology-cluster-health-icon-degraded {
     color: #fbbf24;
     filter: drop-shadow(0 0 10px rgba(251, 191, 36, 0.18));
 }
 
+.topology-cluster-health-icon-degraded::before {
+    opacity: 0.38;
+    filter: blur(16px);
+}
+
 .topology-cluster-health-icon-down {
-    color: #f87171;
-    filter: drop-shadow(0 0 10px rgba(248, 113, 113, 0.18));
+    color: #ff4d4f;
+    filter: drop-shadow(0 0 10px rgba(255, 77, 79, 0.2));
+    animation: topology-status-pulse 2.2s ease-in-out infinite;
+}
+
+.topology-cluster-health-icon-down::before {
+    opacity: 0.36;
+    filter: blur(16px);
+}
+
+@keyframes topology-status-pulse {
+    0%,
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+
+    50% {
+        transform: scale(1.1);
+        opacity: 0.78;
+    }
+}
+
+@keyframes topology-service-cloud-alert-pulse {
+    0%,
+    100% {
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.04),
+            0 16px 36px rgba(3, 10, 22, 0.34),
+            0 0 0 rgba(255, 59, 59, 0.18);
+    }
+
+    50% {
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.04),
+            0 16px 36px rgba(3, 10, 22, 0.34),
+            0 0 26px rgba(255, 59, 59, 0.32);
+    }
+}
+
+@keyframes topology-link-down-pulse {
+    0%,
+    100% {
+        opacity: 0.7;
+        stroke-width: 2.4;
+        filter: drop-shadow(0 0 8px rgba(255, 59, 59, 0.2));
+    }
+
+    50% {
+        opacity: 0.95;
+        stroke-width: 3;
+        filter: drop-shadow(0 0 14px rgba(255, 59, 59, 0.38));
+    }
+}
+
+@keyframes topology-log-alert-pulse {
+    0%,
+    100% {
+        opacity: 1;
+        box-shadow: 0 0 12px rgba(255, 77, 79, 0.32);
+        transform: scale(1);
+    }
+
+    50% {
+        opacity: 0.74;
+        box-shadow: 0 0 18px rgba(255, 77, 79, 0.46);
+        transform: scale(1.18);
+    }
 }
 
 .topology-status-healthy {
@@ -1371,11 +1855,104 @@ a {
 }
 
 .topology-status-down {
-    border-color: rgba(239, 86, 108, 0.34);
+    border-color: rgba(255, 59, 59, 0.42);
+}
+
+.topology-service-cloud.topology-status-down {
+    animation: topology-service-cloud-alert-pulse 2.2s ease-in-out infinite;
 }
 
 .topology-status-neutral {
     border-color: rgba(91, 132, 190, 0.28);
+}
+
+.topology-service-cloud-list {
+    display: grid;
+    gap: 0.55rem;
+}
+
+.topology-service-cloud-item {
+    display: grid;
+    gap: 0.18rem;
+    padding: 0.65rem 0.75rem;
+    border-radius: 12px;
+    background: rgba(20, 31, 54, 0.58);
+}
+
+.topology-service-cloud-item strong {
+    font-size: 0.92rem;
+}
+
+.topology-service-cloud-tooltip {
+    position: absolute;
+    left: calc(100% + 0.8rem);
+    top: 50%;
+    transform: translateY(-50%);
+    display: grid;
+    gap: 0.45rem;
+    min-width: 220px;
+    max-width: 280px;
+    padding: 0.75rem 0.85rem;
+    border-radius: 14px;
+    border: 1px solid rgba(86, 118, 172, 0.34);
+    background: rgba(10, 18, 34, 0.96);
+    box-shadow: 0 18px 34px rgba(4, 12, 24, 0.4);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.14s ease, transform 0.14s ease;
+    z-index: 8;
+}
+
+.topology-service-cloud:hover .topology-service-cloud-tooltip,
+.topology-service-cloud:focus-visible .topology-service-cloud-tooltip {
+    opacity: 1;
+    transform: translateY(-50%) translateX(4px);
+}
+
+.topology-service-cloud:hover,
+.topology-service-cloud:focus-visible,
+.topology-service-cloud.is-selected,
+.topology-service-cloud.is-multi-selected {
+    z-index: 9;
+}
+
+.topology-stage.is-editing .topology-service-cloud-tooltip {
+    display: none;
+}
+
+.topology-service-cloud-tooltip-title {
+    font-size: 0.78rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #dcecff;
+}
+
+.topology-service-cloud-tooltip-list {
+    display: grid;
+    gap: 0.35rem;
+}
+
+.topology-service-cloud-tooltip-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+}
+
+.topology-service-cloud-tooltip-name {
+    color: #eff6ff;
+    font-size: 0.86rem;
+    font-weight: 700;
+}
+
+.topology-service-cloud-tooltip-status {
+    flex-shrink: 0;
+}
+
+.topology-service-cloud-tooltip-empty {
+    color: #9cb3d8;
+    font-size: 0.82rem;
 }
 
 .topology-drawer {
@@ -1457,8 +2034,9 @@ a {
 }
 
 .topology-state-log-severity-down {
-    background: #f87171;
-    box-shadow: 0 0 12px rgba(248, 113, 113, 0.28);
+    background: #ff4d4f;
+    box-shadow: 0 0 12px rgba(255, 77, 79, 0.32);
+    animation: topology-log-alert-pulse 1.9s ease-in-out infinite;
 }
 
 .topology-state-log-severity-up {
@@ -1526,6 +2104,18 @@ a {
     backdrop-filter: blur(12px);
     color: #eff6ff;
     box-shadow: 0 20px 38px rgba(6, 12, 24, 0.28);
+}
+
+:root[data-theme="vader"] .topology-state-log-preview,
+:root[data-theme="vader"] .topology-state-log-flyout {
+    border-color: rgba(90, 108, 136, 0.24);
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.035) 0%, rgba(255, 255, 255, 0.008) 18%, transparent 38%),
+        linear-gradient(180deg, rgba(11, 16, 25, 0.44) 0%, rgba(7, 11, 18, 0.28) 100%);
+    backdrop-filter: blur(18px) saturate(120%);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.05),
+        0 24px 48px rgba(0, 0, 0, 0.34);
 }
 
 .topology-state-log-preview.is-selected,
@@ -1688,7 +2278,8 @@ a {
     font-size: 0.8rem;
 }
 
-:root[data-theme="dark"] .raw-debug pre {
+:root[data-theme="dark"] .raw-debug pre,
+:root[data-theme="vader"] .raw-debug pre {
     background: #060d18;
     color: #d8e3f7;
 }
@@ -1727,7 +2318,8 @@ a {
     color: #b42318;
 }
 
-:root[data-theme="dark"] .status-error {
+:root[data-theme="dark"] .status-error,
+:root[data-theme="vader"] .status-error {
     color: #ffaea6;
 }
 
@@ -1754,11 +2346,19 @@ a {
     transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
 }
 
-:root[data-theme="dark"] .node-card {
+:root[data-theme="dark"] .node-card,
+:root[data-theme="vader"] .node-card {
     background:
         linear-gradient(180deg, rgba(24, 38, 60, 0.98) 0%, rgba(28, 46, 72, 0.99) 100%);
     border-color: rgba(120, 160, 225, 0.28);
     box-shadow: 0 22px 44px rgba(5, 10, 22, 0.34);
+}
+
+:root[data-theme="vader"] .node-card {
+    background:
+        linear-gradient(180deg, rgba(10, 15, 24, 0.88) 0%, rgba(14, 21, 33, 0.92) 100%);
+    border-color: rgba(116, 139, 175, 0.22);
+    box-shadow: 0 24px 52px rgba(0, 0, 0, 0.44);
 }
 
 .node-card:hover,
@@ -1785,7 +2385,7 @@ a {
     width: 150px;
     height: 150px;
     border-radius: 999px;
-    opacity: 0.24;
+    opacity: 0;
     filter: blur(28px);
     pointer-events: none;
 }
@@ -2042,7 +2642,8 @@ a {
     border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-:root[data-theme="dark"] .metric-block {
+:root[data-theme="dark"] .metric-block,
+:root[data-theme="vader"] .metric-block {
     background: rgba(255, 255, 255, 0.08);
     border-color: rgba(255, 255, 255, 0.12);
 }
@@ -2180,7 +2781,16 @@ a {
     color: var(--text);
 }
 
-:root[data-theme="dark"] .button-danger {
+:root[data-theme="vader"] .button-secondary {
+    background: linear-gradient(180deg, rgba(20, 27, 39, 0.68) 0%, rgba(11, 16, 24, 0.58) 100%);
+    border: 1px solid rgba(101, 117, 146, 0.18);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.04),
+        0 10px 24px rgba(0, 0, 0, 0.18);
+}
+
+:root[data-theme="dark"] .button-danger,
+:root[data-theme="vader"] .button-danger {
     background: rgba(180, 35, 24, 0.18);
     color: #ffaea6;
 }
@@ -2232,6 +2842,11 @@ a {
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
+:root[data-theme="vader"] .route-table-wrap {
+    background: linear-gradient(180deg, rgba(11, 16, 25, 0.56) 0%, rgba(8, 12, 20, 0.42) 100%);
+    backdrop-filter: blur(14px);
+}
+
 #detail-tunnels-body {
     scroll-margin-top: 0;
 }
@@ -2274,6 +2889,11 @@ section.card:has(#detail-tunnels-body) .route-table-wrap {
     background: var(--surface-alt);
 }
 
+:root[data-theme="vader"] .services-summary-chip {
+    background: linear-gradient(180deg, rgba(20, 27, 39, 0.62) 0%, rgba(12, 17, 26, 0.46) 100%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
 .services-summary-chip strong {
     font-size: 1.05rem;
     font-weight: 800;
@@ -2312,6 +2932,11 @@ section.card:has(#detail-tunnels-body) .route-table-wrap {
     padding: 0 0.8rem 0.25rem;
 }
 
+:root[data-theme="vader"] .services-dashboard-wrap {
+    background: linear-gradient(180deg, rgba(11, 16, 25, 0.56) 0%, rgba(8, 12, 20, 0.42) 100%);
+    backdrop-filter: blur(14px);
+}
+
 .services-dashboard-table {
     margin-top: 0;
 }
@@ -2321,6 +2946,11 @@ section.card:has(#detail-tunnels-body) .route-table-wrap {
     top: 0;
     z-index: 1;
     background: var(--surface);
+}
+
+:root[data-theme="vader"] .services-dashboard-table thead th,
+:root[data-theme="vader"] .route-table-wrap .data-table thead th {
+    background: rgba(9, 14, 24, 0.92);
 }
 
 .dashboard-service-status {
@@ -2422,6 +3052,17 @@ body.modal-open {
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
+:root[data-theme="vader"] .node-list-card {
+    background: linear-gradient(180deg, rgba(10, 15, 24, 0.52) 0%, rgba(7, 11, 18, 0.34) 100%);
+    border-color: rgba(84, 99, 124, 0.18);
+    backdrop-filter: blur(14px);
+}
+
+:root[data-theme="vader"] .node-list-scroll {
+    background: linear-gradient(180deg, rgba(11, 16, 25, 0.56) 0%, rgba(8, 12, 20, 0.42) 100%);
+    backdrop-filter: blur(14px);
+}
+
 .node-list {
     display: grid;
 }
@@ -2442,6 +3083,10 @@ body.modal-open {
 
 .node-list-row:hover {
     background: rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme="vader"] .node-list-row:hover {
+    background: rgba(255, 255, 255, 0.05);
 }
 
 .node-list-row-child {
@@ -2498,6 +3143,11 @@ body.modal-open {
     text-decoration: none;
     cursor: pointer;
     transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+:root[data-theme="vader"] .node-list-name-button {
+    background: linear-gradient(180deg, rgba(22, 29, 42, 0.72) 0%, rgba(12, 18, 27, 0.58) 100%);
+    border-color: rgba(102, 118, 147, 0.22);
 }
 
 .node-list-name-button:hover,
@@ -2588,6 +3238,14 @@ body.modal-open {
     transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
 }
 
+:root[data-theme="vader"] .node-list-actions .service-link,
+:root[data-theme="vader"] .node-list-actions .service-link.ok,
+:root[data-theme="vader"] .node-list-actions .service-link.down,
+:root[data-theme="vader"] .node-list-actions .dashboard-pin-button {
+    background: linear-gradient(180deg, rgba(22, 29, 42, 0.72) 0%, rgba(12, 18, 27, 0.58) 100%);
+    border-color: rgba(102, 118, 147, 0.22);
+}
+
 .node-list-actions .service-link[aria-label="Edit node"],
 .node-list-actions .service-link[aria-label="Delete node"],
 .node-list-actions .service-link[aria-label="Delete discovered node"] {
@@ -2657,9 +3315,15 @@ body.modal-open {
     box-shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
 }
 
-:root[data-theme="dark"] .modal-card {
+:root[data-theme="dark"] .modal-card,
+:root[data-theme="vader"] .modal-card {
     background: rgba(22, 36, 58, 0.98);
     border-color: rgba(95, 132, 190, 0.28);
+}
+
+:root[data-theme="vader"] .modal-card {
+    background: rgba(8, 13, 22, 0.97);
+    border-color: rgba(95, 116, 148, 0.24);
 }
 
 .node-modal-card .node-form {
@@ -2670,12 +3334,18 @@ body.modal-open {
     justify-content: flex-end;
 }
 
-:root[data-theme="dark"] .route-table-wrap {
+:root[data-theme="dark"] .route-table-wrap,
+:root[data-theme="vader"] .route-table-wrap {
     background: rgba(34, 50, 76, 0.58);
     border-color: rgba(99, 128, 177, 0.22);
     box-shadow:
         inset 0 1px 0 rgba(255, 255, 255, 0.04),
         inset 0 0 0 1px rgba(120, 160, 225, 0.03);
+}
+
+:root[data-theme="vader"] .route-table-wrap {
+    background: rgba(12, 18, 28, 0.74);
+    border-color: rgba(99, 128, 177, 0.16);
 }
 
 .data-table {
@@ -3138,6 +3808,40 @@ body.modal-open {
 .operational-map-link {
     pointer-events: auto;
     cursor: pointer;
+}
+
+:root[data-theme="vader"] .dashboard-pin-button,
+:root[data-theme="vader"] .dashboard-table-pin,
+:root[data-theme="vader"] .dashboard-service-pill,
+:root[data-theme="vader"] .dashboard-service-pill:visited,
+:root[data-theme="vader"] .dashboard-service-pill:hover,
+:root[data-theme="vader"] .dashboard-service-pill:focus-visible {
+    background: linear-gradient(180deg, rgba(20, 27, 39, 0.62) 0%, rgba(11, 16, 24, 0.5) 100%);
+    border-color: rgba(102, 118, 147, 0.22);
+    color: #d8e3f7;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme="vader"] .dashboard-service-glyph {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+:root[data-theme="vader"] .metric-chip,
+:root[data-theme="vader"] .node-status {
+    background: rgba(255, 255, 255, 0.075);
+    border-color: rgba(255, 255, 255, 0.11);
+}
+
+:root[data-theme="vader"] .service-link.ok {
+    color: #7ef0b0;
+    background: rgba(18, 87, 54, 0.28);
+    border-color: rgba(74, 222, 128, 0.18);
+}
+
+:root[data-theme="vader"] .service-link.down {
+    color: #ffaea6;
+    background: rgba(120, 28, 28, 0.22);
+    border-color: rgba(248, 113, 113, 0.18);
 }
 
 .operational-map-link-line {

@@ -31,8 +31,9 @@ class TopologyEditorStateServiceTest(unittest.TestCase):
         self.assertEqual(payload["layout_overrides"], {})
         self.assertIsNone(payload["state_log_layout"])
         self.assertEqual(payload["link_anchor_assignments"], {})
+        self.assertEqual(payload["demo_mode"], "off")
 
-    def test_upsert_round_trips_layout_log_and_link_assignments(self) -> None:
+    def test_upsert_round_trips_layout_log_link_assignments_and_demo_mode(self) -> None:
         saved = upsert_topology_editor_state(
             TopologyEditorStateUpdate(
                 layout_overrides={
@@ -44,6 +45,7 @@ class TopologyEditorStateServiceTest(unittest.TestCase):
                     "mesh-lvl0-cloud-lvl0-hsmc": {"source": "e", "target": "w"},
                     "agg-cloud-lvl1-cloud-div-hq": {"source": "s", "target": "n"},
                 },
+                demo_mode="mix",
             ),
             self.session,
         )
@@ -57,6 +59,7 @@ class TopologyEditorStateServiceTest(unittest.TestCase):
             fetched["link_anchor_assignments"]["mesh-lvl0-cloud-lvl0-hsmc"]["target"],
             "w",
         )
+        self.assertEqual(fetched["demo_mode"], "mix")
         self.assertIsNotNone(fetched["updated_at"])
 
 

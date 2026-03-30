@@ -203,6 +203,7 @@ class TopologyEditorStateUpdate(BaseModel):
     layout_overrides: dict[str, dict[str, object]] = Field(default_factory=dict)
     state_log_layout: dict[str, object] | None = None
     link_anchor_assignments: dict[str, dict[str, str | None]] = Field(default_factory=dict)
+    demo_mode: Literal["off", "all-up", "all-down", "mix"] = "off"
 
 
 class TopologyEditorStatePayload(TopologyEditorStateUpdate):

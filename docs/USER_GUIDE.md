@@ -109,6 +109,11 @@ Current behavior:
 - Supports filtering by location and unit
 - Provides a detail drawer for selected nodes, links, and clusters
 - Includes a discovery relationship panel for attribution signals
+- Includes a moveable, resizable `Services` cloud object whose status is driven by the services pinned to the main dashboard watchlist:
+  - green when all pinned services are healthy
+  - yellow when the pinned set is mixed or degraded
+  - red with a pulse when all pinned services are down, unknown, or disabled
+- Includes a demo-mode selector in edit mode for previewing all-up, all-down, or mixed topology states, and remembers that choice in the saved topology editor state
 
 This page should be treated as the legacy or transitional topology surface while authored operational maps are built out.
 

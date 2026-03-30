@@ -108,6 +108,7 @@ class TopologyEditorState(Base):
     layout_overrides_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     state_log_layout_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     link_anchor_assignments_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    demo_mode_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
