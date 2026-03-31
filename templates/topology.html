@@ -4,14 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ page_title }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260329-services-cloud17">
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260330-topology-author15">
 </head>
 <body>
     <header class="topbar">
         <div class="brand">SMP</div>
         <nav class="nav">
             <a href="/">Dashboard</a>
-            <a href="/nodes/dashboard">Node Dashboard</a>
             <a href="/services/dashboard">Services Dashboard</a>
             <a href="/topology">Topology</a>
             <a href="#health">Health</a>
@@ -20,39 +19,37 @@
     </header>
 
     <main class="container topology-page" id="topology-root">
-        <section class="card topology-filter-bar" id="topology-filter-bar">
-            <div class="topology-filter-bar-header">
-                <div>
-                    <span class="dashboard-meta-label">Controls</span>
-                </div>
-            </div>
-            <div class="topology-filter-bar-body" id="topology-filter-bar-body">
-                <div class="topology-filter-group">
-                    <span class="dashboard-meta-label">Locations</span>
-                    <div class="topology-chip-row" id="topology-location-filters"></div>
-                </div>
-                <div class="topology-filter-group">
-                    <span class="dashboard-meta-label">Units</span>
-                    <div class="topology-chip-row" id="topology-unit-filters"></div>
-                </div>
-                <div class="topology-filter-group topology-filter-group-view">
-                    <span class="dashboard-meta-label">View</span>
-                    <div class="topology-chip-row" id="topology-view-filters"></div>
-                </div>
-            </div>
-        </section>
-
         <section class="topology-layout">
             <section class="card topology-stage-card">
                 <div class="topology-stage-header">
                     <div>
                         <h2>Division C2 Information Network</h2>
                         <p class="section-copy">Mock structured layout with real inventory metadata overlaid where available.</p>
+                        <p class="topology-last-updated" id="topology-last-updated" hidden>Updated <span id="topology-last-updated-age"></span></p>
                         <p class="topology-edit-hint" id="topology-edit-hint" hidden>
                             Edit mode: drag empty space to marquee-select, or hold Shift and click bubbles to build a selection. Drag any selected bubble to move the group. Use arrow keys to nudge the selection, or Shift plus arrows for larger moves.
                         </p>
                     </div>
                     <div class="topology-stage-actions">
+                        <div class="topology-refresh-control">
+                            <button type="button" class="button-primary" id="dashboard-refresh-button" aria-expanded="false">
+                                1 min
+                            </button>
+                            <div class="dashboard-refresh-menu" id="dashboard-refresh-menu" hidden>
+                                <button type="button" class="dashboard-refresh-option" data-seconds="10">10 sec</button>
+                                <button type="button" class="dashboard-refresh-option" data-seconds="30">30 sec</button>
+                                <button type="button" class="dashboard-refresh-option" data-seconds="60">1 min</button>
+                                <button type="button" class="dashboard-refresh-option" data-seconds="300">5 min</button>
+                                <button type="button" class="dashboard-refresh-option" data-seconds="1800">30 min</button>
+                                <button type="button" class="dashboard-refresh-option" data-seconds="3600">1 hr</button>
+                            </div>
+                        </div>
+                        <button type="button" class="button-secondary" id="open-topology-inventory-button">
+                            Inventory
+                        </button>
+                        <button type="button" class="button-secondary topology-layout-toggle" id="topology-layout-edit-toggle" aria-pressed="false">
+                            Edit Map
+                        </button>
                         <span class="topology-selection-status" id="topology-selection-status" hidden>0 selected</span>
                         <button type="button" class="button-secondary topology-selection-clear" id="topology-selection-clear" hidden>
                             Clear Selection
@@ -73,24 +70,15 @@
                                 <button type="button" class="topology-demo-option" data-topology-demo-mode="mix">Mix</button>
                             </div>
                         </div>
-                        <button type="button" class="button-secondary topology-layout-toggle" id="topology-layout-edit-toggle" aria-pressed="false">
-                            Edit Layout
-                        </button>
                         <button type="button" class="button-secondary topology-layout-reset" id="topology-layout-reset" hidden>
                             Reset Layout
                         </button>
                         <button type="button" class="button-secondary topology-fullscreen-toggle" id="topology-fullscreen-toggle" aria-pressed="false">
                             Full Screen
                         </button>
-                        <button type="button" class="button-secondary topology-filter-toggle" id="topology-filter-toggle" aria-expanded="true">
-                            Hide Controls
-                        </button>
                     </div>
                 </div>
                 <div class="topology-stage" id="topology-stage">
-                    <div class="topology-stage-grid-label topology-label-lvl0">C2IN Aggregate</div>
-                    <div class="topology-stage-grid-label topology-label-lvl1">C2IN VME</div>
-                    <div class="topology-stage-grid-label topology-label-lvl2">C2IN Edge</div>
                     <svg class="topology-links" id="topology-links" aria-hidden="true"></svg>
                     <div class="topology-selection-box" id="topology-selection-box" hidden></div>
                     <div class="topology-layer topology-layer-nodes" id="topology-node-layer"></div>
@@ -116,21 +104,137 @@
                             <p class="table-message">Loading network state events...</p>
                         </div>
                     </section>
-                    <aside class="card topology-drawer" id="topology-drawer" hidden>
-                        <div class="section-heading">
-                            <h2>Details</h2>
-                            <p class="section-copy">Selected node, link, or cluster details for Phase 1.</p>
-                        </div>
-                        <div class="topology-drawer-content" id="topology-details-drawer">
-                            <p class="table-message">Select a node, link, or cluster to inspect it.</p>
-                        </div>
-                    </aside>
                 </div>
             </section>
         </section>
     </main>
 
-    <script src="{{ url_for('static', path='js/app.js') }}?v=20260329-services-cloud17"></script>
+    <div class="modal-shell" id="node-modal-shell" hidden>
+        <div class="modal-backdrop" data-modal-close="node-modal"></div>
+        <section class="modal-card node-modal-card" role="dialog" aria-modal="true" aria-labelledby="node-form-title">
+            <div class="section-heading">
+                <h2 id="node-form-title">Add Node</h2>
+                <p class="section-copy">Create a new authored topology node and inventory record from this map.</p>
+            </div>
+            <form id="node-form" class="node-form">
+                <input type="hidden" id="node-id" name="node-id">
+
+                <label>
+                    <span>Name</span>
+                    <input type="text" id="node-name" name="name" required>
+                </label>
+
+                <label>
+                    <span>Host / IP</span>
+                    <input type="text" id="node-host" name="host" placeholder="10.0.0.1 or seeker.example.local" required>
+                </label>
+
+                <label>
+                    <span>Web Port</span>
+                    <input type="number" id="node-web-port" name="web_port" min="1" max="65535" value="443" required>
+                </label>
+
+                <label>
+                    <span>SSH Port</span>
+                    <input type="number" id="node-ssh-port" name="ssh_port" min="1" max="65535" value="22" required>
+                </label>
+
+                <label>
+                    <span>Location</span>
+                    <input type="text" id="node-location" name="location" required>
+                </label>
+
+                <label class="checkbox-field">
+                    <input type="checkbox" id="node-include-in-topology" name="include_in_topology">
+                    <span>Include in Topology</span>
+                </label>
+
+                <label class="full-width">
+                    <span>Notes</span>
+                    <textarea id="node-notes" name="notes" rows="3" placeholder="Optional notes"></textarea>
+                </label>
+
+                <label>
+                    <span>API Username</span>
+                    <input type="text" id="node-api-username" name="api_username">
+                </label>
+
+                <label>
+                    <span>API Password</span>
+                    <input type="password" id="node-api-password" name="api_password">
+                </label>
+
+                <label class="checkbox-field">
+                    <input type="checkbox" id="node-api-use-https" name="api_use_https">
+                    <span>API Uses HTTPS</span>
+                </label>
+
+                <div class="form-actions full-width node-modal-actions">
+                    <button type="button" class="button-secondary" id="node-save-add-another-button">Save &amp; Add Another</button>
+                    <button type="button" class="button-secondary" id="node-delete-button" hidden>Delete</button>
+                    <button type="submit" class="button-primary" id="node-submit-button">Save</button>
+                    <button type="button" class="button-secondary" id="node-cancel-button">Cancel</button>
+                </div>
+            </form>
+            <p id="node-form-error" class="status-error" hidden>Unable to save node</p>
+        </section>
+    </div>
+
+    <div class="modal-shell" id="topology-inventory-shell" hidden>
+        <div class="modal-backdrop" data-modal-close="topology-inventory"></div>
+        <section class="modal-card topology-inventory-card" role="dialog" aria-modal="true" aria-labelledby="topology-inventory-title">
+            <div class="inventory-header">
+                <div>
+                    <h2 id="topology-inventory-title">Node Inventory</h2>
+                    <p class="section-copy">Shared node inventory available from the topology workspace.</p>
+                </div>
+                <div class="dashboard-toolbar-actions">
+                    <button type="button" class="button-primary" id="open-node-modal-button">Add Node</button>
+                    <button type="button" class="button-secondary" id="close-topology-inventory-button">Close</button>
+                </div>
+            </div>
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Node ID</th>
+                            <th>Version</th>
+                            <th>Host</th>
+                            <th>Location</th>
+                            <th>Services</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="nodes-table-body">
+                        <tr>
+                            <td colspan="8" class="table-message">Loading nodes...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <p id="nodes-error" class="status-error" hidden>Unable to load node inventory</p>
+            <p id="nodes-feedback" class="status-feedback" hidden></p>
+        </section>
+    </div>
+
+    <div class="modal-shell" id="topology-detail-shell" hidden>
+        <div class="modal-backdrop" data-modal-close="topology-detail"></div>
+        <section class="modal-card topology-detail-card" role="dialog" aria-modal="true" aria-labelledby="topology-detail-title">
+            <div class="inventory-header topology-detail-header">
+                <div>
+                    <h2 id="topology-detail-title">Node Detail</h2>
+                </div>
+                <div class="dashboard-toolbar-actions">
+                    <button type="button" class="button-secondary" id="close-topology-detail-button">Close</button>
+                </div>
+            </div>
+            <iframe id="topology-detail-frame" class="topology-detail-frame" title="Node detail" loading="lazy"></iframe>
+        </section>
+    </div>
+
+    <script src="{{ url_for('static', path='js/app.js') }}?v=20260330-topology-author15"></script>
 </body>
 </html>
 

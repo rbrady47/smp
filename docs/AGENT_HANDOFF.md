@@ -8,6 +8,66 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-03-30 10:15 ET - RTT/status presentation pass
+- Scope: Unified the main dashboard RTT chip with the Node Dashboard RTT helper so the card uses the same `rtt_state`-aware status coloring, and tightened the fallback latency threshold for rows missing an explicit RTT state.
+- Branch/worktree: `C:\Users\rick4\.codex\worktrees\601a\smp`
+- Latest validated commit: working tree only, not yet committed
+- Files touched:
+  [static/js/app.js](C:\Users\rick4\.codex\worktrees\601a\smp\static\js\app.js)
+  [docs/AGENT_HANDOFF.md](C:\Users\rick4\.codex\worktrees\601a\smp\docs/AGENT_HANDOFF.md)
+- Verification run:
+  - Inspection only, no tests run yet
+- Assumptions:
+  - The main dashboard RTT chip should follow the same state model as the Node Dashboard row chips.
+  - Rows with explicit `rtt_state` should always win over raw ping status.
+- Open risks / blockers:
+  - The working tree still contains unrelated topology and Node Dashboard edits from other slices.
+- Next recommended step:
+  - If the visual treatment still feels inconsistent, consolidate the RTT state helper into a single shared renderer utility.
+
+## 2026-03-30 09:55 ET - Topology refresh-sync
+- Scope: Aligned `/api/topology` health sourcing with the Node Dashboard summary model and added a passive topology refresh timer that re-pulls topology, discovery, node-dashboard, and cloud-service payloads on the shared refresh cadence.
+- Branch/worktree: `C:\Users\rick4\.codex\worktrees\601a\smp`
+- Latest validated commit: working tree only, not yet committed
+- Files touched:
+  [app/main.py](C:\Users\rick4\.codex\worktrees\601a\smp\app\main.py)
+  [static/js/app.js](C:\Users\rick4\.codex\worktrees\601a\smp\static\js\app.js)
+  [docs/AGENT_HANDOFF.md](C:\Users\rick4\.codex\worktrees\601a\smp\docs\AGENT_HANDOFF.md)
+- Verification run:
+  - `.\\.venv\\Scripts\\python.exe -m compileall app tests alembic`
+- Assumptions:
+  - Topology should reuse the same dashboard window/health cadence rather than independently computing freshness.
+  - Passive refresh is preferable to a full topology reload so authored layout/editor state stays intact.
+- Open risks / blockers:
+  - The refresh loop rerenders the topology stage, so an actively edited drawer or drag interaction may still be interrupted by a refresh tick.
+  - The worktree still has unrelated topology edits from earlier slices; do not revert them while continuing this task.
+- Next recommended step:
+  - If needed, make the topology refresh pause while a drawer text input or drag interaction is active.
+
+## 2026-03-30 09:20 ET - Node Dashboard inspection
+- Scope: Inspected the current Node Dashboard backend, projection, and frontend render path to map the ownership boundary for the dashboard slice.
+- Branch/worktree: `C:\Users\rick4\.codex\worktrees\601a\smp`
+- Latest validated commit: working tree only, not yet committed
+- Files touched:
+  [app/main.py](C:\Users\rick4\.codex\worktrees\601a\smp\app\main.py)
+  [app/node_dashboard_backend.py](C:\Users\rick4\.codex\worktrees\601a\smp\app\node_dashboard_backend.py)
+  [app/node_discovery_service.py](C:\Users\rick4\.codex\worktrees\601a\smp\app\node_discovery_service.py)
+  [app/node_projection_service.py](C:\Users\rick4\.codex\worktrees\601a\smp\app\node_projection_service.py)
+  [app/node_watchlist_projection_service.py](C:\Users\rick4\.codex\worktrees\601a\smp\app\node_watchlist_projection_service.py)
+  [static/js/app.js](C:\Users\rick4\.codex\worktrees\601a\smp\static\js\app.js)
+  [templates/dashboard.html](C:\Users\rick4\.codex\worktrees\601a\smp\templates\dashboard.html)
+  [app/schemas.py](C:\Users\rick4\.codex\worktrees\601a\smp\app\schemas.py)
+- Verification run:
+  - Inspection only, no tests run yet
+- Assumptions:
+  - Node Dashboard remains the root operational list view for anchors and discovered nodes.
+  - The cache/stream pair in `/api/node-dashboard` is the primary delivery path for the page.
+- Open risks / blockers:
+  - The working tree currently has unrelated topology edits in `static/js/app.js`, `static/css/style.css`, and `templates/topology.html`; do not revert them while working the dashboard slice.
+  - RTT presentation on the dashboard is split between JS classification and theme-specific CSS overrides in `static/css/style.css`.
+- Next recommended step:
+  - Triage any dashboard-specific bugs in the cache/projection path before touching shared styling or topology code.
+
 ## 2026-03-29 20:13 ET - Topology demo-mode persistence
 - Scope: Persisted the `/topology` demo-mode selector through the topology editor-state contract so preview mode survives reloads and can be replayed from saved state.
 - Branch/worktree: `C:\Users\rick4\.codex\worktrees\601a\smp`
@@ -163,3 +223,28 @@ This file is the shared handoff log for agents working on SMP.
 - New references:
   - [CURRENTP_TO_SNMPc_MAP_REFERENCE.md](C:\Users\rick4\.codex\worktrees\601a\smp\CURRENTP_TO_SNMPc_MAP_REFERENCE.md)
   - [TOPOLOGY_EVOLUTION_PLAN.md](C:\Users\rick4\.codex\worktrees\601a\smp\TOPOLOGY_EVOLUTION_PLAN.md)
+
+## 2026-03-30 11:05 ET - Topology / Node Dashboard refresh-source alignment
+- Scope:
+  - aligned `/api/topology` and `/api/topology/discovery` to the same cached Node Dashboard payload and selected `window_seconds` used by the Node Dashboard UI
+  - collapsed topology onto the shared dashboard refresh cadence so map and Services cloud update passively without a hard refresh
+  - broadened topology status normalization so dashboard-style values (`healthy`, `degraded`, `offline`, `failed`, `unknown`) map cleanly into topology health
+- Branch/worktree:
+  - `C:\Users\rick4\.codex\worktrees\601a\smp`
+- Latest validated commit:
+  - `a053fd6` plus local uncommitted sandbox changes
+- Files touched:
+  - [app/main.py](C:\Users\rick4\.codex\worktrees\601a\smp\app\main.py)
+  - [app/topology.py](C:\Users\rick4\.codex\worktrees\601a\smp\app\topology.py)
+  - [static/js/app.js](C:\Users\rick4\.codex\worktrees\601a\smp\static\js\app.js)
+  - [templates/topology.html](C:\Users\rick4\.codex\worktrees\601a\smp\templates\topology.html)
+- Verification run:
+  - `.\.venv\Scripts\python.exe -m compileall app tests alembic`
+- Assumptions:
+  - topology health should follow the same Node Dashboard cache rows the operator sees, not independently recompute anchor status
+  - the selected dashboard refresh window should be shared by topology API requests so status interpretation stays aligned
+- Open risks / blockers:
+  - existing unrelated local edits remain in the worktree
+  - no live browser/runtime verification was run in this slice, so confirmation still depends on the app instance the user is viewing
+- Next recommended step:
+  - verify on the running `/topology` and `/nodes/dashboard` views that an anchor state transition appears on both surfaces within the same passive refresh window, then tune around edit-mode refresh interruptions if needed

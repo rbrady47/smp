@@ -4,14 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ page_title }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260329-overlay3">
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260330-rttsync1">
 </head>
 <body>
     <header class="topbar">
         <div class="brand">SMP</div>
         <nav class="nav">
             <a href="/">Dashboard</a>
-            <a href="/nodes/dashboard">Node Dashboard</a>
             <a href="/services/dashboard">Services Dashboard</a>
             <a href="/topology">Topology</a>
             <a href="#health">Health</a>
@@ -27,7 +26,7 @@
                 <p class="subtitle">Pin the nodes and services you care about from the dedicated dashboards and build a focused wallboard for the big screen.</p>
             </div>
             <div class="dashboard-toolbar-actions">
-                <a href="/nodes/dashboard" class="button-secondary">Open Node Dashboard</a>
+                <a href="/topology" class="button-secondary">Open Topology</a>
                 <a href="/services/dashboard" class="button-secondary">Open Services Dashboard</a>
             </div>
         </section>
@@ -36,12 +35,13 @@
             <div>
                 <span class="dashboard-meta-label">Auto Refresh</span>
                 <div class="dashboard-refresh-control">
-                    <button type="button" class="button-secondary dashboard-refresh-button" id="dashboard-refresh-button">10 seconds</button>
+                    <button type="button" class="button-secondary dashboard-refresh-button" id="dashboard-refresh-button">1 min</button>
                     <div class="dashboard-refresh-menu" id="dashboard-refresh-menu" hidden>
-                        <button type="button" data-seconds="0">Off</button>
                         <button type="button" data-seconds="10">10 sec</button>
                         <button type="button" data-seconds="30">30 sec</button>
-                        <button type="button" data-seconds="60">60 sec</button>
+                        <button type="button" data-seconds="60">1 min</button>
+                        <button type="button" data-seconds="300">5 min</button>
+                        <button type="button" data-seconds="1800">30 min</button>
                     </div>
                 </div>
             </div>
@@ -129,6 +129,6 @@
         </section>
     </main>
 
-    <script src="{{ url_for('static', path='js/app.js') }}?v=20260329-overlay3"></script>
+    <script src="{{ url_for('static', path='js/app.js') }}?v=20260330-rttsync1"></script>
 </body>
 </html>

@@ -38,6 +38,9 @@ let currentServices = [];
 let currentNodeDashboardPayload = { anchors: [], discovered: [] };
 let keepNodeModalOpenAfterSave = false;
 let dashboardRefreshTimer = null;
+let topologyPingTimer = null;
+let topologyLastUpdatedAt = null;
+let topologyLastUpdatedTimer = null;
 let nodeDashboardEventSource = null;
 const dashboardOrderStorageKey = "smp-dashboard-order";
 const anchorListOrderStorageKey = "smp-anchor-list-order";
@@ -46,7 +49,6 @@ const themeModeStorageKey = "smp-theme-mode";
 const themeOverlayStorageKey = "smp-theme-overlay";
 const pinnedNodesStorageKey = "smp-main-dashboard-node-ids";
 const pinnedServicesStorageKey = "smp-main-dashboard-service-ids";
-const topologyControlsCollapsedStorageKey = "smp-topology-controls-collapsed";
 const topologyEditModeStorageKey = "smp-topology-edit-mode";
 const topologyLayoutStorageKey = "smp-topology-layout-overrides";
 const topologyStateLogLayoutStorageKey = "smp-topology-state-log-layout";
@@ -68,6 +70,7 @@ let topologyResizeListenerBound = false;
 let topologyRouteListenerBound = false;
 let topologyEditorStateLoaded = false;
 let topologyEditorStateSaveTimer = null;
+let topologyRefreshTimer = null;
 const topologyState = {
     activeLocations: new Set(TOPOLOGY_LOCATIONS),
     activeUnits: new Set(TOPOLOGY_UNITS),
@@ -88,6 +91,9 @@ const topologyState = {
     stateLogLayout: null,
     linkAnchorAssignments: {},
     activeLinkHandleTarget: null,
+    drawerLayout: null,
+    drawerDragging: null,
+    pinnedTooltipId: null,
 };
 
 const statusPriority = {
@@ -998,6 +1004,9 @@ function applyTopologyStateLogLayout() {
 function setTopologyEditMode(editMode) {
     topologyState.editMode = Boolean(editMode);
     saveTopologyEditMode(topologyState.editMode);
+    if (topologyState.editMode) {
+        topologyState.pinnedTooltipId = null;
+    }
     if (!topologyState.editMode) {
         clearTopologyEntitySelection();
         syncTopologySelectionBox(null);
@@ -1010,12 +1019,11 @@ function setTopologyEditMode(editMode) {
     const layer = document.getElementById("topology-node-layer");
     const button = document.getElementById("topology-layout-edit-toggle");
     const resetButton = document.getElementById("topology-layout-reset");
-
     if (stage) {
         stage.classList.toggle("is-editing", topologyState.editMode);
     }
     if (button) {
-        button.textContent = topologyState.editMode ? "Lock Layout" : "Edit Layout";
+        button.textContent = topologyState.editMode ? "Lock Map" : "Edit Map";
         button.setAttribute("aria-pressed", topologyState.editMode ? "true" : "false");
     }
     if (resetButton) {
@@ -1065,10 +1073,108 @@ function getTopologyEntityLayout(entity) {
     };
 }
 
+function formatTopologyMetricValue(value, suffix = "") {
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return `${Math.round(value)}${suffix}`;
+    }
+    const normalized = String(value ?? "").trim();
+    return normalized || "--";
+}
+
+function getTopologyAnchorStatusReason(entity) {
+    const rttState = String(entity?.rtt_state || "").trim().toLowerCase();
+    const rttText = typeof entity.latency_ms === "number" && Number.isFinite(entity.latency_ms)
+        ? `${Math.round(entity.latency_ms)} ms`
+        : null;
+
+    if (rttState === "good") {
+        return rttText
+            ? `Green: RTT is healthy on Node Dashboard (${rttText}).`
+            : "Green: RTT is healthy on Node Dashboard.";
+    }
+
+    if (rttState === "warn") {
+        return rttText
+            ? `Yellow: RTT is degraded on Node Dashboard (${rttText}).`
+            : "Yellow: RTT is degraded on Node Dashboard.";
+    }
+
+    if (rttState === "down") {
+        return "Red: RTT is down on Node Dashboard.";
+    }
+
+    return "Neutral: Node Dashboard RTT state is not available yet.";
+}
+
+function getTopologyAnchorTooltipMarkup(entity) {
+    if (!entity || entity.level === 2 || entity.kind === "services-cloud" || !entity.inventory_node_id) {
+        return "";
+    }
+
+    const nodeId = entity.site_id || entity.inventory_node_id || "--";
+    const rttText = typeof entity.latency_ms === "number" && Number.isFinite(entity.latency_ms)
+        ? `${Math.round(entity.latency_ms)} ms`
+        : "--";
+    const wanTxText = formatRate(entity.wan_tx_bps || 0);
+    const wanRxText = formatRate(entity.wan_rx_bps || 0);
+    const lanTxText = formatRate(entity.lan_tx_bps || 0);
+    const lanRxText = formatRate(entity.lan_rx_bps || 0);
+    const wanTxTotal = String(entity.wan_tx_total || "--").trim() || "--";
+    const wanRxTotal = String(entity.wan_rx_total || "--").trim() || "--";
+    const lanTxTotal = String(entity.lan_tx_total || "--").trim() || "--";
+    const lanRxTotal = String(entity.lan_rx_total || "--").trim() || "--";
+    const cpuText = typeof entity.cpu_avg === "number" && Number.isFinite(entity.cpu_avg)
+        ? `${Math.round(entity.cpu_avg)}%`
+        : "--";
+    const versionText = String(entity.version || "--").trim() || "--";
+    const statusReason = getTopologyAnchorStatusReason(entity);
+
+    return `
+        <span class="topology-node-tooltip" role="tooltip">
+            <strong class="topology-node-tooltip-title">${escapeHtml(entity.inventory_name || entity.name || "Node")}</strong>
+            <span class="topology-node-tooltip-reason">${escapeHtml(statusReason)}</span>
+            <span class="topology-node-tooltip-grid">
+                <span class="topology-node-tooltip-label">Node ID</span>
+                <span class="topology-node-tooltip-value">${escapeHtml(String(nodeId))}</span>
+                <span class="topology-node-tooltip-label">RTT</span>
+                <span class="topology-node-tooltip-value">${escapeHtml(rttText)}</span>
+                <span class="topology-node-tooltip-label">WAN TX / RX</span>
+                <span class="topology-node-tooltip-value">${escapeHtml(`${wanTxText} / ${wanRxText}`)}</span>
+                <span class="topology-node-tooltip-label">LAN TX / RX</span>
+                <span class="topology-node-tooltip-value">${escapeHtml(`${lanTxText} / ${lanRxText}`)}</span>
+                <span class="topology-node-tooltip-label">WAN Total</span>
+                <span class="topology-node-tooltip-value">${escapeHtml(`↑${wanTxTotal} / ↓${wanRxTotal}`)}</span>
+                <span class="topology-node-tooltip-label">LAN Total</span>
+                <span class="topology-node-tooltip-value">${escapeHtml(`↑${lanTxTotal} / ↓${lanRxTotal}`)}</span>
+                <span class="topology-node-tooltip-label">CPU</span>
+                <span class="topology-node-tooltip-value">${escapeHtml(cpuText)}</span>
+                <span class="topology-node-tooltip-label">Version</span>
+                <span class="topology-node-tooltip-value">${escapeHtml(versionText)}</span>
+            </span>
+        </span>
+    `;
+}
+
+function getTopologyEntityLabel(entity) {
+    const override = topologyState.layoutOverrides?.[entity.id];
+    const overrideLabel = typeof override?.label === "string" ? override.label.trim() : "";
+    if (overrideLabel) {
+        return overrideLabel;
+    }
+    if (entity.kind === "services-cloud") {
+        return "Services";
+    }
+    if (entity.level === 2) {
+        return entity.unit || "Edge Nodes";
+    }
+    return entity.name || entity.unit || entity.id;
+}
+
 function setTopologyEntityLayout(entityId, nextLayout, options = {}) {
     topologyState.layoutOverrides = {
         ...(topologyState.layoutOverrides || {}),
         [entityId]: {
+            ...(topologyState.layoutOverrides?.[entityId] || {}),
             x: Math.round(nextLayout.x),
             y: Math.round(nextLayout.y),
             size: Math.round(nextLayout.size),
@@ -1091,6 +1197,44 @@ function removeTopologyEntityLayout(entityId) {
     saveTopologyLayoutOverrides();
 }
 
+function setTopologyEntityLabel(entityId, nextLabel) {
+    const existing = topologyState.layoutOverrides?.[entityId] || {};
+    const normalized = String(nextLabel || "").trim();
+    topologyState.layoutOverrides = {
+        ...(topologyState.layoutOverrides || {}),
+        [entityId]: {
+            ...existing,
+            ...(Number.isFinite(existing.x) ? { x: existing.x } : {}),
+            ...(Number.isFinite(existing.y) ? { y: existing.y } : {}),
+            ...(Number.isFinite(existing.size) ? { size: existing.size } : {}),
+            ...(normalized ? { label: normalized } : {}),
+        },
+    };
+    if (!normalized) {
+        delete topologyState.layoutOverrides[entityId].label;
+        if (Object.keys(topologyState.layoutOverrides[entityId]).length === 0) {
+            delete topologyState.layoutOverrides[entityId];
+        }
+    }
+    saveTopologyLayoutOverrides();
+}
+
+function clearTopologyEntityLabel(entityId) {
+    const existing = topologyState.layoutOverrides?.[entityId];
+    if (!existing || typeof existing !== "object" || !("label" in existing)) {
+        return;
+    }
+    const nextOverride = { ...existing };
+    delete nextOverride.label;
+    topologyState.layoutOverrides = { ...(topologyState.layoutOverrides || {}) };
+    if (Object.keys(nextOverride).length) {
+        topologyState.layoutOverrides[entityId] = nextOverride;
+    } else {
+        delete topologyState.layoutOverrides[entityId];
+    }
+    saveTopologyLayoutOverrides();
+}
+
 function applyTopologyEntityStyles(button, layout) {
     button.style.left = `${layout.x}px`;
     button.style.top = `${layout.y}px`;
@@ -1099,6 +1243,14 @@ function applyTopologyEntityStyles(button, layout) {
 
 function clearTopologyEntitySelection() {
     topologyState.selectedEntityIds = new Set();
+}
+
+function applyTopologyDrawerPosition() {
+    return;
+}
+
+function wireTopologyDrawerDrag() {
+    return;
 }
 
 function updateTopologyEditStatus() {
@@ -1348,11 +1500,19 @@ function getTopologyStageBounds() {
 }
 
 function wireTopologyLayoutEditor(stage, layer, entityMap) {
+    stage._topologyEditorLayer = layer;
+    stage._topologyEditorEntityMap = entityMap;
+
     if (stage.dataset.layoutEditorBound === "true") {
         return;
     }
 
     stage.dataset.layoutEditorBound = "true";
+
+    const getEditorContext = () => ({
+        layer: stage._topologyEditorLayer instanceof HTMLElement ? stage._topologyEditorLayer : layer,
+        entityMap: stage._topologyEditorEntityMap instanceof Map ? stage._topologyEditorEntityMap : entityMap,
+    });
 
     const clearDragListeners = () => {
         window.removeEventListener("pointermove", handlePointerMove);
@@ -1373,6 +1533,7 @@ function wireTopologyLayoutEditor(stage, layer, entityMap) {
             }
             topologyState.selectedEntityIds = new Set(
                 drag.visibleEntityIds.filter((entityId) => {
+                    const { entityMap } = getEditorContext();
                     const entity = entityMap.get(entityId);
                     if (!entity) {
                         return false;
@@ -1422,7 +1583,7 @@ function wireTopologyLayoutEditor(stage, layer, entityMap) {
             setTopologyEntityLayout(drag.entityId, nextLayout, { persist: false });
             applyTopologyEntityStyles(drag.element, nextLayout);
         }
-        drawTopologyLinks(entityMap);
+        drawTopologyLinks(getEditorContext().entityMap);
         event.preventDefault();
     };
 
@@ -1445,12 +1606,25 @@ function wireTopologyLayoutEditor(stage, layer, entityMap) {
         event.preventDefault();
     };
 
+    document.addEventListener("click", () => {
+        if (topologyState.editMode || !topologyState.pinnedTooltipId) {
+            return;
+        }
+        topologyState.pinnedTooltipId = null;
+        renderTopologyStage();
+    });
+
     stage.addEventListener("pointerdown", (event) => {
         if (!topologyState.editMode) {
             return;
         }
 
+        const { layer, entityMap } = getEditorContext();
+
         const target = event.target;
+        if (target instanceof Element && target.closest("#topology-state-log-preview, #topology-state-log-flyout")) {
+            return;
+        }
         const link = target instanceof Element ? target.closest("[data-topology-link-id]") : null;
         if (link) {
             return;
@@ -1517,6 +1691,8 @@ function wireTopologyLayoutEditor(stage, layer, entityMap) {
             }
             syncTopologyEntitySelectionStyles(layer);
         }
+        topologyState.selectedKind = "entity";
+        topologyState.selectedId = entityId;
 
         const dragEntities = !resizeHandle && topologyState.selectedEntityIds.size > 1
             ? Array.from(topologyState.selectedEntityIds)
@@ -2229,11 +2405,11 @@ function getDashboardRefreshSeconds() {
     const raw = window.localStorage.getItem(dashboardRefreshStorageKey);
     const seconds = Number(raw);
 
-    if ([0, 10, 30, 60].includes(seconds)) {
+    if ([10, 30, 60, 300, 1800, 3600].includes(seconds)) {
         return seconds;
     }
 
-    return 10;
+    return 60;
 }
 
 function setDashboardRefreshSeconds(seconds) {
@@ -2241,11 +2417,25 @@ function setDashboardRefreshSeconds(seconds) {
 }
 
 function formatRefreshLabel(seconds) {
-    if (seconds === 0) {
-        return "Refresh Off";
+    if (seconds === 10) {
+        return "10 sec";
     }
-
-    return `${seconds} seconds`;
+    if (seconds === 30) {
+        return "30 sec";
+    }
+    if (seconds === 60) {
+        return "1 min";
+    }
+    if (seconds === 300) {
+        return "5 min";
+    }
+    if (seconds === 1800) {
+        return "30 min";
+    }
+    if (seconds === 3600) {
+        return "1 hr";
+    }
+    return `${seconds} sec`;
 }
 
 function updateDashboardRefreshButton() {
@@ -2278,6 +2468,12 @@ function showDashboardFeedback(message) {
     lastUpdated.textContent = message;
 }
 
+function buildNodeDashboardRequestUrl(basePath) {
+    const url = new URL(basePath, window.location.origin);
+    url.searchParams.set("window_seconds", String(getDashboardRefreshSeconds()));
+    return `${url.pathname}${url.search}`;
+}
+
 function disconnectNodeDashboardStream() {
     if (nodeDashboardEventSource) {
         nodeDashboardEventSource.close();
@@ -2286,36 +2482,7 @@ function disconnectNodeDashboardStream() {
 }
 
 function connectNodeDashboardStream() {
-    const anchorList = document.getElementById("anchor-node-list");
-    const discoveredList = document.getElementById("discovered-node-list");
-    const dashboardError = document.getElementById("dashboard-error");
-
-    if (!anchorList || !discoveredList || !dashboardError || !window.EventSource || nodeDashboardEventSource) {
-        return;
-    }
-
-    nodeDashboardEventSource = new EventSource("/api/node-dashboard/stream");
-
-    nodeDashboardEventSource.addEventListener("snapshot", (event) => {
-        try {
-            const payload = JSON.parse(event.data || "{}");
-            currentNodeDashboardPayload = {
-                anchors: Array.isArray(payload.anchors) ? payload.anchors : [],
-                discovered: Array.isArray(payload.discovered) ? payload.discovered : [],
-            };
-            renderNodeDashboardLists(currentNodeDashboardPayload);
-            dashboardError.hidden = true;
-        } catch (error) {
-            console.error("Unable to parse node dashboard stream payload", error);
-        }
-    });
-
-    nodeDashboardEventSource.onerror = () => {
-        disconnectNodeDashboardStream();
-        window.setTimeout(() => {
-            connectNodeDashboardStream();
-        }, 3000);
-    };
+    disconnectNodeDashboardStream();
 }
 
 function applyDashboardRefreshInterval() {
@@ -2327,6 +2494,13 @@ function applyDashboardRefreshInterval() {
     const seconds = getDashboardRefreshSeconds();
     updateDashboardRefreshButton();
     setDashboardRefreshMenuOpen(false);
+
+    if (seconds > 0 && document.getElementById("anchor-node-list") && document.getElementById("discovered-node-list")) {
+        dashboardRefreshTimer = window.setInterval(() => {
+            loadNodeDashboard();
+        }, seconds * 1000);
+        return;
+    }
 
     if (seconds > 0 && document.getElementById("nodeGrid")) {
         dashboardRefreshTimer = window.setInterval(() => {
@@ -2348,16 +2522,35 @@ function applyDashboardRefreshInterval() {
         dashboardRefreshTimer = window.setInterval(() => {
             loadServicesDashboard();
         }, seconds * 1000);
+        return;
+    }
+
+    if (seconds > 0 && document.getElementById("topology-root")) {
+        dashboardRefreshTimer = window.setInterval(() => {
+            refreshTopologyPage();
+        }, seconds * 1000);
+        return;
+    }
+
+    if (seconds > 0 && document.getElementById("node-detail-root")) {
+        dashboardRefreshTimer = window.setInterval(() => {
+            loadNodeDetailPage();
+        }, seconds * 1000);
     }
 }
 
+function applyTopologyRefreshInterval() {
+    if (topologyRefreshTimer) {
+        window.clearInterval(topologyRefreshTimer);
+        topologyRefreshTimer = null;
+    }
+    startTopologyTimers();
+}
+
 function statusCell(node) {
-    const latencyText = typeof node.latency_ms === "number" ? `${node.latency_ms} ms` : "No latency";
     return `
         <div class="status-stack">
             <span class="status-badge ${node.status}">${node.status}</span>
-            <span class="status-meta">${latencyText}</span>
-            <span class="status-meta">${formatLastChecked(node.last_checked)}</span>
         </div>
     `;
 }
@@ -2555,6 +2748,7 @@ function resetNodeForm() {
     const cancelButton = document.getElementById("node-cancel-button");
     const formError = document.getElementById("node-form-error");
     const saveAddAnotherButton = document.getElementById("node-save-add-another-button");
+    const deleteButton = document.getElementById("node-delete-button");
 
     if (!form) {
         return;
@@ -2563,18 +2757,46 @@ function resetNodeForm() {
     form.reset();
     currentEditNodeId = null;
     document.getElementById("node-id").value = "";
-    document.getElementById("node-node-id").value = "";
     document.getElementById("node-web-port").value = "443";
     document.getElementById("node-ssh-port").value = "22";
-    document.getElementById("node-include-in-topology").checked = false;
-    document.getElementById("node-topology-level").value = "0";
-    document.getElementById("node-topology-unit").value = "AGG";
-    document.getElementById("node-enabled").checked = true;
+    const topologyRoot = document.getElementById("topology-root");
+    const defaultLevel = topologyRoot && topologyState.focusUnit ? "1" : "0";
+    const defaultUnit = topologyRoot ? (topologyState.focusUnit || (defaultLevel === "0" ? "AGG" : "DIV HQ")) : "AGG";
+    const nodeIdField = document.getElementById("node-node-id");
+    const includeInTopologyField = document.getElementById("node-include-in-topology");
+    const topologyLevelField = document.getElementById("node-topology-level");
+    const topologyUnitField = document.getElementById("node-topology-unit");
+    const enabledField = document.getElementById("node-enabled");
+
+    if (nodeIdField instanceof HTMLInputElement) {
+        nodeIdField.value = "";
+    }
+    if (includeInTopologyField instanceof HTMLInputElement) {
+        includeInTopologyField.checked = Boolean(topologyRoot);
+    }
+    if (topologyLevelField instanceof HTMLSelectElement || topologyLevelField instanceof HTMLInputElement) {
+        topologyLevelField.value = defaultLevel;
+    }
+    if (topologyUnitField instanceof HTMLSelectElement || topologyUnitField instanceof HTMLInputElement) {
+        topologyUnitField.value = defaultUnit;
+    }
+    if (enabledField instanceof HTMLInputElement) {
+        enabledField.checked = true;
+    }
+    if (topologyRoot) {
+        const locationField = document.getElementById("node-location");
+        if (locationField instanceof HTMLInputElement) {
+            locationField.value = topologyState.focusUnit ? "Cloud" : "Cloud";
+        }
+    }
     formTitle.textContent = "Add Node";
     submitButton.textContent = "Save";
     cancelButton.hidden = false;
     if (saveAddAnotherButton) {
         saveAddAnotherButton.hidden = false;
+    }
+    if (deleteButton) {
+        deleteButton.hidden = true;
     }
     formError.hidden = true;
     formError.textContent = "Unable to save node";
@@ -2586,10 +2808,13 @@ function getNodeModalShell() {
     return document.getElementById("node-modal-shell");
 }
 
-function openNodeModal() {
+function openNodeModal(options = {}) {
     const modalShell = getNodeModalShell();
     if (!modalShell) {
         return;
+    }
+    if (options.reset !== false) {
+        resetNodeForm();
     }
     modalShell.hidden = false;
     document.body.classList.add("modal-open");
@@ -2605,12 +2830,84 @@ function closeNodeModal() {
     keepNodeModalOpenAfterSave = false;
 }
 
+function getTopologyInventoryShell() {
+    return document.getElementById("topology-inventory-shell");
+}
+
+function openTopologyInventory() {
+    const shell = getTopologyInventoryShell();
+    if (!shell) {
+        return;
+    }
+    shell.hidden = false;
+    document.body.classList.add("modal-open");
+}
+
+function closeTopologyInventory() {
+    const shell = getTopologyInventoryShell();
+    if (!shell) {
+        return;
+    }
+    shell.hidden = true;
+    document.body.classList.remove("modal-open");
+}
+
+function getTopologyDetailShell() {
+    return document.getElementById("topology-detail-shell");
+}
+
+function openTopologyDetail(detailUrl, title = "Node Detail") {
+    if (!detailUrl) {
+        return;
+    }
+    const shell = getTopologyDetailShell();
+    const frame = document.getElementById("topology-detail-frame");
+    const titleElement = document.getElementById("topology-detail-title");
+    if (!shell || !(frame instanceof HTMLIFrameElement)) {
+        return;
+    }
+    if (titleElement) {
+        titleElement.textContent = title;
+    }
+    const embeddedDetailUrl = new URL(detailUrl, window.location.origin);
+    embeddedDetailUrl.searchParams.set("embedded", "1");
+    frame.src = `${embeddedDetailUrl.pathname}${embeddedDetailUrl.search}`;
+    shell.hidden = false;
+    document.body.classList.add("modal-open");
+}
+
+function closeTopologyDetail() {
+    const shell = getTopologyDetailShell();
+    const frame = document.getElementById("topology-detail-frame");
+    if (!shell) {
+        return;
+    }
+    shell.hidden = true;
+    document.body.classList.remove("modal-open");
+    if (frame instanceof HTMLIFrameElement) {
+        frame.removeAttribute("src");
+    }
+}
+
 function syncTopologyFormFields() {
     const includeCheckbox = document.getElementById("node-include-in-topology");
     const levelField = document.getElementById("node-topology-level");
     const unitField = document.getElementById("node-topology-unit");
 
-    if (!includeCheckbox || !levelField || !unitField) {
+    if (!(includeCheckbox instanceof HTMLInputElement)) {
+        return;
+    }
+
+    if (
+        !(
+            levelField instanceof HTMLSelectElement ||
+            levelField instanceof HTMLInputElement
+        ) ||
+        !(
+            unitField instanceof HTMLSelectElement ||
+            unitField instanceof HTMLInputElement
+        )
+    ) {
         return;
     }
 
@@ -2632,6 +2929,7 @@ function syncTopologyFormFields() {
 function populateNodeForm(nodeId) {
     const node = currentNodes.find((entry) => entry.id === nodeId);
     const saveAddAnotherButton = document.getElementById("node-save-add-another-button");
+    const deleteButton = document.getElementById("node-delete-button");
 
     if (!node) {
         return;
@@ -2639,15 +2937,31 @@ function populateNodeForm(nodeId) {
 
     document.getElementById("node-id").value = String(node.id);
     document.getElementById("node-name").value = node.name;
-    document.getElementById("node-node-id").value = node.node_id ?? "";
     document.getElementById("node-host").value = node.host;
     document.getElementById("node-web-port").value = String(node.web_port);
     document.getElementById("node-ssh-port").value = String(node.ssh_port);
     document.getElementById("node-location").value = node.location;
-    document.getElementById("node-include-in-topology").checked = Boolean(node.include_in_topology);
-    document.getElementById("node-topology-level").value = String(node.topology_level ?? 0);
-    document.getElementById("node-topology-unit").value = node.topology_unit ?? "AGG";
-    document.getElementById("node-enabled").checked = node.enabled;
+    const nodeIdField = document.getElementById("node-node-id");
+    const includeInTopologyField = document.getElementById("node-include-in-topology");
+    const topologyLevelField = document.getElementById("node-topology-level");
+    const topologyUnitField = document.getElementById("node-topology-unit");
+    const enabledField = document.getElementById("node-enabled");
+
+    if (nodeIdField instanceof HTMLInputElement) {
+        nodeIdField.value = node.node_id ?? "";
+    }
+    if (includeInTopologyField instanceof HTMLInputElement) {
+        includeInTopologyField.checked = Boolean(node.include_in_topology);
+    }
+    if (topologyLevelField instanceof HTMLSelectElement || topologyLevelField instanceof HTMLInputElement) {
+        topologyLevelField.value = String(node.topology_level ?? 0);
+    }
+    if (topologyUnitField instanceof HTMLSelectElement || topologyUnitField instanceof HTMLInputElement) {
+        topologyUnitField.value = node.topology_unit ?? "AGG";
+    }
+    if (enabledField instanceof HTMLInputElement) {
+        enabledField.checked = node.enabled;
+    }
     document.getElementById("node-notes").value = node.notes ?? "";
     document.getElementById("node-api-username").value = node.api_username ?? "";
     document.getElementById("node-api-password").value = node.api_password ?? "";
@@ -2658,11 +2972,48 @@ function populateNodeForm(nodeId) {
     if (saveAddAnotherButton) {
         saveAddAnotherButton.hidden = true;
     }
+    if (deleteButton) {
+        deleteButton.hidden = false;
+    }
     document.getElementById("node-form-error").hidden = true;
     currentEditNodeId = node.id;
     syncTopologyFormFields();
     renderNodesTable(currentNodes);
-    openNodeModal();
+    openNodeModal({ reset: false });
+}
+
+async function deleteCurrentNodeFromModal() {
+    const nodeId = document.getElementById("node-id").value;
+    const formError = document.getElementById("node-form-error");
+    if (!nodeId) {
+        return;
+    }
+    const node = currentNodes.find((entry) => String(entry.id) === String(nodeId));
+    if (!window.confirm(`Delete ${node?.name || "this node"}?`)) {
+        return;
+    }
+    try {
+        await apiRequest(`/api/nodes/${nodeId}`, { method: "DELETE" });
+        currentNodes = currentNodes.filter((entry) => String(entry.id) !== String(nodeId));
+        removeTopologyEntityLayout(`node-${nodeId}`);
+        clearTopologyEntityLabel(`node-${nodeId}`);
+        currentEditNodeId = null;
+        resetNodeForm();
+        closeNodeModal();
+        await loadNodes();
+        await loadNodeDashboard();
+        await loadMainDashboard();
+        if (document.getElementById("topology-root")) {
+            topologyState.selectedKind = null;
+            topologyState.selectedId = null;
+            clearTopologyEntitySelection();
+            await loadTopologyPage();
+        }
+        showFeedback("Node deleted.");
+    } catch (error) {
+        formError.textContent = error.message || "Unable to delete node";
+        formError.hidden = false;
+    }
 }
 
 function renderNodesTable(nodes) {
@@ -2675,7 +3026,7 @@ function renderNodesTable(nodes) {
     if (nodes.length === 0) {
         tableBody.innerHTML = `
             <tr>
-                <td colspan="8" class="table-message">No nodes have been added yet.</td>
+                <td colspan="7" class="table-message">No nodes have been added yet.</td>
             </tr>
         `;
         return;
@@ -2687,35 +3038,27 @@ function renderNodesTable(nodes) {
                 <tr class="${currentEditNodeId === node.id ? "row-editing" : ""}">
                     <td>${node.name}</td>
                     <td>${escapeHtml(node.node_id ?? "--")}</td>
+                    <td>${escapeHtml(node.version ?? "--")}</td>
                     <td>${node.host}</td>
                     <td>${node.location}</td>
-                    <td>${formatTopologyCell(node)}</td>
                     <td>${servicesCell(node)}</td>
                     <td>${statusCell(node)}</td>
                     <td class="action-cell">
-                        <button type="button" class="button-secondary action-button" data-action="telemetry" data-id="${node.id}">Telemetry</button>
-                        <button type="button" class="button-secondary action-button" data-action="edit" data-id="${node.id}">Edit</button>
-                        <button type="button" class="button-danger action-button" data-action="delete" data-id="${node.id}">Delete</button>
+                        <button type="button" class="inventory-action-button" data-action="edit" data-id="${node.id}" title="Edit" aria-label="Edit">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="m3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25Zm2.92 2.33H5v-.92l8.06-8.06l.92.92L5.92 19.58ZM20.71 7.04a1 1 0 0 0 0-1.41L18.37 3.3a1 1 0 0 0-1.41 0l-1.54 1.54l3.75 3.75l1.54-1.55Z"/>
+                            </svg>
+                        </button>
+                        <button type="button" class="inventory-action-button inventory-action-button-danger" data-action="delete" data-id="${node.id}" title="Delete" aria-label="Delete">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 6h2v9h-2V9Zm4 0h2v9h-2V9ZM7 9h2v9H7V9Zm-1 12h12a2 2 0 0 0 2-2V8H4v11a2 2 0 0 0 2 2Z"/>
+                            </svg>
+                        </button>
                     </td>
                 </tr>
             `,
         )
         .join("");
-}
-
-function formatTopologyCell(node) {
-    if (!node.include_in_topology) {
-        return `<span class="status-pill status-neutral">Excluded</span>`;
-    }
-
-    const level = node.topology_level ?? "--";
-    const unit = node.topology_unit ?? "--";
-    return `
-        <div class="table-stack">
-            <strong>L${level}</strong>
-            <span>${escapeHtml(unit)}</span>
-        </div>
-    `;
 }
 
 function renderDashboard(nodes, options = {}) {
@@ -2796,7 +3139,7 @@ function renderDashboard(nodes, options = {}) {
             </div>
 
             <div class="node-strip">
-                <span class="metric-chip metric-chip-rtt ping-${node.ping_state || "down"}">
+                <span class="metric-chip metric-chip-rtt ping-${escapeHtml(String(getNodeListRttState(latencyValue, node)))}">
                     <span class="ping-dot ${node.ping_ok ? "up" : "down"}" title="${node.ping_ok ? "Ping reachable" : "Ping unreachable"}"></span>
                     <span class="metric-chip-label">RTT</span>
                     <span class="metric-chip-value">${escapeHtml(String(latencyValue))}${latencyValue === "--" ? "" : " ms"}</span>
@@ -3041,14 +3384,29 @@ function renderNodeSummaryPanel(containerId, summary, node = {}) {
     const rxBps = Number(summary.rx_bps ?? 0);
     const rttMs = Number(summary.latency_ms ?? 0);
     const cpuPercent = Number(summary.cpu_avg ?? 0);
-    const peakTraffic = Math.max(txBps, rxBps, 1_000_000);
+    const trafficScaleMax = 1_000_000_000;
+    const rttState = String(summary.rtt_state || "good");
+    const latestLatencyText = typeof summary.latest_latency_ms === "number" ? `${summary.latest_latency_ms} ms` : "--";
+    const baselineLatencyText = typeof summary.rtt_baseline_ms === "number" ? `${summary.rtt_baseline_ms} ms` : "--";
+    const txState = getGaugeState(txBps, trafficScaleMax, { warnRatio: 0.75, downRatio: 0.9 });
+    const rxState = getGaugeState(rxBps, trafficScaleMax, { warnRatio: 0.75, downRatio: 0.9 });
+    const cpuState = getGaugeState(cpuPercent, 100, { warnRatio: 0.75, downRatio: 0.9 });
 
     container.innerHTML = `
         <div class="node-summary-panel">
-            ${renderMetricGauge("TX", formatRate(txBps), txBps, peakTraffic)}
-            ${renderMetricGauge("RX", formatRate(rxBps), rxBps, peakTraffic)}
-            ${renderMetricGauge("CPU", formatCpuPercent(summary.cpu_avg), cpuPercent, 100)}
-            ${renderMetricGauge("RTT", summary.latency_ms != null ? `${summary.latency_ms} ms` : "--", rttMs, 200)}
+            ${renderMetricGauge("TX", formatRate(txBps), txBps, trafficScaleMax, {
+                className: `metric-gauge-card-traffic metric-gauge-card-${escapeHtml(txState)}`,
+            })}
+            ${renderMetricGauge("RX", formatRate(rxBps), rxBps, trafficScaleMax, {
+                className: `metric-gauge-card-traffic metric-gauge-card-${escapeHtml(rxState)}`,
+            })}
+            ${renderMetricGauge("CPU", formatCpuPercent(summary.cpu_avg), cpuPercent, 100, {
+                className: `metric-gauge-card-cpu metric-gauge-card-${escapeHtml(cpuState)}`,
+            })}
+            ${renderMetricGauge("Avg RTT", summary.latency_ms != null ? `${summary.latency_ms} ms` : "--", rttMs, Math.max(Number(summary.rtt_baseline_ms ?? summary.latency_ms ?? 200), 200), {
+                className: `metric-gauge-card-rtt metric-gauge-card-${escapeHtml(rttState)}`,
+                centerHint: `Latest ${latestLatencyText} · Baseline ${baselineLatencyText}`,
+            })}
         </div>
     `;
 }
@@ -3095,18 +3453,39 @@ function renderDetailHeaderActions(containerId, summary, node = {}) {
     `;
 }
 
-function renderMetricGauge(label, valueText, rawValue, maxValue) {
+function getGaugeState(rawValue, maxValue, options = {}) {
+    const safeMax = Math.max(Number(maxValue) || 1, 1);
+    const safeValue = Math.max(Number(rawValue) || 0, 0);
+    const ratio = Math.min(safeValue / safeMax, 1);
+    const warnRatio = Number(options.warnRatio ?? 0.75);
+    const downRatio = Number(options.downRatio ?? 0.9);
+
+    if (!Number.isFinite(ratio) || ratio <= 0) {
+        return "good";
+    }
+    if (ratio >= downRatio) {
+        return "down";
+    }
+    if (ratio >= warnRatio) {
+        return "warn";
+    }
+    return "good";
+}
+
+function renderMetricGauge(label, valueText, rawValue, maxValue, options = {}) {
     const safeMax = Math.max(Number(maxValue) || 1, 1);
     const safeValue = Math.max(Number(rawValue) || 0, 0);
     const ratio = Math.min(safeValue / safeMax, 1);
     const degrees = 360 * ratio;
     const { primary, secondary } = splitMetricDisplay(valueText);
+    const className = options.className ? ` ${options.className}` : "";
+    const centerHint = options.centerHint ? ` title="${escapeHtml(options.centerHint)}"` : "";
     return `
-        <div class="metric-gauge-card">
+        <div class="metric-gauge-card${className}">
             <span class="metric-gauge-label">${label}</span>
             <div class="metric-gauge-shell" style="--gauge-deg:${degrees}deg;">
                 <div class="metric-gauge">
-                    <div class="metric-gauge-center">
+                    <div class="metric-gauge-center"${centerHint}>
                         <strong class="metric-gauge-value">${primary}</strong>
                         ${secondary ? `<span class="metric-gauge-unit">${secondary}</span>` : ""}
                     </div>
@@ -3490,12 +3869,85 @@ function getTopologyEntities() {
         return [];
     }
 
-    return [
-        buildTopologyServiceCloudEntity(),
-        ...(topologyPayload.lvl0_nodes ?? []),
-        ...(topologyPayload.lvl1_nodes ?? []),
+    const anchorRows = Array.isArray(topologyNodeDashboardPayload?.anchors) ? topologyNodeDashboardPayload.anchors : [];
+    const inventoryNodes = Array.isArray(currentNodes) ? currentNodes : [];
+    const inventoryByNodeId = new Map(
+        inventoryNodes
+            .filter((row) => row && row.id != null)
+            .map((row) => [String(row.id), row]),
+    );
+    const anchorByNodeId = new Map(
+        anchorRows
+            .filter((row) => row && row.id != null)
+            .map((row) => [String(row.id), row]),
+    );
+    const anchorBySiteId = new Map(
+        anchorRows
+            .filter((row) => row && row.site_id != null)
+            .map((row) => [String(row.site_id), row]),
+    );
+    const mergeDashboardAnchorState = (entity) => {
+        if (!entity || entity.kind === "services-cloud" || entity.level === 2) {
+            return entity;
+        }
+        const inventoryNode = inventoryByNodeId.get(String(entity.inventory_node_id ?? ""));
+        const dashboardAnchor =
+            anchorByNodeId.get(String(entity.inventory_node_id ?? "")) ||
+            anchorBySiteId.get(String(entity.site_id ?? ""));
+        if (!dashboardAnchor) {
+            if (!inventoryNode) {
+                return entity;
+            }
+            return {
+                ...entity,
+                node_id: inventoryNode.node_id || entity.node_id,
+                version: inventoryNode.version || entity.version,
+                host: inventoryNode.host || entity.host,
+                web_port: inventoryNode.web_port ?? entity.web_port,
+                web_scheme: inventoryNode.web_scheme || entity.web_scheme,
+            };
+        }
+        return {
+            ...entity,
+            node_id: inventoryNode?.node_id || dashboardAnchor.site_id || entity.node_id,
+            status: dashboardAnchor.status || entity.status,
+            site_id: dashboardAnchor.site_id || entity.site_id,
+            latency_ms: dashboardAnchor.avg_latency_ms ?? dashboardAnchor.latency_ms ?? entity.latency_ms,
+            avg_latency_ms: dashboardAnchor.avg_latency_ms ?? entity.avg_latency_ms,
+            latest_latency_ms: dashboardAnchor.latest_latency_ms ?? entity.latest_latency_ms,
+            rtt_baseline_ms: dashboardAnchor.rtt_baseline_ms ?? entity.rtt_baseline_ms,
+            rtt_deviation_pct: dashboardAnchor.rtt_deviation_pct ?? entity.rtt_deviation_pct,
+            rtt_state: dashboardAnchor.rtt_state || entity.rtt_state,
+            tx_bps: dashboardAnchor.tx_bps ?? entity.tx_bps,
+            rx_bps: dashboardAnchor.rx_bps ?? entity.rx_bps,
+            tx_display: dashboardAnchor.tx_display || entity.tx_display,
+            rx_display: dashboardAnchor.rx_display || entity.rx_display,
+            wan_tx_bps: dashboardAnchor.wan_tx_bps ?? entity.wan_tx_bps,
+            wan_rx_bps: dashboardAnchor.wan_rx_bps ?? entity.wan_rx_bps,
+            lan_tx_bps: dashboardAnchor.lan_tx_bps ?? entity.lan_tx_bps,
+            lan_rx_bps: dashboardAnchor.lan_rx_bps ?? entity.lan_rx_bps,
+            wan_tx_total: dashboardAnchor.wan_tx_total || entity.wan_tx_total,
+            wan_rx_total: dashboardAnchor.wan_rx_total || entity.wan_rx_total,
+            lan_tx_total: dashboardAnchor.lan_tx_total || entity.lan_tx_total,
+            lan_rx_total: dashboardAnchor.lan_rx_total || entity.lan_rx_total,
+            cpu_avg: dashboardAnchor.cpu_avg ?? entity.cpu_avg,
+            version: dashboardAnchor.version || entity.version,
+            web_ok: dashboardAnchor.web_ok ?? entity.web_ok,
+            ssh_ok: dashboardAnchor.ssh_ok ?? entity.ssh_ok,
+            ping_ok: dashboardAnchor.ping_ok ?? entity.ping_ok,
+            ping_state: dashboardAnchor.ping_state || entity.ping_state,
+            web_port: inventoryNode?.web_port ?? dashboardAnchor.web_port ?? entity.web_port,
+            web_scheme: inventoryNode?.web_scheme || dashboardAnchor.web_scheme || entity.web_scheme,
+            metrics_text: dashboardAnchor.host || inventoryNode?.host || entity.metrics_text,
+        };
+    };
+
+    const authoredEntities = [
+        ...((topologyPayload.lvl0_nodes ?? []).map(mergeDashboardAnchorState)),
+        ...((topologyPayload.lvl1_nodes ?? []).map(mergeDashboardAnchorState)),
         ...(topologyPayload.lvl2_clusters ?? []),
     ];
+    return authoredEntities.filter((entity) => Boolean(topologyState.layoutOverrides?.[entity.id]));
 }
 
 function getTopologyLinkId(link, index) {
@@ -3525,6 +3977,8 @@ function isTopologyEntityVisible(entity) {
 function renderTopologyStage() {
     const layer = document.getElementById("topology-node-layer");
     const stage = document.getElementById("topology-stage");
+    const stateLogPreview = document.getElementById("topology-state-log-preview");
+    const stateLogFlyout = document.getElementById("topology-state-log-flyout");
     if (!layer || !stage || !topologyPayload) {
         return;
     }
@@ -3538,6 +3992,26 @@ function renderTopologyStage() {
     const discoveryCounts = getTopologyDiscoveryCounts();
     const clusterStatusCounts = getTopologyClusterStatusCounts();
     const connectedAnchorMap = getTopologyConnectedAnchorMap();
+
+    if (stateLogPreview) {
+        stateLogPreview.hidden = visibleEntities.length === 0;
+    }
+    if (stateLogFlyout && visibleEntities.length === 0) {
+        topologyState.stateLogExpanded = false;
+        stateLogFlyout.hidden = true;
+    }
+
+    if (!visibleEntities.length) {
+        layer.innerHTML = `
+            <div class="topology-empty-state">
+                <strong>Blank map ready</strong>
+                <span>Click Edit Map, then Add Node to place your first Seeker icon.</span>
+            </div>
+        `;
+        drawTopologyLinks(entityMap);
+        renderTopologyDetailsDrawer(null);
+        return;
+    }
 
     layer.innerHTML = visibleEntities
         .map((entity) => {
@@ -3558,18 +4032,15 @@ function renderTopologyStage() {
                   isFocusedUnit ? "is-selected" : "",
                   topologyState.selectedEntityIds.has(entity.id) ? "is-multi-selected" : "",
                   topologyState.selectedKind === "entity" && topologyState.selectedId === entity.id ? "is-selected" : "",
+                  topologyState.pinnedTooltipId === entity.id ? "is-tooltip-pinned" : "",
               ]
                 .filter(Boolean)
                 .join(" ");
 
             const subtitle = isCluster
                 ? "Edge Nodes"
-                : entity.level === 1
-                    ? escapeHtml(entity.location)
-                    : `${escapeHtml(entity.location)} · ${escapeHtml(entity.unit)}`;
-            const displayName = isServiceCloud
-                ? "Services"
-                : entity.level === 1 || isCluster ? escapeHtml(entity.unit) : escapeHtml(entity.name);
+                : escapeHtml(entity.node_id || entity.site_id || "--");
+            const displayName = escapeHtml(getTopologyEntityLabel(entity));
             const clusterUpCount = isCluster
                 ? getEffectiveTopologyClusterUpCount(entity.unit, clusterStatusCounts.upByUnit.get(entity.unit) || 0)
                 : 0;
@@ -3580,6 +4051,7 @@ function renderTopologyStage() {
             const titleText = isServiceCloud
                 ? "Services cloud"
                 : isCluster ? `${entity.unit} Edge Nodes` : entity.level === 1 ? `${entity.unit} / ${entity.location}` : entity.name;
+            const isAnchorNode = !isCluster && !isServiceCloud && Boolean(entity.inventory_node_id);
             const hoverPanel = isServiceCloud
                 ? `
                     <span class="topology-service-cloud-tooltip" role="tooltip">
@@ -3596,6 +4068,7 @@ function renderTopologyStage() {
                         }
                     </span>
                 `
+                : isAnchorNode ? getTopologyAnchorTooltipMarkup(entity)
                 : "";
             const bubbleStyle = `left:${layout.x}px; top:${layout.y}px; --topology-bubble-size:${layout.size}px;`;
             const resizeHandle = topologyState.editMode
@@ -3625,9 +4098,9 @@ function renderTopologyStage() {
                     data-topology-editable="${topologyState.editMode ? "true" : "false"}"
                     style="${bubbleStyle}"
                 >
+                    ${nodeIcon}
                     <span class="topology-node-name">${displayName}</span>
                     ${isServiceCloud ? "" : `<span class="topology-node-meta">${subtitle}</span>`}
-                    ${nodeIcon}
                     ${clusterFooter}
                     ${hoverPanel}
                     ${anchorPoints}
@@ -3672,18 +4145,34 @@ function renderTopologyStage() {
           });
           button.addEventListener("click", (event) => {
               if (topologyState.editMode) {
+                  const nextId = button.getAttribute("data-topology-id");
+                  if (nextId) {
+                      topologyState.selectedKind = "entity";
+                      topologyState.selectedId = nextId;
+                      if (!topologyState.selectedEntityIds.has(nextId)) {
+                          topologyState.selectedEntityIds = new Set([nextId]);
+                      }
+                  }
+                  syncTopologyEntitySelectionStyles(layer);
                   event.stopPropagation();
+                  event.preventDefault();
                   return;
               }
               event.stopPropagation();
               const nextId = button.getAttribute("data-topology-id");
             const nextEntity = entityMap.get(nextId || "");
+            const isAnchorNode = Boolean(nextEntity?.inventory_node_id) && nextEntity?.level !== 2 && nextEntity?.kind !== "services-cloud";
             if (nextEntity?.level === 2) {
                 setTopologyUnitFocus(nextEntity.unit);
                 updateTopologyUnitRoute(nextEntity.unit);
                 topologyState.selectedKind = "entity";
                 topologyState.selectedId = nextId;
                 renderTopologyControls();
+                renderTopologyStage();
+                return;
+            }
+            if (isAnchorNode) {
+                topologyState.pinnedTooltipId = topologyState.pinnedTooltipId === nextId ? null : nextId;
                 renderTopologyStage();
                 return;
             }
@@ -3695,6 +4184,50 @@ function renderTopologyStage() {
                 topologyState.selectedId = nextId;
             }
             renderTopologyStage();
+        });
+        button.addEventListener("contextmenu", (event) => {
+            const nextId = button.getAttribute("data-topology-id");
+            const nextEntity = entityMap.get(nextId || "");
+            if (!nextId) {
+                return;
+            }
+            if (!topologyState.editMode) {
+                if (nextEntity?.inventory_node_id) {
+                    openTopologyDetail(`/nodes/${encodeURIComponent(nextEntity.inventory_node_id)}`, nextEntity.name || "Node Detail");
+                    event.preventDefault();
+                    event.stopPropagation();
+                }
+                return;
+            }
+            topologyState.selectedKind = "entity";
+            topologyState.selectedId = nextId;
+            if (!topologyState.selectedEntityIds.has(nextId)) {
+                topologyState.selectedEntityIds = new Set([nextId]);
+            }
+            syncTopologyEntitySelectionStyles(layer);
+            if (nextEntity?.inventory_node_id) {
+                populateNodeForm(Number(nextEntity.inventory_node_id));
+                openNodeModal({ reset: false });
+            }
+            event.preventDefault();
+            event.stopPropagation();
+        });
+        button.addEventListener("dblclick", (event) => {
+            if (topologyState.editMode) {
+                return;
+            }
+            const nextId = button.getAttribute("data-topology-id");
+            const nextEntity = entityMap.get(nextId || "");
+            const isAnchorNode = Boolean(nextEntity?.inventory_node_id) && nextEntity?.level !== 2 && nextEntity?.kind !== "services-cloud";
+            if (!isAnchorNode || !nextEntity?.metrics_text) {
+                return;
+            }
+            topologyState.selectedKind = null;
+            topologyState.selectedId = null;
+            openWebForNode(nextEntity.metrics_text, nextEntity.web_port || 443, nextEntity.web_scheme || "https");
+            renderTopologyStage();
+            event.preventDefault();
+            event.stopPropagation();
         });
     });
 
@@ -3708,7 +4241,7 @@ function renderTopologyStage() {
 
     stage.onclick = (event) => {
         const target = event.target;
-        if (target instanceof Element && target.closest("[data-topology-id], [data-topology-link-id], #topology-drawer, #topology-state-log-preview, #topology-state-log-flyout")) {
+        if (target instanceof Element && target.closest("[data-topology-id], [data-topology-link-id], #topology-state-log-preview, #topology-state-log-flyout")) {
             return;
         }
         if (topologyState.editMode) {
@@ -3949,7 +4482,16 @@ function getTopologyAnchorIconMarkup(entity) {
     }
 
     const accentClass = entity.level === 0 ? "topology-node-icon-agg" : "topology-node-icon-anchor";
-    const statusClass = `topology-node-icon-status-${getTopologyIconStatus(entity.status)}`;
+    const iconStatus = entity.rtt_state
+        ? getTopologyIconStatus(
+            String(entity.rtt_state).toLowerCase() === "good"
+                ? "healthy"
+                : String(entity.rtt_state).toLowerCase() === "warn"
+                    ? "degraded"
+                    : "down",
+        )
+        : getTopologyIconStatus(entity.status);
+    const statusClass = `topology-node-icon-status-${iconStatus}`;
     return `
         <span class="topology-node-icon ${accentClass} ${statusClass}" aria-hidden="true">
             <svg viewBox="0 0 64 64" focusable="false">
@@ -4028,183 +4570,201 @@ function getTopologyAnchorTargetFromPoint(clientX, clientY, entityId) {
     return null;
 }
 
-function renderTopologyDrawer() {
-    const drawer = document.getElementById("topology-details-drawer");
-    const drawerShell = document.getElementById("topology-drawer");
-    if (!drawer || !drawerShell || !topologyPayload) {
-        return;
+function getTopologyInventoryNodeRecord(entity) {
+    const inventoryNodeId = Number(entity?.inventory_node_id || 0);
+    if (!inventoryNodeId) {
+        return null;
     }
+    return currentNodes.find((node) => Number(node.id) === inventoryNodeId) || null;
+}
 
-    if (topologyState.editMode && topologyState.selectedKind === "link") {
-        drawerShell.hidden = true;
-        drawerShell.classList.remove("is-open");
-        drawer.innerHTML = `<p class="table-message">Select a node, link, or cluster to inspect it.</p>`;
-        return;
-    }
+function renderTopologyNodeEditorMarkup(entity, node) {
+    const authoredLabel = getTopologyEntityLabel(entity);
+    const defaultDisplayName = entity.name || entity.unit || entity.id;
+    const hasAuthoredLabel = authoredLabel !== defaultDisplayName;
+    return `
+        <div class="topology-drawer-block">
+            <span class="dashboard-meta-label">Selected Node</span>
+            <h3>${escapeHtml(authoredLabel)}</h3>
+        </div>
+        <div class="topology-drawer-block">
+            <span class="dashboard-meta-label">Authored Label</span>
+            <label class="topology-label-editor" for="topology-label-input">
+                <span class="topology-label-editor-copy">Override the visible map label for this object.</span>
+                <input
+                    id="topology-label-input"
+                    class="topology-label-editor-input"
+                    type="text"
+                    maxlength="80"
+                    value="${escapeHtml(hasAuthoredLabel ? authoredLabel : "")}"
+                    placeholder="${escapeHtml(defaultDisplayName)}"
+                >
+            </label>
+            <div class="topology-label-editor-actions">
+                <button type="button" class="button-primary" id="topology-label-save">Save Label</button>
+                <button type="button" class="button-secondary" id="topology-label-reset"${hasAuthoredLabel ? "" : " disabled"}>Use Default</button>
+            </div>
+        </div>
+        <form class="node-form topology-node-editor-form" id="topology-node-editor-form">
+            <label>
+                <span>Name</span>
+                <input type="text" id="topology-node-name" value="${escapeHtml(node?.name || entity.name || "")}" required>
+            </label>
+            <label>
+                <span>Host / IP</span>
+                <input type="text" id="topology-node-host" value="${escapeHtml(node?.host || entity.metrics_text || "")}" required>
+            </label>
+            <label>
+                <span>Web Port</span>
+                <input type="number" id="topology-node-web-port" min="1" max="65535" value="${escapeHtml(String(node?.web_port || entity.web_port || 443))}" required>
+            </label>
+            <label>
+                <span>SSH Port</span>
+                <input type="number" id="topology-node-ssh-port" min="1" max="65535" value="${escapeHtml(String(node?.ssh_port || 22))}" required>
+            </label>
+            <label>
+                <span>Location</span>
+                <input type="text" id="topology-node-location" value="${escapeHtml(node?.location || entity.location || "Cloud")}" required>
+            </label>
+            <label class="checkbox-field">
+                <input type="checkbox" id="topology-node-include" ${(node?.include_in_topology ?? entity.include_in_topology) ? "checked" : ""}>
+                <span>Include in Topology</span>
+            </label>
+            <label class="full-width">
+                <span>Notes</span>
+                <textarea id="topology-node-notes" rows="3" placeholder="Optional notes">${escapeHtml(node?.notes || "")}</textarea>
+            </label>
+            <label>
+                <span>API Username</span>
+                <input type="text" id="topology-node-api-username" value="${escapeHtml(node?.api_username || "")}">
+            </label>
+            <label>
+                <span>API Password</span>
+                <input type="password" id="topology-node-api-password" value="${escapeHtml(node?.api_password || "")}">
+            </label>
+            <label class="checkbox-field">
+                <input type="checkbox" id="topology-node-api-use-https" ${node?.api_use_https ? "checked" : ""}>
+                <span>API Uses HTTPS</span>
+            </label>
+            <div class="form-actions full-width node-modal-actions">
+                <button type="submit" class="button-primary">Save Node</button>
+                <button type="button" class="button-secondary" id="topology-node-delete">Delete Node</button>
+            </div>
+            <p id="topology-node-editor-error" class="status-error" hidden>Unable to save node.</p>
+        </form>
+    `;
+}
 
-    const entityMap = new Map(getTopologyEntities().map((item) => [item.id, item]));
-    const entity = topologyState.selectedKind === "entity"
-        ? getTopologyEntities().find((item) => item.id === topologyState.selectedId)
-        : null;
-    const link = topologyState.selectedKind === "link"
-        ? (topologyPayload.links ?? []).find((item, index) => getTopologyLinkId(item, index) === topologyState.selectedId)
-        : null;
+function wireTopologyNodeEditor(entity, node) {
+    const labelInput = document.getElementById("topology-label-input");
+    const labelSaveButton = document.getElementById("topology-label-save");
+    const labelResetButton = document.getElementById("topology-label-reset");
+    const form = document.getElementById("topology-node-editor-form");
+    const deleteButton = document.getElementById("topology-node-delete");
+    const formError = document.getElementById("topology-node-editor-error");
+    const inventoryNodeId = Number(entity.inventory_node_id || node?.id || 0);
 
-    if (!entity && !link) {
-        drawerShell.hidden = true;
-        drawerShell.classList.remove("is-open");
-        return;
-    }
-
-    drawerShell.hidden = false;
-    requestAnimationFrame(() => {
-        drawerShell.classList.add("is-open");
+    const commitLabel = () => {
+        if (!(labelInput instanceof HTMLInputElement)) {
+            return;
+        }
+        setTopologyEntityLabel(entity.id, labelInput.value);
+        renderTopologyStage();
+    };
+    labelSaveButton?.addEventListener("click", commitLabel);
+    labelInput?.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+            event.preventDefault();
+            commitLabel();
+        }
+    });
+    labelResetButton?.addEventListener("click", () => {
+        clearTopologyEntityLabel(entity.id);
+        renderTopologyStage();
     });
 
-    if (link) {
-        const fromEntity = entityMap.get(link.from);
-        const toEntity = entityMap.get(link.to);
-        drawer.innerHTML = `
-            <div class="topology-drawer-block">
-                <span class="dashboard-meta-label">Selected Link</span>
-                <h3>${escapeHtml(link.label || `${link.from} -> ${link.to}`)}</h3>
-            </div>
-            <div class="topology-drawer-grid">
-                <div class="detail-summary-item">
-                    <span class="detail-summary-label">Kind</span>
-                    <strong class="detail-summary-value">${escapeHtml(link.kind || "--")}</strong>
-                </div>
-                <div class="detail-summary-item">
-                    <span class="detail-summary-label">Status</span>
-                    <strong class="detail-summary-value">${escapeHtml(link.status || "neutral")}</strong>
-                </div>
-                <div class="detail-summary-item">
-                    <span class="detail-summary-label">From</span>
-                    <strong class="detail-summary-value">${escapeHtml(link.from || "--")}</strong>
-                </div>
-                <div class="detail-summary-item">
-                    <span class="detail-summary-label">To</span>
-                    <strong class="detail-summary-value">${escapeHtml(link.to || "--")}</strong>
-                </div>
-                <div class="detail-summary-item">
-                    <span class="detail-summary-label">From Name</span>
-                    <strong class="detail-summary-value">${escapeHtml(fromEntity?.name || "--")}</strong>
-                </div>
-                <div class="detail-summary-item">
-                    <span class="detail-summary-label">To Name</span>
-                    <strong class="detail-summary-value">${escapeHtml(toEntity?.name || "--")}</strong>
-                </div>
-            </div>
-            <div class="topology-drawer-block">
-                <span class="dashboard-meta-label">Operational Notes</span>
-                <p>Phase 1 placeholder link telemetry. Phase 2 can add observed versus expected overlays and richer link health.</p>
-            </div>
-        `;
-        return;
-    }
+    form?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!inventoryNodeId) {
+            return;
+        }
+        try {
+            const payload = {
+                name: document.getElementById("topology-node-name").value.trim(),
+                node_id: node?.node_id ?? null,
+                host: document.getElementById("topology-node-host").value.trim(),
+                web_port: Number(document.getElementById("topology-node-web-port").value),
+                ssh_port: Number(document.getElementById("topology-node-ssh-port").value),
+                location: document.getElementById("topology-node-location").value.trim(),
+                include_in_topology: document.getElementById("topology-node-include").checked,
+                topology_level: Number(entity.level || 0),
+                topology_unit: String(entity.unit || (entity.level === 0 ? "AGG" : "DIV HQ")),
+                enabled: node?.enabled ?? true,
+                notes: document.getElementById("topology-node-notes").value.trim() || null,
+                api_username: document.getElementById("topology-node-api-username").value.trim() || null,
+                api_password: document.getElementById("topology-node-api-password").value.trim() || null,
+                api_use_https: document.getElementById("topology-node-api-use-https").checked,
+            };
+            await apiRequest(`/api/nodes/${inventoryNodeId}`, {
+                method: "PUT",
+                body: JSON.stringify(payload),
+            });
+            await loadNodes();
+            await loadNodeDashboard();
+            await loadMainDashboard();
+            await loadTopologyPage();
+            topologyState.selectedKind = "entity";
+            topologyState.selectedId = entity.id;
+            showFeedback("Node updated.");
+        } catch (error) {
+            if (formError instanceof HTMLElement) {
+                formError.textContent = error.message || "Unable to save node.";
+                formError.hidden = false;
+            }
+        }
+    });
 
-    const levelLabel = entity.level === 0 ? "Lvl0" : entity.level === 1 ? "Lvl1" : "Edge Nodes";
-    const displayName = entity.level === 2 ? `${entity.unit || "Unit"} Edge Nodes` : entity.name;
-    if (entity.kind === "services-cloud") {
-        const summary = entity.service_summary || getTopologyServiceCloudSummary();
-        const rows = Array.isArray(summary.services) ? summary.services : [];
-        drawer.innerHTML = `
-            <div class="topology-drawer-block">
-                <span class="dashboard-meta-label">Selected</span>
-                <h3>Services</h3>
-            </div>
-            <div class="topology-drawer-grid">
-                <div class="detail-summary-item">
-                    <span class="detail-summary-label">Binding</span>
-                    <strong class="detail-summary-value">Pinned Services</strong>
-                </div>
-                <div class="detail-summary-item">
-                    <span class="detail-summary-label">Status</span>
-                    <strong class="detail-summary-value">${escapeHtml(getEffectiveTopologyEntityStatus(entity) || "neutral")}</strong>
-                </div>
-                <div class="detail-summary-item">
-                    <span class="detail-summary-label">Pinned</span>
-                    <strong class="detail-summary-value">${escapeHtml(summary.total || 0)}</strong>
-                </div>
-                <div class="detail-summary-item">
-                    <span class="detail-summary-label">Healthy</span>
-                    <strong class="detail-summary-value">${escapeHtml(summary.healthy || 0)}</strong>
-                </div>
-                <div class="detail-summary-item">
-                    <span class="detail-summary-label">Degraded</span>
-                    <strong class="detail-summary-value">${escapeHtml(summary.degraded || 0)}</strong>
-                </div>
-                <div class="detail-summary-item">
-                    <span class="detail-summary-label">Down</span>
-                    <strong class="detail-summary-value">${escapeHtml(summary.down || 0)}</strong>
-                </div>
-            </div>
-            <div class="topology-drawer-block">
-                <span class="dashboard-meta-label">Pinned Watchlist</span>
-                ${
-                    rows.length
-                        ? `<div class="topology-service-cloud-list">${rows.map((service) => `
-                            <div class="topology-service-cloud-item">
-                                <strong>${escapeHtml(service.name || `Service ${service.id}`)}</strong>
-                                <span>${escapeHtml(service.target || service.service_type || "--")}</span>
-                                <span class="status-pill status-${escapeHtml(String(service.status || "unknown").toLowerCase())}">${escapeHtml(service.status || "unknown")}</span>
-                            </div>
-                        `).join("")}</div>`
-                        : `<p class="table-message">No services are pinned on the main dashboard yet. Pin checks from the Services Dashboard to drive this cloud icon.</p>`
-                }
-            </div>
-        `;
-        return;
-    }
-    drawer.innerHTML = `
-        <div class="topology-drawer-block">
-            <span class="dashboard-meta-label">Selected</span>
-            <h3>${escapeHtml(displayName)}</h3>
-        </div>
-        <div class="topology-drawer-grid">
-            <div class="detail-summary-item">
-                <span class="detail-summary-label">Level</span>
-                <strong class="detail-summary-value">${levelLabel}</strong>
-            </div>
-            <div class="detail-summary-item">
-                <span class="detail-summary-label">Status</span>
-                <strong class="detail-summary-value">${escapeHtml(entity.status || "neutral")}</strong>
-            </div>
-            <div class="detail-summary-item">
-                <span class="detail-summary-label">Location</span>
-                <strong class="detail-summary-value">${escapeHtml(entity.location || "Cross-Location")}</strong>
-            </div>
-            <div class="detail-summary-item">
-                <span class="detail-summary-label">Unit</span>
-                <strong class="detail-summary-value">${escapeHtml(entity.unit || "--")}</strong>
-            </div>
-            </div>
-        <div class="topology-drawer-block">
-            <span class="dashboard-meta-label">Inventory Binding</span>
-            <div class="topology-drawer-grid">
-                <div class="detail-summary-item">
-                    <span class="detail-summary-label">Inventory Node</span>
-                    <strong class="detail-summary-value">${escapeHtml(entity.inventory_node_id || "--")}</strong>
-                </div>
-                <div class="detail-summary-item">
-                    <span class="detail-summary-label">Inventory Name</span>
-                    <strong class="detail-summary-value">${escapeHtml(entity.inventory_name || "--")}</strong>
-                </div>
-                <div class="detail-summary-item">
-                    <span class="detail-summary-label">Included</span>
-                    <strong class="detail-summary-value">${escapeHtml(entity.include_in_topology ? "Yes" : "No")}</strong>
-                </div>
-                <div class="detail-summary-item">
-                    <span class="detail-summary-label">Anchor State</span>
-                    <strong class="detail-summary-value">${escapeHtml(entity.inventory_node_id ? "Bound" : "Awaiting anchor")}</strong>
-                </div>
-            </div>
-        </div>
-        <div class="topology-drawer-block">
-            <span class="dashboard-meta-label">Operational Notes</span>
-            <p>${escapeHtml(entity.metrics_text || "Placeholder metrics for Phase 1 topology inspection.")}</p>
-        </div>
-    `;
+    deleteButton?.addEventListener("click", async () => {
+        if (!inventoryNodeId) {
+            return;
+        }
+        if (!window.confirm(`Delete ${node?.name || entity.name || "this node"} from inventory and the map?`)) {
+            return;
+        }
+        try {
+            await apiRequest(`/api/nodes/${inventoryNodeId}`, { method: "DELETE" });
+            removeTopologyEntityLayout(entity.id);
+            clearTopologyEntityLabel(entity.id);
+            topologyState.selectedKind = null;
+            topologyState.selectedId = null;
+            clearTopologyEntitySelection();
+            await loadNodes();
+            await loadNodeDashboard();
+            await loadMainDashboard();
+            await loadTopologyPage();
+            showFeedback("Node deleted.");
+        } catch (error) {
+            if (formError instanceof HTMLElement) {
+                formError.textContent = error.message || "Unable to delete node.";
+                formError.hidden = false;
+            }
+        }
+    });
+}
+
+function renderTopologyDrawer() {
+    return;
+}
+
+function getNewTopologyNodeLayout() {
+    const stage = document.getElementById("topology-stage");
+    const width = Math.max(stage?.clientWidth || 1200, 600);
+    const height = Math.max(stage?.clientHeight || 940, 500);
+    return {
+        x: Math.round(width * 0.5),
+        y: Math.round(height * 0.42),
+        size: 92,
+    };
 }
 
 function toggleTopologySetValue(setRef, value) {
@@ -4259,49 +4819,6 @@ function renderTopologyControls() {
     renderTopologyViewButtons();
     wireTopologyControls();
     updateTopologyEditStatus();
-}
-
-function getTopologyControlsCollapsed() {
-    try {
-        return window.localStorage.getItem(topologyControlsCollapsedStorageKey) === "true";
-    } catch (error) {
-        return false;
-    }
-}
-
-function setTopologyControlsCollapsed(collapsed) {
-    const bar = document.getElementById("topology-filter-bar");
-    const body = document.getElementById("topology-filter-bar-body");
-    const button = document.getElementById("topology-filter-toggle");
-
-    if (!bar || !body || !button) {
-        return;
-    }
-
-    bar.hidden = collapsed;
-    body.hidden = collapsed;
-    button.textContent = collapsed ? "Show Controls" : "Hide Controls";
-    button.setAttribute("aria-expanded", collapsed ? "false" : "true");
-
-    try {
-        window.localStorage.setItem(topologyControlsCollapsedStorageKey, collapsed ? "true" : "false");
-    } catch (error) {
-        // Ignore storage failures.
-    }
-}
-
-function wireTopologyBarToggle() {
-    const button = document.getElementById("topology-filter-toggle");
-    if (!button || button.dataset.bound === "true") {
-        return;
-    }
-
-    button.dataset.bound = "true";
-    button.addEventListener("click", () => {
-        const collapsed = !getTopologyControlsCollapsed();
-        setTopologyControlsCollapsed(collapsed);
-        renderTopologyStage();
-    });
 }
 
 function wireTopologyLayoutControls() {
@@ -4461,12 +4978,14 @@ async function loadTopologyPage() {
         return;
     }
 
+    startTopologyTimers();
+
     try {
         const requestedUnit = normalizeTopologyUnit(new URL(window.location.href).searchParams.get("unit"));
         const [topologyResult, discoveryResult, nodeDashboardResult, editorStateResult, dashboardServicesResult] = await Promise.allSettled([
-            apiRequest("/api/topology"),
-            apiRequest("/api/topology/discovery"),
-            apiRequest("/api/node-dashboard"),
+            apiRequest(buildNodeDashboardRequestUrl("/api/topology")),
+            apiRequest(buildNodeDashboardRequestUrl("/api/topology/discovery")),
+            apiRequest(buildNodeDashboardRequestUrl("/api/node-dashboard")),
             apiRequest("/api/topology/editor-state"),
             apiRequest("/api/dashboard/services"),
         ]);
@@ -4510,10 +5029,8 @@ async function loadTopologyPage() {
             queueTopologyEditorStateSave();
         }
         renderTopologyControls();
-        wireTopologyBarToggle();
         wireTopologyLayoutControls();
         setTopologyEditMode(getSavedTopologyEditMode());
-        setTopologyControlsCollapsed(getTopologyControlsCollapsed());
         syncTopologyFullscreenState();
         renderTopologyStage();
     } catch (error) {
@@ -4563,7 +5080,7 @@ async function loadNodeDetailPage() {
     }
 
     try {
-        const detail = await apiRequest(detailEndpoint);
+        const detail = await apiRequest(buildNodeDashboardRequestUrl(detailEndpoint));
         const node = detail.node ?? {};
         const summary = detail.node_summary ?? {};
         const config = detail.config_summary ?? {};
@@ -4597,8 +5114,6 @@ async function loadNodeDetailPage() {
             ["Mate Count", config.n_mates ?? 0],
             ["Enclave", config.enclave_id ?? "--"],
             ["Platform", config.platform ?? "--"],
-            ["In Topology", node.include_in_topology ? "Yes" : "No"],
-            ["Topology Level", node.topology_level ?? "--"],
             ["Topology Unit", node.topology_unit ?? "--"],
         ]);
 
@@ -4738,11 +5253,11 @@ async function loadNodeDashboard() {
 
     if (anchorList && discoveredList && dashboardError) {
         try {
-            const payload = await apiRequest("/api/node-dashboard");
+            const payload = await apiRequest(buildNodeDashboardRequestUrl("/api/node-dashboard"));
             currentNodeDashboardPayload = payload;
             renderNodeDashboardLists(payload);
             dashboardError.hidden = true;
-            connectNodeDashboardStream();
+            disconnectNodeDashboardStream();
             return;
         } catch (error) {
             anchorList.innerHTML = `<div class="table-message">Unable to load anchor nodes.</div>`;
@@ -4798,6 +5313,140 @@ function nodeListMatches(row, query) {
     return haystacks.some((value) => value.includes(query));
 }
 
+function getNodeListRttState(latencyValue, row) {
+    if (row && row.rtt_state) {
+        return String(row.rtt_state);
+    }
+    if (typeof latencyValue === "number") {
+        if (latencyValue >= 180) {
+            return "down";
+        }
+        if (latencyValue >= 100) {
+            return "warn";
+        }
+        return "good";
+    }
+    return row.ping_state || (String(row.ping || "").toLowerCase() === "up" ? "good" : "down");
+}
+
+async function refreshTopologyPage() {
+    const root = document.getElementById("topology-root");
+    if (!root) {
+        return;
+    }
+
+    try {
+        const [topologyResult, discoveryResult, nodeDashboardResult, dashboardServicesResult] = await Promise.allSettled([
+            apiRequest(buildNodeDashboardRequestUrl("/api/topology")),
+            apiRequest(buildNodeDashboardRequestUrl("/api/topology/discovery")),
+            apiRequest(buildNodeDashboardRequestUrl("/api/node-dashboard")),
+            apiRequest("/api/dashboard/services"),
+        ]);
+
+        if (topologyResult.status === "fulfilled") {
+            topologyPayload = topologyResult.value;
+        }
+        if (discoveryResult.status === "fulfilled") {
+            topologyDiscoveryPayload = discoveryResult.value;
+        }
+        if (nodeDashboardResult.status === "fulfilled") {
+            topologyNodeDashboardPayload = nodeDashboardResult.value;
+        }
+        if (dashboardServicesResult.status === "fulfilled") {
+            topologyDashboardServicesPayload = dashboardServicesResult.value;
+        }
+
+        if (topologyState.demoMode !== "off") {
+            topologyState.demoSnapshot = buildTopologyDemoSnapshot(topologyState.demoMode);
+        }
+
+        if (topologyPayload) {
+            renderTopologyControls();
+            renderTopologyStage();
+        }
+        markTopologyLastUpdated();
+    } catch (error) {
+        console.error("Unable to refresh topology", error);
+    }
+}
+
+async function refreshTopologyPingStatus() {
+    if (!document.getElementById("topology-root")) return;
+    try {
+        const statuses = await apiRequest("/api/nodes/ping-status");
+        if (!Array.isArray(statuses)) return;
+        const byId = {};
+        for (const s of statuses) byId[s.id] = s;
+
+        // Update ping data in the cached payloads without a full re-fetch
+        for (const list of [topologyPayload?.lvl0_nodes, topologyPayload?.lvl1_nodes]) {
+            if (!Array.isArray(list)) continue;
+            for (const node of list) {
+                const s = byId[node.inventory_node_id];
+                if (!s) continue;
+                node.ping_state = s.ping_state;
+                node.latency_ms = s.latency_ms;
+                node.avg_latency_ms = s.avg_latency_ms;
+            }
+        }
+
+        // Update RTT chips in-place without full re-render
+        updateTopologyPingChips(byId);
+    } catch (err) {
+        // non-fatal — next burst will catch up
+    }
+}
+
+function updateTopologyPingChips(byId) {
+    const stage = document.getElementById("topology-stage");
+    if (!stage) return;
+    stage.querySelectorAll("[data-entity-id]").forEach(el => {
+        const entityId = el.dataset.entityId;
+        if (!entityId?.startsWith("node-")) return;
+        const nodeId = parseInt(entityId.replace("node-", ""), 10);
+        const s = byId[nodeId];
+        if (!s) return;
+        const chip = el.querySelector(".topology-rtt-chip");
+        if (!chip) return;
+        const state = s.ping_state || "unknown";
+        chip.className = `topology-rtt-chip rtt-${state}`;
+        chip.textContent = s.latency_ms != null ? `${s.latency_ms} ms` : "--";
+    });
+}
+
+function markTopologyLastUpdated() {
+    topologyLastUpdatedAt = Date.now();
+    const el = document.getElementById("topology-last-updated");
+    if (el) el.hidden = false;
+    updateTopologyLastUpdatedAge();
+}
+
+function updateTopologyLastUpdatedAge() {
+    const ageEl = document.getElementById("topology-last-updated-age");
+    if (!ageEl || topologyLastUpdatedAt === null) return;
+    const sec = Math.round((Date.now() - topologyLastUpdatedAt) / 1000);
+    if (sec < 60) {
+        ageEl.textContent = `${sec}s ago`;
+    } else {
+        const min = Math.floor(sec / 60);
+        ageEl.textContent = `${min}m ago`;
+    }
+}
+
+function startTopologyTimers() {
+    // Seeker data — user-selected interval (handled by applyDashboardRefreshInterval)
+    applyDashboardRefreshInterval();
+
+    // Ping RTT — fixed 15s burst cycle
+    if (topologyPingTimer) clearInterval(topologyPingTimer);
+    topologyPingTimer = setInterval(refreshTopologyPingStatus, 15000);
+
+    // "Updated X ago" counter — ticks every second
+    if (topologyLastUpdatedTimer) clearInterval(topologyLastUpdatedTimer);
+    topologyLastUpdatedTimer = setInterval(updateTopologyLastUpdatedAge, 1000);
+}
+
+
 function renderNodeDashboardRow(row, pinnedKeys) {
     const pinKey = row.pin_key || `anchor:${row.id}`;
     const isPinned = pinnedKeys.has(pinKey);
@@ -4833,9 +5482,23 @@ function renderNodeDashboardRow(row, pinnedKeys) {
         ? (isAnchor ? Math.round(numericLatency) : Math.round(numericLatency))
         : null;
     const latencyText = latencyValue == null || rawLatency === "--" ? "--" : `${latencyValue} ms`;
-    const rttState = row.ping_state || (String(row.ping || "").toLowerCase() === "up" ? "good" : "down");
+    const rttState = getNodeListRttState(latencyValue, row);
+    const latestLatencyText = typeof row.latest_latency_ms === "number" ? `${row.latest_latency_ms} ms` : "--";
+    const baselineLatencyText = typeof row.rtt_baseline_ms === "number" ? `${row.rtt_baseline_ms} ms` : "--";
+    const deviationText = typeof row.rtt_deviation_pct === "number"
+        ? `${row.rtt_deviation_pct > 0 ? "+" : ""}${row.rtt_deviation_pct.toFixed(1)}%`
+        : "--";
+    const refreshWindowLabel = formatRefreshLabel(Number(row.refresh_window_seconds || getDashboardRefreshSeconds()));
     const txDisplay = row.tx_display || formatRate(row.tx_bps || row.tx_rate || 0);
     const rxDisplay = row.rx_display || formatRate(row.rx_bps || row.rx_rate || 0);
+    const wanTxDisplay = isAnchor ? formatRate(row.wan_tx_bps || 0) : null;
+    const wanRxDisplay = isAnchor ? formatRate(row.wan_rx_bps || 0) : null;
+    const lanTxDisplay = isAnchor ? formatRate(row.lan_tx_bps || 0) : null;
+    const lanRxDisplay = isAnchor ? formatRate(row.lan_rx_bps || 0) : null;
+    const wanTxTotal = isAnchor ? (row.wan_tx_total || "--") : null;
+    const wanRxTotal = isAnchor ? (row.wan_rx_total || "--") : null;
+    const lanTxTotal = isAnchor ? (row.lan_tx_total || "--") : null;
+    const lanRxTotal = isAnchor ? (row.lan_rx_total || "--") : null;
     const unitMarkup = !isAnchor
         ? `<div class="node-list-meta"><span class="node-list-meta-label">Unit</span><strong>${escapeHtml(row.unit || "--")}</strong></div>`
         : "";
@@ -4854,13 +5517,30 @@ function renderNodeDashboardRow(row, pinnedKeys) {
                     ${unitMarkup}
                     <div class="node-list-meta"><span class="node-list-meta-label">Version</span><strong>${escapeHtml(row.version || "--")}</strong></div>
                     <div class="node-list-meta">
-                        <span class="node-list-meta-label">RTT</span>
-                        <span class="metric-chip metric-chip-rtt node-list-rtt-chip ping-${escapeHtml(String(rttState))}">
-                            <span class="metric-chip-label">RTT</span>
+                        <span class="node-list-meta-label">Avg RTT</span>
+                        <span class="metric-chip metric-chip-rtt node-list-rtt-chip ping-${escapeHtml(String(rttState))}" title="${escapeHtml(`Window ${refreshWindowLabel} · latest ${latestLatencyText} · baseline ${baselineLatencyText} · deviation ${deviationText}`)}">
+                            <span class="metric-chip-label">AVG</span>
                             <span class="metric-chip-value">${escapeHtml(latencyText)}</span>
                         </span>
                     </div>
-                    <div class="node-list-meta node-list-meta-traffic"><span class="node-list-meta-label">Tx / Rx</span><strong>${escapeHtml(txDisplay)} / ${escapeHtml(rxDisplay)}</strong></div>
+                    ${isAnchor ? `
+                    <div class="node-list-meta node-list-meta-traffic">
+                        <span class="node-list-meta-label">WAN</span>
+                        <strong>↑${escapeHtml(wanTxDisplay)} / ↓${escapeHtml(wanRxDisplay)}</strong>
+                    </div>
+                    <div class="node-list-meta node-list-meta-traffic">
+                        <span class="node-list-meta-label">LAN</span>
+                        <strong>↑${escapeHtml(lanTxDisplay)} / ↓${escapeHtml(lanRxDisplay)}</strong>
+                    </div>
+                    <div class="node-list-meta node-list-meta-totals">
+                        <span class="node-list-meta-label">WAN Total</span>
+                        <strong>↑${escapeHtml(wanTxTotal)} / ↓${escapeHtml(wanRxTotal)}</strong>
+                    </div>
+                    <div class="node-list-meta node-list-meta-totals">
+                        <span class="node-list-meta-label">LAN Total</span>
+                        <strong>↑${escapeHtml(lanTxTotal)} / ↓${escapeHtml(lanRxTotal)}</strong>
+                    </div>
+                    ` : `<div class="node-list-meta node-list-meta-traffic"><span class="node-list-meta-label">Tx / Rx</span><strong>${escapeHtml(txDisplay)} / ${escapeHtml(rxDisplay)}</strong></div>`}
                 </div>
             </div>
             <div class="node-list-actions">
@@ -4998,9 +5678,17 @@ async function handleNodeDashboardListAction(button) {
         }
         try {
             await apiRequest(`/api/discovered-nodes/${encodeURIComponent(siteId)}`, { method: "DELETE" });
-            await loadNodeDashboard();
-            await loadMainDashboard();
+            currentNodeDashboardPayload = {
+                anchors: Array.isArray(currentNodeDashboardPayload?.anchors) ? currentNodeDashboardPayload.anchors : [],
+                discovered: Array.isArray(currentNodeDashboardPayload?.discovered)
+                    ? currentNodeDashboardPayload.discovered.filter((row) => String(row?.site_id || "").trim() !== siteId)
+                    : [],
+            };
+            renderNodeDashboardLists(currentNodeDashboardPayload);
             showDashboardFeedback("Discovered node deleted");
+            loadMainDashboard().catch((refreshError) => {
+                console.warn("Unable to refresh main dashboard after discovered-node delete", refreshError);
+            });
         } catch (error) {
             const dashboardError = document.getElementById("dashboard-error");
             if (dashboardError) {
@@ -5100,6 +5788,43 @@ function renderNodeDashboardLists(payload) {
     if (discoveredSearch && !discoveredSearch._nodeDashboardSearchBound) {
         discoveredSearch.addEventListener("input", () => renderNodeDashboardLists(currentNodeDashboardPayload));
         discoveredSearch._nodeDashboardSearchBound = true;
+    }
+
+    const flushButton = document.getElementById("flush-discovery-button");
+    if (flushButton instanceof HTMLButtonElement && !flushButton._nodeDashboardFlushBound) {
+        flushButton.addEventListener("click", async () => {
+            const currentRows = Array.isArray(currentNodeDashboardPayload?.discovered) ? currentNodeDashboardPayload.discovered : [];
+            const currentCount = currentRows.length;
+            const confirmed = window.confirm(
+                `Flush discovery and rebuild from current AN telemetry? This will clear ${currentCount} discovered node${currentCount === 1 ? "" : "s"} and force rediscovery.`,
+            );
+            if (!confirmed) {
+                return;
+            }
+            try {
+                const result = await apiRequest(buildNodeDashboardRequestUrl("/api/discovered-nodes/flush-discovery"), {
+                    method: "POST",
+                });
+                const rediscoveredRows = await apiRequest(buildNodeDashboardRequestUrl("/api/node-dashboard"));
+                currentNodeDashboardPayload = {
+                    anchors: Array.isArray(rediscoveredRows?.anchors) ? rediscoveredRows.anchors : [],
+                    discovered: Array.isArray(rediscoveredRows?.discovered) ? rediscoveredRows.discovered : [],
+                };
+                renderNodeDashboardLists(currentNodeDashboardPayload);
+                const rediscoveredCount = Number(result?.rediscovered_count || currentNodeDashboardPayload.discovered.length || 0);
+                showDashboardFeedback(`Discovery flushed. ${rediscoveredCount} discovered node${rediscoveredCount === 1 ? "" : "s"} rebuilt from AN data.`);
+                loadMainDashboard().catch((refreshError) => {
+                    console.warn("Unable to refresh main dashboard after discovery flush", refreshError);
+                });
+            } catch (error) {
+                const dashboardError = document.getElementById("dashboard-error");
+                if (dashboardError) {
+                    dashboardError.textContent = error.message || "Unable to flush discovery";
+                    dashboardError.hidden = false;
+                }
+            }
+        });
+        flushButton._nodeDashboardFlushBound = true;
     }
 }
 
@@ -5376,17 +6101,34 @@ async function handleDashboardServiceTableClick(event) {
 }
 
 function collectNodeFormPayload() {
+    const topologyRoot = document.getElementById("topology-root");
+    const nodeIdField = document.getElementById("node-node-id");
+    const includeInTopologyField = document.getElementById("node-include-in-topology");
+    const topologyLevelField = document.getElementById("node-topology-level");
+    const topologyUnitField = document.getElementById("node-topology-unit");
+    const enabledField = document.getElementById("node-enabled");
+    const inferredTopologyLevel = topologyRoot && topologyState.focusUnit ? 1 : 0;
+    const inferredTopologyUnit = topologyRoot
+        ? (topologyState.focusUnit || (inferredTopologyLevel === 0 ? "AGG" : "DIV HQ"))
+        : "AGG";
+
     return {
         name: document.getElementById("node-name").value.trim(),
-        node_id: document.getElementById("node-node-id").value.trim() || null,
+        node_id: nodeIdField instanceof HTMLInputElement ? (nodeIdField.value.trim() || null) : null,
         host: document.getElementById("node-host").value.trim(),
         web_port: Number(document.getElementById("node-web-port").value),
         ssh_port: Number(document.getElementById("node-ssh-port").value),
         location: document.getElementById("node-location").value.trim(),
-        include_in_topology: document.getElementById("node-include-in-topology").checked,
-        topology_level: Number(document.getElementById("node-topology-level").value),
-        topology_unit: document.getElementById("node-topology-unit").value,
-        enabled: document.getElementById("node-enabled").checked,
+        include_in_topology: includeInTopologyField instanceof HTMLInputElement ? includeInTopologyField.checked : Boolean(topologyRoot),
+        topology_level:
+            topologyLevelField instanceof HTMLSelectElement || topologyLevelField instanceof HTMLInputElement
+                ? Number(topologyLevelField.value)
+                : inferredTopologyLevel,
+        topology_unit:
+            topologyUnitField instanceof HTMLSelectElement || topologyUnitField instanceof HTMLInputElement
+                ? topologyUnitField.value
+                : inferredTopologyUnit,
+        enabled: enabledField instanceof HTMLInputElement ? enabledField.checked : true,
         notes: document.getElementById("node-notes").value.trim() || null,
         api_username: document.getElementById("node-api-username").value.trim() || null,
         api_password: document.getElementById("node-api-password").value.trim() || null,
@@ -5404,13 +6146,24 @@ async function handleNodeFormSubmit(event) {
     const url = nodeId ? `/api/nodes/${nodeId}` : "/api/nodes";
 
     try {
-        await apiRequest(url, {
+        const savedNode = await apiRequest(url, {
             method,
             body: JSON.stringify(payload),
         });
         await loadNodes();
         await loadNodeDashboard();
         await loadMainDashboard();
+        if (document.getElementById("topology-root")) {
+            await loadTopologyPage();
+            if (savedNode?.id != null) {
+                const topologyEntityId = `node-${savedNode.id}`;
+                const existingLayout = topologyState.layoutOverrides?.[topologyEntityId];
+                if (!existingLayout) {
+                    setTopologyEntityLayout(topologyEntityId, getNewTopologyNodeLayout());
+                    renderTopologyStage();
+                }
+            }
+        }
         if (keepNodeModalOpenAfterSave) {
             resetNodeForm();
             openNodeModal();
@@ -5436,9 +6189,15 @@ async function refreshAllNodes() {
     refreshButton.disabled = true;
 
     try {
-        currentNodes = sortNodesForDisplay(await apiRequest("/api/nodes/refresh", { method: "POST" }));
-        renderNodesTable(currentNodes);
-        showFeedback("Health checks refreshed.");
+        await apiRequest("/api/nodes/refresh", { method: "POST" });
+        await loadNodes();
+        await loadTopologyPage();
+        const frame = document.getElementById("topology-detail-frame");
+        const detailShell = document.getElementById("topology-detail-shell");
+        if (detailShell && !detailShell.hidden && frame instanceof HTMLIFrameElement && frame.src) {
+            frame.src = frame.src;
+        }
+        showFeedback("Seeker refresh completed.");
         document.getElementById("nodes-error").hidden = true;
     } catch (error) {
         const nodesError = document.getElementById("nodes-error");
@@ -5529,6 +6288,7 @@ async function handleNodeActionClick(event) {
 }
 
 window.addEventListener("DOMContentLoaded", () => {
+    applyThemeMode();
     mountThemeControl();
     safeStart(loadPlatformStatus, "platform-status");
     safeStart(loadNodes, "nodes");
@@ -5547,8 +6307,14 @@ window.addEventListener("DOMContentLoaded", () => {
     const mainDashboardServicesBody = document.getElementById("mainDashboardServicesBody");
     const cancelButton = document.getElementById("node-cancel-button");
     const saveAddAnotherButton = document.getElementById("node-save-add-another-button");
+    const deleteNodeButton = document.getElementById("node-delete-button");
     const openNodeModalButton = document.getElementById("open-node-modal-button");
     const nodeModalShell = document.getElementById("node-modal-shell");
+    const topologyInventoryShell = document.getElementById("topology-inventory-shell");
+    const topologyDetailShell = document.getElementById("topology-detail-shell");
+    const openTopologyInventoryButton = document.getElementById("open-topology-inventory-button");
+    const closeTopologyInventoryButton = document.getElementById("close-topology-inventory-button");
+    const closeTopologyDetailButton = document.getElementById("close-topology-detail-button");
     const refreshButton = document.getElementById("refresh-nodes-button");
     const dashboardRefreshButton = document.getElementById("dashboard-refresh-button");
     const dashboardRefreshMenu = document.getElementById("dashboard-refresh-menu");
@@ -5606,8 +6372,15 @@ window.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    if (deleteNodeButton) {
+        deleteNodeButton.addEventListener("click", () => {
+            deleteCurrentNodeFromModal();
+        });
+    }
+
     if (openNodeModalButton) {
         openNodeModalButton.addEventListener("click", () => {
+            closeTopologyInventory();
             resetNodeForm();
             openNodeModal();
         });
@@ -5632,6 +6405,58 @@ window.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    if (openTopologyInventoryButton) {
+        openTopologyInventoryButton.addEventListener("click", () => {
+            openTopologyInventory();
+        });
+    }
+
+    if (closeTopologyInventoryButton) {
+        closeTopologyInventoryButton.addEventListener("click", () => {
+            closeTopologyInventory();
+        });
+    }
+
+    if (topologyInventoryShell) {
+        topologyInventoryShell.addEventListener("click", (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) {
+                return;
+            }
+            if (target.dataset.modalClose === "topology-inventory") {
+                closeTopologyInventory();
+            }
+        });
+        document.addEventListener("keydown", (event) => {
+            if (event.key === "Escape" && !topologyInventoryShell.hidden) {
+                closeTopologyInventory();
+            }
+        });
+    }
+
+    if (closeTopologyDetailButton) {
+        closeTopologyDetailButton.addEventListener("click", () => {
+            closeTopologyDetail();
+        });
+    }
+
+    if (topologyDetailShell) {
+        topologyDetailShell.addEventListener("click", (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) {
+                return;
+            }
+            if (target.dataset.modalClose === "topology-detail") {
+                closeTopologyDetail();
+            }
+        });
+        document.addEventListener("keydown", (event) => {
+            if (event.key === "Escape" && !topologyDetailShell.hidden) {
+                closeTopologyDetail();
+            }
+        });
+    }
+
     if (refreshButton) {
         refreshButton.addEventListener("click", refreshAllNodes);
     }
@@ -5650,9 +6475,14 @@ window.addEventListener("DOMContentLoaded", () => {
                 return;
             }
 
-            const seconds = Number(target.dataset.seconds);
+            const option = target.closest("[data-seconds]");
+            if (!(option instanceof HTMLElement)) {
+                return;
+            }
 
-            if (!Number.isFinite(seconds)) {
+            const seconds = Number(option.dataset.seconds);
+
+            if (!Number.isFinite(seconds) || seconds <= 0) {
                 return;
             }
 
@@ -5660,6 +6490,24 @@ window.addEventListener("DOMContentLoaded", () => {
             setDashboardRefreshMenuOpen(false);
             applyDashboardRefreshInterval();
             showDashboardFeedback(`Updated ${formatRefreshLabel(seconds)}`);
+
+            if (document.getElementById("anchor-node-list") && document.getElementById("discovered-node-list")) {
+                loadNodeDashboard();
+                return;
+            }
+            if (document.getElementById("node-detail-root")) {
+                loadNodeDetailPage();
+                return;
+            }
+            if (document.getElementById("mainNodeGrid")) {
+                loadMainDashboard();
+                return;
+            }
+            if (document.getElementById("topology-root")) {
+                startTopologyTimers();
+                refreshTopologyPage();
+                return;
+            }
         });
         document.addEventListener("pointerdown", (event) => {
             const target = event.target;
@@ -5684,6 +6532,10 @@ window.addEventListener("DOMContentLoaded", () => {
         || document.getElementById("mainNodeGrid")
     ) {
         applyDashboardRefreshInterval();
+    }
+
+    if (document.getElementById("topology-root")) {
+        startTopologyTimers();
     }
 
     window.addEventListener("beforeunload", () => {

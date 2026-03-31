@@ -1,5 +1,6 @@
 import asyncio
-from datetime import datetime, timezone
+from collections import deque
+from datetime import datetime, timedelta, timezone
 import os
 import unittest
 
@@ -256,6 +257,80 @@ class NodeDashboardBackendTest(unittest.TestCase):
         self.assertEqual(len(payload["anchors"]), 1)
         self.assertEqual(len(payload["discovered"]), 1)
         self.assertEqual(payload["discovered"][0]["site_id"], "4001")
+
+    def test_get_cached_payload_applies_windowed_anchor_metrics(self) -> None:
+        backend = self._build_backend()
+        sampled_at = datetime.now(timezone.utc)
+        backend.node_dashboard_cache = {
+            "anchors": [{
+                "id": 1,
+                "name": "Anchor A",
+                "host": "10.0.0.1",
+                "web_port": 443,
+                "ssh_port": 22,
+                "web_scheme": "http",
+                "ssh_username": None,
+                "site": "Cloud",
+                "status": "healthy",
+                "web_ok": True,
+                "ssh_ok": True,
+                "ping_ok": True,
+                "ping_state": "good",
+                "ping_avg_ms": 100,
+                "latency_ms": 100,
+                "tx_bps": 1000,
+                "rx_bps": 2000,
+                "cpu_avg": 10.0,
+                "version": "1.0.0",
+                "sites_up": 1,
+                "sites_total": 1,
+                "wan_up": 1,
+                "wan_total": 1,
+                "last_seen": sampled_at.isoformat(),
+                "row_type": "anchor",
+                "pin_key": "anchor:1",
+                "detail_url": "/nodes/1",
+                "site_id": "1001",
+                "site_name": "Anchor A",
+                "unit": "DIV HQ",
+                "last_ping_up": sampled_at.isoformat(),
+                "discovered_parent_site_id": None,
+                "discovered_parent_name": None,
+                "discovered_level": 1,
+                "include_in_topology": True,
+                "topology_level": 1,
+                "tx_display": "1.0 Kbps",
+                "rx_display": "2.0 Kbps",
+            }],
+            "discovered": [],
+        }
+        backend.anchor_metric_history["anchor:1"] = deque([
+            {"sampled_at": sampled_at - timedelta(seconds=110), "latency_ms": 100, "tx_bps": 1000, "rx_bps": 2000, "ping_ok": True},
+            {"sampled_at": sampled_at - timedelta(seconds=70), "latency_ms": 100, "tx_bps": 1000, "rx_bps": 2000, "ping_ok": True},
+            {"sampled_at": sampled_at - timedelta(seconds=20), "latency_ms": 100, "tx_bps": 1000, "rx_bps": 2000, "ping_ok": True},
+            {"sampled_at": sampled_at - timedelta(seconds=10), "latency_ms": 100, "tx_bps": 3000, "rx_bps": 5000, "ping_ok": True},
+            {"sampled_at": sampled_at, "latency_ms": 180, "tx_bps": 5000, "rx_bps": 7000, "ping_ok": True},
+        ])
+
+        payload = backend.get_cached_payload(60)
+
+        self.assertEqual(payload["anchors"][0]["avg_latency_ms"], 127)
+        self.assertEqual(payload["anchors"][0]["latency_ms"], 127)
+        self.assertEqual(payload["anchors"][0]["latest_latency_ms"], 180)
+        self.assertEqual(payload["anchors"][0]["rtt_baseline_ms"], 100)
+        self.assertEqual(payload["anchors"][0]["rtt_state"], "warn")
+        self.assertEqual(payload["anchors"][0]["avg_tx_bps"], 3000)
+        self.assertEqual(payload["anchors"][0]["avg_rx_bps"], 4667)
+
+    def test_get_row_window_metrics_returns_empty_metrics_without_history(self) -> None:
+        backend = self._build_backend()
+
+        metrics = backend.get_row_window_metrics("discovered", "4001", 60)
+
+        self.assertEqual(metrics["refresh_window_seconds"], 60)
+        self.assertIsNone(metrics["avg_latency_ms"])
+        self.assertIsNone(metrics["latest_latency_ms"])
+        self.assertEqual(metrics["rtt_state"], "good")
 
     def test_refresh_discovered_inventory_does_not_churn_projection_when_ping_snapshot_is_unchanged(self) -> None:
         anchor = Node(
@@ -606,3 +681,143 @@ class NodeDashboardBackendTest(unittest.TestCase):
         self.assertIsNone(row["latency_ms"])
         self.assertEqual(row["tx_display"], "--")
         self.assertEqual(row["rx_display"], "--")
+
+    def test_discovered_version_persists_when_refresh_only_has_placeholder(self) -> None:
+        backend = self._build_backend()
+        self.session.add(
+            DiscoveredNode(
+                site_id="4001",
+                site_name="Delta",
+                host="10.10.10.10",
+                location="Cloud",
+                unit="DIV HQ",
+                version="1.2.3",
+                discovered_level=2,
+                discovered_parent_site_id="1001",
+                discovered_parent_name="Anchor A",
+                surfaced_by_names_json='["Anchor A"]',
+            )
+        )
+        self.session.commit()
+
+        backend._upsert_discovered_inventory_record(self.session, {
+            "site_id": "4001",
+            "site_name": "Delta",
+            "host": "10.10.10.10",
+            "location": "Cloud",
+            "unit": "DIV HQ",
+            "version": "--",
+            "discovered_level": 2,
+            "discovered_parent_site_id": "1001",
+            "discovered_parent_name": "Anchor A",
+            "surfaced_by_names": ["Anchor A"],
+        })
+        self.session.commit()
+
+        record = self.session.get(DiscoveredNode, "4001")
+        self.assertIsNotNone(record)
+        self.assertEqual(record.version, "1.2.3")
+
+    def test_anchor_version_persists_when_summary_version_is_placeholder(self) -> None:
+        anchor = Node(
+            id=1,
+            name="Anchor A",
+            node_id="1001",
+            host="10.0.0.1",
+            web_port=443,
+            ssh_port=22,
+            location="Cloud",
+            include_in_topology=True,
+            topology_level=1,
+            topology_unit="DIV HQ",
+            enabled=True,
+            notes=None,
+            api_username=None,
+            api_password=None,
+            api_use_https=False,
+            last_checked=datetime.now(timezone.utc),
+            latency_ms=12,
+        )
+
+        async def summarize_dashboard_node(node: Node) -> dict[str, object]:
+            return {
+                "id": node.id,
+                "name": node.name,
+                "host": node.host,
+                "web_port": node.web_port,
+                "ssh_port": node.ssh_port,
+                "web_scheme": "http",
+                "ssh_username": node.api_username,
+                "site": node.location,
+                "status": "healthy",
+                "web_ok": True,
+                "ssh_ok": True,
+                "ping_ok": True,
+                "ping_state": "good",
+                "ping_avg_ms": 12,
+                "latency_ms": 12,
+                "tx_bps": 1000,
+                "rx_bps": 2000,
+                "cpu_avg": 10.0,
+                "version": "--",
+                "sites_up": 1,
+                "sites_total": 1,
+                "wan_up": 1,
+                "wan_total": 1,
+                "last_seen": datetime.now(timezone.utc).isoformat(),
+            }
+
+        backend = NodeDashboardBackend(
+            seeker_detail_cache={},
+            summarize_dashboard_node=summarize_dashboard_node,
+            ping_host=_unused_sync,
+            check_tcp_port=_unused_sync,
+            get_bwv_cfg=_unused_async,
+            get_bwv_stats=_unused_async,
+            normalize_bwv_stats=lambda payload: {},
+            build_detail_payload=lambda *args, **kwargs: {},
+        )
+        backend.node_dashboard_cache["anchors"] = [{
+            "id": 1,
+            "name": "Anchor A",
+            "host": "10.0.0.1",
+            "web_port": 443,
+            "ssh_port": 22,
+            "web_scheme": "http",
+            "ssh_username": None,
+            "site": "Cloud",
+            "status": "healthy",
+            "web_ok": True,
+            "ssh_ok": True,
+            "ping_ok": True,
+            "ping_state": "good",
+            "ping_avg_ms": 12,
+            "latency_ms": 12,
+            "tx_bps": 1000,
+            "rx_bps": 2000,
+            "cpu_avg": 10.0,
+            "version": "v1.15.2",
+            "sites_up": 1,
+            "sites_total": 1,
+            "wan_up": 1,
+            "wan_total": 1,
+            "last_seen": datetime.now(timezone.utc).isoformat(),
+            "row_type": "anchor",
+            "pin_key": "anchor:1",
+            "detail_url": "/nodes/1",
+            "site_id": "1001",
+            "site_name": "Anchor A",
+            "unit": "DIV HQ",
+            "last_ping_up": datetime.now(timezone.utc).isoformat(),
+            "discovered_parent_site_id": None,
+            "discovered_parent_name": None,
+            "discovered_level": 1,
+            "include_in_topology": True,
+            "topology_level": 1,
+            "tx_display": "1.0 Kbps",
+            "rx_display": "2.0 Kbps",
+        }]
+
+        payload = asyncio.run(backend.build_projection(self.session, [anchor]))
+
+        self.assertEqual(payload["anchors"][0]["version"], "v1.15.2")

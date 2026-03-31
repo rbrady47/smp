@@ -631,16 +631,28 @@ a {
     font-weight: 700;
 }
 
+:root[data-theme="vader"] .node-summary-health-chip {
+    background: linear-gradient(180deg, rgba(20, 78, 52, 0.62) 0%, rgba(13, 56, 39, 0.56) 100%);
+    color: #a6f4c5;
+    border-color: rgba(74, 222, 128, 0.26);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+:root[data-theme="vader"] .node-summary-chip {
+    background: linear-gradient(180deg, rgba(20, 27, 39, 0.72) 0%, rgba(11, 16, 24, 0.58) 100%);
+    color: #d9e4f7;
+    border-color: rgba(102, 118, 147, 0.2);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
 .metric-gauge-card {
     display: grid;
     grid-template-rows: auto 1fr;
-    gap: 0.75rem;
+    gap: 0.35rem;
     padding: 0.85rem 0.7rem 0.95rem;
     border-radius: 20px;
     border: 1px solid var(--border);
-    background:
-        radial-gradient(circle at 50% 16%, rgba(118, 84, 255, 0.16), transparent 38%),
-        linear-gradient(180deg, #f8fbff 0%, #eef4fc 100%);
+    background: linear-gradient(180deg, #f8fbff 0%, #eef4fc 100%);
     box-shadow:
         inset 0 1px 0 rgba(255, 255, 255, 0.85),
         0 14px 30px rgba(13, 27, 54, 0.12);
@@ -674,11 +686,9 @@ a {
     position: absolute;
     inset: 8px;
     border-radius: 50%;
-    background:
-        radial-gradient(circle, rgba(137, 90, 255, 0.22), transparent 55%),
-        radial-gradient(circle at 50% 50%, rgba(96, 165, 250, 0.2), transparent 72%);
+    background: radial-gradient(circle, rgba(96, 165, 250, 0.14), transparent 58%);
     filter: blur(10px);
-    opacity: 0.9;
+    opacity: 0.72;
 }
 
 .metric-gauge {
@@ -690,7 +700,7 @@ a {
     place-items: center;
     background:
         radial-gradient(circle at center, rgba(13, 27, 54, 0.92) 0 48%, transparent 49%),
-        conic-gradient(from -220deg, #4f6cff 0deg, #7b5cff 135deg, #d06dff var(--gauge-deg), rgba(123, 141, 180, 0.22) var(--gauge-deg), rgba(123, 141, 180, 0.22) 320deg, rgba(123, 141, 180, 0) 360deg);
+        conic-gradient(from -220deg, #6a7b98 0deg, #7388aa 135deg, #8aa0c1 var(--gauge-deg), rgba(123, 141, 180, 0.18) var(--gauge-deg), rgba(123, 141, 180, 0.18) 320deg, rgba(123, 141, 180, 0) 360deg);
 }
 
 .metric-gauge::before {
@@ -713,12 +723,67 @@ a {
 
 :root[data-theme="dark"] .metric-gauge-card,
 :root[data-theme="vader"] .metric-gauge-card {
-    background:
-        radial-gradient(circle at 50% 14%, rgba(129, 90, 255, 0.18), transparent 40%),
-        linear-gradient(180deg, rgba(34, 47, 71, 0.98) 0%, rgba(28, 39, 60, 0.98) 100%);
+    background: linear-gradient(180deg, rgba(20, 27, 39, 0.92) 0%, rgba(11, 16, 24, 0.9) 100%);
     box-shadow:
         inset 0 1px 0 rgba(255, 255, 255, 0.04),
         0 16px 30px rgba(2, 8, 23, 0.28);
+}
+
+.metric-gauge-card-good {
+    border-color: rgba(52, 211, 153, 0.28);
+}
+
+.metric-gauge-card-warn {
+    border-color: rgba(245, 158, 11, 0.28);
+}
+
+.metric-gauge-card-down {
+    border-color: rgba(248, 113, 113, 0.28);
+}
+
+:root[data-theme="dark"] .metric-gauge-card-good,
+:root[data-theme="vader"] .metric-gauge-card-good {
+    border-color: rgba(74, 222, 128, 0.3);
+}
+
+:root[data-theme="dark"] .metric-gauge-card-warn,
+:root[data-theme="vader"] .metric-gauge-card-warn {
+    border-color: rgba(251, 191, 36, 0.3);
+}
+
+:root[data-theme="dark"] .metric-gauge-card-down,
+:root[data-theme="vader"] .metric-gauge-card-down {
+    border-color: rgba(252, 165, 165, 0.3);
+}
+
+.metric-gauge-card-good .metric-gauge-shell::before {
+    background: radial-gradient(circle, rgba(34, 197, 94, 0.22), transparent 58%);
+}
+
+.metric-gauge-card-warn .metric-gauge-shell::before {
+    background: radial-gradient(circle, rgba(245, 158, 11, 0.22), transparent 58%);
+}
+
+.metric-gauge-card-down .metric-gauge-shell::before {
+    background: radial-gradient(circle, rgba(248, 113, 113, 0.22), transparent 58%);
+}
+
+.metric-gauge-card-good .metric-gauge {
+    background:
+        radial-gradient(circle at center, rgba(13, 27, 54, 0.92) 0 48%, transparent 49%),
+        conic-gradient(from -220deg, #2ec27e 0deg, #44d48f 135deg, #77f0ac var(--gauge-deg), rgba(123, 141, 180, 0.18) var(--gauge-deg), rgba(123, 141, 180, 0.18) 320deg, rgba(123, 141, 180, 0) 360deg);
+}
+
+.metric-gauge-card-warn .metric-gauge {
+    background:
+        radial-gradient(circle at center, rgba(13, 27, 54, 0.92) 0 48%, transparent 49%),
+        conic-gradient(from -220deg, #f59e0b 0deg, #f7b84c 135deg, #fbd38d var(--gauge-deg), rgba(123, 141, 180, 0.18) var(--gauge-deg), rgba(123, 141, 180, 0.18) 320deg, rgba(123, 141, 180, 0) 360deg);
+}
+
+.metric-gauge-card-down .metric-gauge {
+    background:
+        radial-gradient(circle at center, rgba(13, 27, 54, 0.92) 0 48%, transparent 49%),
+        conic-gradient(from -220deg, #ef4444 0deg, #f87171 135deg, #fca5a5 var(--gauge-deg), rgba(123, 141, 180, 0.18) var(--gauge-deg), rgba(123, 141, 180, 0.18) 320deg, rgba(123, 141, 180, 0) 360deg);
 }
 
 .metric-gauge::after {
@@ -747,7 +812,19 @@ a {
     box-shadow:
         inset 0 1px 0 rgba(255, 255, 255, 0.03),
         0 0 18px rgba(91, 92, 226, 0.18);
+    overflow: hidden;
     z-index: 1;
+}
+
+.metric-gauge-center::before {
+    content: "";
+    position: absolute;
+    inset: 10%;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(96, 165, 250, 0.16), transparent 68%);
+    filter: blur(10px);
+    opacity: 0.72;
+    z-index: 0;
 }
 
 .metric-gauge-value {
@@ -759,6 +836,8 @@ a {
     max-width: 100%;
     overflow-wrap: anywhere;
     letter-spacing: -0.03em;
+    position: relative;
+    z-index: 1;
 }
 
 .metric-gauge-unit {
@@ -767,6 +846,20 @@ a {
     font-weight: 800;
     letter-spacing: 0.1em;
     text-transform: uppercase;
+    position: relative;
+    z-index: 1;
+}
+
+.metric-gauge-card-good .metric-gauge-center::before {
+    background: radial-gradient(circle, rgba(34, 197, 94, 0.2), transparent 68%);
+}
+
+.metric-gauge-card-warn .metric-gauge-center::before {
+    background: radial-gradient(circle, rgba(245, 158, 11, 0.22), transparent 68%);
+}
+
+.metric-gauge-card-down .metric-gauge-center::before {
+    background: radial-gradient(circle, rgba(248, 113, 113, 0.24), transparent 68%);
 }
 
 @media (max-width: 900px) {
@@ -975,6 +1068,58 @@ a {
     text-decoration: none;
 }
 
+.topology-last-updated {
+    margin: 0.3rem 0 0;
+    font-size: 0.7rem;
+    color: var(--text-muted, rgba(160, 180, 210, 0.55));
+    letter-spacing: 0.02em;
+}
+
+.topology-refresh-control {
+    position: relative;
+}
+
+.topology-refresh-control .dashboard-refresh-menu {
+    position: absolute;
+    top: calc(100% + 0.45rem);
+    right: 0;
+    z-index: 90;
+    display: grid;
+    gap: 0.25rem;
+    min-width: 9rem;
+    padding: 0.4rem;
+    border-radius: 14px;
+    border: 1px solid rgba(86, 118, 172, 0.34);
+    background: rgba(16, 27, 46, 0.98);
+    box-shadow:
+        0 18px 34px rgba(4, 12, 24, 0.5),
+        0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+    backdrop-filter: blur(12px);
+}
+
+.topology-refresh-control .dashboard-refresh-option {
+    width: 100%;
+    border: 1px solid rgba(86, 118, 172, 0.18);
+    border-radius: 10px;
+    background: rgba(33, 47, 74, 0.78);
+    color: #eff6ff;
+    font: inherit;
+    font-weight: 700;
+    font-size: 0.85rem;
+    text-align: left;
+    padding: 0.55rem 0.75rem;
+    cursor: pointer;
+    transition: background-color 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+}
+
+.topology-refresh-control .dashboard-refresh-option:hover,
+.topology-refresh-control .dashboard-refresh-option:focus-visible {
+    background: rgba(52, 74, 112, 0.92);
+    border-color: rgba(123, 214, 255, 0.36);
+    transform: translateY(-1px);
+    outline: none;
+}
+
 .topology-stage {
     position: relative;
     min-height: 940px;
@@ -1168,7 +1313,7 @@ a {
 .topology-link-cluster { stroke-dasharray: 8 8; }
 .topology-link-healthy { stroke: rgba(67, 227, 129, 0.72); }
 .topology-link-degraded { stroke: rgba(247, 193, 77, 0.72); }
-.topology-link-down { stroke: rgba(255, 59, 59, 0.82); }
+.topology-link-down { stroke: rgba(255, 42, 42, 0.9); }
 .topology-link-down {
     animation: topology-link-down-pulse 2.2s ease-in-out infinite;
     transform-origin: center;
@@ -1262,6 +1407,7 @@ a {
 
 .topology-entity {
     position: absolute;
+    z-index: 1;
     transform: translate(-50%, -50%);
     display: flex;
     flex-direction: column;
@@ -1288,6 +1434,19 @@ a {
     overflow: visible;
 }
 
+.topology-node:not(.topology-cluster) {
+    align-items: center;
+    justify-content: center;
+    gap: 0.28rem;
+    min-width: 0;
+    padding: 0.3rem;
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    box-shadow: none;
+    text-align: center;
+}
+
 :root[data-theme="vader"] .topology-entity {
     border-color: rgba(104, 119, 148, 0.22);
     background:
@@ -1300,8 +1459,16 @@ a {
         0 18px 40px rgba(0, 0, 0, 0.32);
 }
 
+:root[data-theme="vader"] .topology-node:not(.topology-cluster) {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    backdrop-filter: none;
+}
+
 .topology-entity:hover,
 .topology-entity:focus-visible {
+    z-index: 30;
     transform: translate(-50%, -50%) scale(1.03);
     border-color: rgba(123, 214, 255, 0.46);
     box-shadow:
@@ -1312,6 +1479,7 @@ a {
 }
 
 .topology-entity.is-selected {
+    z-index: 28;
     border-color: rgba(123, 214, 255, 0.7);
     box-shadow:
         0 0 0 1px rgba(98, 214, 255, 0.14),
@@ -1319,7 +1487,22 @@ a {
         0 0 24px rgba(98, 214, 255, 0.24);
 }
 
+.topology-node:not(.topology-cluster):hover,
+.topology-node:not(.topology-cluster):focus-visible {
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+}
+
+.topology-node:not(.topology-cluster).is-selected,
+.topology-stage.is-editing .topology-node:not(.topology-cluster).is-multi-selected {
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+}
+
 .topology-stage.is-editing .topology-entity.is-multi-selected {
+    z-index: 29;
     border-color: rgba(123, 214, 255, 0.82);
     box-shadow:
         0 0 0 2px rgba(98, 214, 255, 0.18),
@@ -1369,8 +1552,8 @@ a {
 }
 
 .topology-anchor-point.is-connected-down {
-    background: rgba(255, 59, 59, 0.92);
-    box-shadow: 0 0 0 1px rgba(255, 59, 59, 0.2), 0 0 10px rgba(255, 59, 59, 0.28);
+    background: rgba(255, 42, 42, 0.94);
+    box-shadow: 0 0 0 1px rgba(255, 42, 42, 0.24), 0 0 10px rgba(255, 42, 42, 0.34);
 }
 
 .topology-anchor-point.is-connected-neutral {
@@ -1510,10 +1693,14 @@ a {
     display: block;
     width: 100%;
     overflow: hidden;
-    white-space: nowrap;
     text-overflow: ellipsis;
-    font-size: 0.98rem;
+    font-size: 0.78rem;
     font-weight: 800;
+    line-height: 1.05;
+    text-wrap: balance;
+    max-width: 8.5rem;
+    white-space: normal;
+    text-shadow: 0 2px 16px rgba(6, 12, 24, 0.92);
 }
 
 .topology-node-icon {
@@ -1524,9 +1711,9 @@ a {
     isolation: isolate;
     width: 2.5rem;
     height: 2.5rem;
-    margin-top: auto;
     align-self: center;
-    margin-bottom: 0.22rem;
+    margin-top: 0;
+    margin-bottom: 0.15rem;
     color: #8b5cf6;
     filter: drop-shadow(0 0 12px rgba(139, 92, 246, 0.18));
 }
@@ -1579,8 +1766,8 @@ a {
 }
 
 .topology-node-icon-anchor {
-    width: 1.9rem;
-    height: 1.9rem;
+    width: 2.45rem;
+    height: 2.45rem;
     margin-inline: auto;
     margin-bottom: 0;
 }
@@ -1615,8 +1802,8 @@ a {
 }
 
 .topology-node-icon-status-down {
-    color: #ff4d4f;
-    filter: drop-shadow(0 0 12px rgba(255, 77, 79, 0.24));
+    color: #ff3030;
+    filter: drop-shadow(0 0 12px rgba(255, 48, 48, 0.28));
     animation: topology-status-pulse 2.2s ease-in-out infinite;
 }
 
@@ -1627,15 +1814,17 @@ a {
 
 .topology-node-meta {
     display: block;
-    margin-top: 0.15rem;
+    margin-top: 0;
     color: #9cb3d8;
-    font-size: 0.78rem;
+    font-size: 0.72rem;
     font-weight: 700;
     line-height: 1.15;
+    text-shadow: 0 2px 14px rgba(6, 12, 24, 0.86);
 }
 
+
 .topology-node-lvl1 .topology-node-name {
-    font-size: 0.86rem;
+    font-size: 0.8rem;
     line-height: 1.05;
     text-transform: uppercase;
 }
@@ -1645,8 +1834,15 @@ a {
 }
 
 .topology-node-lvl1 .topology-node-meta {
-    font-size: 0.68rem;
+    font-size: 0.64rem;
     line-height: 1.05;
+}
+
+.topology-node:not(.topology-cluster).is-selected .topology-node-icon,
+.topology-stage.is-editing .topology-node:not(.topology-cluster).is-multi-selected .topology-node-icon {
+    filter:
+        drop-shadow(0 0 0.18rem rgba(255, 255, 255, 0.22))
+        drop-shadow(0 0 1rem rgba(98, 214, 255, 0.42));
 }
 
 .topology-resize-handle {
@@ -1776,8 +1972,8 @@ a {
 }
 
 .topology-cluster-health-icon-down {
-    color: #ff4d4f;
-    filter: drop-shadow(0 0 10px rgba(255, 77, 79, 0.2));
+    color: #ff3030;
+    filter: drop-shadow(0 0 10px rgba(255, 48, 48, 0.24));
     animation: topology-status-pulse 2.2s ease-in-out infinite;
 }
 
@@ -1805,14 +2001,14 @@ a {
         box-shadow:
             inset 0 1px 0 rgba(255, 255, 255, 0.04),
             0 16px 36px rgba(3, 10, 22, 0.34),
-            0 0 0 rgba(255, 59, 59, 0.18);
+            0 0 0 rgba(255, 42, 42, 0.2);
     }
 
     50% {
         box-shadow:
             inset 0 1px 0 rgba(255, 255, 255, 0.04),
             0 16px 36px rgba(3, 10, 22, 0.34),
-            0 0 26px rgba(255, 59, 59, 0.32);
+            0 0 26px rgba(255, 42, 42, 0.38);
     }
 }
 
@@ -1821,13 +2017,13 @@ a {
     100% {
         opacity: 0.7;
         stroke-width: 2.4;
-        filter: drop-shadow(0 0 8px rgba(255, 59, 59, 0.2));
+        filter: drop-shadow(0 0 8px rgba(255, 42, 42, 0.24));
     }
 
     50% {
         opacity: 0.95;
         stroke-width: 3;
-        filter: drop-shadow(0 0 14px rgba(255, 59, 59, 0.38));
+        filter: drop-shadow(0 0 14px rgba(255, 42, 42, 0.44));
     }
 }
 
@@ -1835,13 +2031,13 @@ a {
     0%,
     100% {
         opacity: 1;
-        box-shadow: 0 0 12px rgba(255, 77, 79, 0.32);
+        box-shadow: 0 0 12px rgba(255, 48, 48, 0.36);
         transform: scale(1);
     }
 
     50% {
         opacity: 0.74;
-        box-shadow: 0 0 18px rgba(255, 77, 79, 0.46);
+        box-shadow: 0 0 18px rgba(255, 48, 48, 0.52);
         transform: scale(1.18);
     }
 }
@@ -1855,7 +2051,7 @@ a {
 }
 
 .topology-status-down {
-    border-color: rgba(255, 59, 59, 0.42);
+    border-color: rgba(255, 42, 42, 0.5);
 }
 
 .topology-service-cloud.topology-status-down {
@@ -1969,6 +2165,114 @@ a {
     backdrop-filter: blur(10px);
 }
 
+.topology-node-tooltip {
+    position: absolute;
+    left: 50%;
+    top: calc(100% + 12px);
+    z-index: 31;
+    display: grid;
+    gap: 0.45rem;
+    min-width: 22rem;
+    max-width: 28rem;
+    padding: 0.85rem 1rem;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 73, 73, 0.26);
+    background:
+        radial-gradient(circle at top, rgba(122, 18, 31, 0.16), transparent 52%),
+        linear-gradient(180deg, rgba(12, 14, 20, 1), rgba(5, 6, 10, 1));
+    box-shadow:
+        0 20px 38px rgba(0, 0, 0, 0.72),
+        0 0 24px rgba(142, 16, 32, 0.16),
+        0 0 0 1px rgba(255, 255, 255, 0.03) inset,
+        0 0 0 1px rgba(0, 0, 0, 0.58);
+    color: rgba(240, 245, 255, 0.94);
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, -6px);
+    transition: opacity 160ms ease, transform 160ms ease;
+    isolation: isolate;
+}
+
+.topology-node:hover .topology-node-tooltip,
+.topology-node:focus-visible .topology-node-tooltip {
+    opacity: 1;
+    transform: translate(-50%, 0);
+}
+
+.topology-stage.is-editing .topology-node:hover .topology-node-tooltip,
+.topology-stage.is-editing .topology-node:focus-visible .topology-node-tooltip,
+.topology-stage.is-editing .topology-node.is-tooltip-pinned .topology-node-tooltip {
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, -6px);
+}
+
+.topology-node.is-tooltip-pinned .topology-node-tooltip {
+    opacity: 1;
+    transform: translate(-50%, 0);
+    pointer-events: auto;
+    z-index: 35;
+}
+
+.topology-node-tooltip-title {
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(255, 234, 177, 0.96);
+    text-shadow: 0 0 12px rgba(255, 194, 92, 0.16);
+}
+
+.topology-node-tooltip-reason {
+    font-size: 0.73rem;
+    line-height: 1.35;
+    color: rgba(224, 231, 247, 0.82);
+    padding-bottom: 0.2rem;
+    border-bottom: 1px solid rgba(255, 73, 73, 0.12);
+    text-wrap: pretty;
+}
+
+.topology-node-tooltip-grid {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.2rem 0.65rem;
+    align-items: baseline;
+}
+
+.topology-node-tooltip-label {
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(165, 176, 205, 0.68);
+}
+
+.topology-node-tooltip-value {
+    font-size: 0.76rem;
+    font-weight: 600;
+    color: rgba(240, 245, 255, 0.92);
+    text-align: right;
+}
+
+.topology-drawer-header.is-draggable {
+    cursor: move;
+    user-select: none;
+}
+
+.topology-drawer-header.is-draggable::after {
+    content: "Drag";
+    display: inline-flex;
+    align-self: start;
+    margin-top: 0.2rem;
+    padding: 0.18rem 0.48rem;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+    color: var(--muted);
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
 .topology-drawer.is-open {
     opacity: 1;
     transform: translateX(0);
@@ -1994,6 +2298,41 @@ a {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.85rem;
+}
+
+.topology-label-editor {
+    display: grid;
+    gap: 0.45rem;
+}
+
+.topology-label-editor-copy {
+    color: var(--muted);
+    font-size: 0.84rem;
+    font-weight: 600;
+}
+
+.topology-label-editor-input {
+    width: 100%;
+    min-height: 2.7rem;
+    padding: 0.7rem 0.8rem;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface-alt) 78%, transparent);
+    color: var(--text);
+    font: inherit;
+    font-weight: 700;
+}
+
+.topology-label-editor-input:focus-visible {
+    outline: none;
+    border-color: rgba(123, 214, 255, 0.52);
+    box-shadow: 0 0 0 3px rgba(123, 214, 255, 0.14);
+}
+
+.topology-label-editor-actions {
+    display: flex;
+    gap: 0.6rem;
+    flex-wrap: wrap;
 }
 
 .topology-drawer p {
@@ -2034,8 +2373,8 @@ a {
 }
 
 .topology-state-log-severity-down {
-    background: #ff4d4f;
-    box-shadow: 0 0 12px rgba(255, 77, 79, 0.32);
+    background: #ff3030;
+    box-shadow: 0 0 12px rgba(255, 48, 48, 0.38);
     animation: topology-log-alert-pulse 1.9s ease-in-out infinite;
 }
 
@@ -2438,6 +2777,7 @@ a {
     color: #ffd166;
     background: rgba(255, 209, 102, 0.14);
     border-color: rgba(255, 209, 102, 0.28);
+    box-shadow: inset 0 0 0 1px rgba(255, 209, 102, 0.12);
 }
 
 .dashboard-service-pill,
@@ -3039,6 +3379,16 @@ body.modal-open {
     margin: 0 0 0.2rem;
 }
 
+.node-list-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.node-list-flush-button {
+    white-space: nowrap;
+}
+
 .node-list-search {
     width: min(100%, 24rem);
 }
@@ -3209,9 +3559,33 @@ body.modal-open {
     white-space: nowrap;
 }
 
+.node-list-meta-totals strong {
+    font-size: 0.74rem;
+    white-space: nowrap;
+    color: rgba(165, 185, 230, 0.78);
+}
+
 .node-list-rtt-chip {
     padding: 0.18rem 0.46rem;
     gap: 0.32rem;
+}
+
+.node-list-rtt-chip.ping-good {
+    background: rgba(16, 185, 129, 0.18);
+    border-color: rgba(52, 211, 153, 0.36);
+    box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.08);
+}
+
+.node-list-rtt-chip.ping-warn {
+    background: rgba(245, 158, 11, 0.18);
+    border-color: rgba(245, 158, 11, 0.34);
+    box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.08);
+}
+
+.node-list-rtt-chip.ping-down {
+    background: rgba(248, 113, 113, 0.18);
+    border-color: rgba(248, 113, 113, 0.34);
+    box-shadow: inset 0 0 0 1px rgba(248, 113, 113, 0.08);
 }
 
 .node-list-rtt-chip .metric-chip-label,
@@ -3280,6 +3654,11 @@ body.modal-open {
 .node-list-actions .dashboard-pin-button.pinned {
     background: rgba(255, 209, 102, 0.14);
     border-color: rgba(255, 209, 102, 0.28);
+    color: #ffe39a;
+    box-shadow:
+        inset 0 0 0 1px rgba(255, 209, 102, 0.16),
+        0 0 0 1px rgba(255, 209, 102, 0.08),
+        0 0 18px rgba(255, 209, 102, 0.16);
 }
 
 .modal-shell {
@@ -3315,6 +3694,32 @@ body.modal-open {
     box-shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
 }
 
+.topology-inventory-card {
+    width: min(1728px, calc(100vw - 3rem));
+}
+
+.topology-detail-card {
+    width: min(1560px, calc(100vw - 7rem));
+    height: min(1040px, calc(100vh - 7rem));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding-bottom: 0;
+}
+
+.topology-detail-header {
+    margin-bottom: 1rem;
+}
+
+.topology-detail-frame {
+    flex: 1;
+    width: 100%;
+    min-height: 0;
+    border: 1px solid var(--border);
+    border-radius: 18px 18px 0 0;
+    background: var(--surface);
+}
+
 :root[data-theme="dark"] .modal-card,
 :root[data-theme="vader"] .modal-card {
     background: rgba(22, 36, 58, 0.98);
@@ -3324,6 +3729,30 @@ body.modal-open {
 :root[data-theme="vader"] .modal-card {
     background: rgba(8, 13, 22, 0.97);
     border-color: rgba(95, 116, 148, 0.24);
+}
+
+:root[data-theme="vader"] .topology-detail-frame {
+    background: rgba(8, 13, 22, 0.97);
+    border-color: rgba(95, 116, 148, 0.2);
+}
+
+.embedded-detail-body {
+    overflow: auto;
+}
+
+.embedded-detail-body .detail-container {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 0 0.75rem 1.5rem;
+}
+
+.embedded-detail-body .detail-hero {
+    display: none;
+}
+
+.embedded-detail-body .detail-header-card {
+    margin-top: 0;
 }
 
 .node-modal-card .node-form {
@@ -3376,6 +3805,25 @@ body.modal-open {
 
 .table-message {
     color: var(--muted);
+}
+
+.topology-empty-state {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+    text-align: center;
+    color: var(--muted);
+    pointer-events: none;
+}
+
+.topology-empty-state strong {
+    color: var(--text);
+    font-size: 1.15rem;
+    letter-spacing: 0.03em;
 }
 
 .detail-link-chip {
@@ -3489,6 +3937,49 @@ body.modal-open {
 
 .action-button:last-child {
     margin-right: 0;
+}
+
+.inventory-action-button {
+    width: 2.9rem;
+    height: 2.9rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 0.5rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface-alt);
+    color: var(--text);
+    cursor: pointer;
+    transition: transform 0.18s ease, border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
+}
+
+.inventory-action-button:last-child {
+    margin-right: 0;
+}
+
+.inventory-action-button:hover {
+    transform: translateY(-1px);
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+    color: var(--accent);
+}
+
+.inventory-action-button svg {
+    width: 1.15rem;
+    height: 1.15rem;
+    fill: currentColor;
+}
+
+.inventory-action-button-danger {
+    color: #f6b1b1;
+    background: rgba(112, 28, 28, 0.22);
+    border-color: rgba(154, 54, 54, 0.28);
+}
+
+.inventory-action-button-danger:hover {
+    color: #ffc7c7;
+    border-color: rgba(196, 77, 77, 0.45);
+    background: rgba(130, 32, 32, 0.28);
 }
 
 .row-editing {
@@ -3826,10 +4317,70 @@ body.modal-open {
     background: rgba(255, 255, 255, 0.06);
 }
 
+:root[data-theme="vader"] .dashboard-pin-button.pinned,
+:root[data-theme="vader"] .dashboard-table-pin.pinned {
+    color: #ffe49a;
+    background: linear-gradient(180deg, rgba(118, 83, 14, 0.72) 0%, rgba(74, 54, 12, 0.66) 100%);
+    border-color: rgba(255, 209, 102, 0.52);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 245, 201, 0.16),
+        0 0 0 1px rgba(255, 209, 102, 0.12),
+        0 0 18px rgba(255, 209, 102, 0.18);
+}
+
+:root[data-theme="vader"] .dashboard-pin-button.pinned:hover,
+:root[data-theme="vader"] .dashboard-table-pin.pinned:hover,
+:root[data-theme="vader"] .dashboard-pin-button.pinned:focus-visible,
+:root[data-theme="vader"] .dashboard-table-pin.pinned:focus-visible {
+    color: #fff2c4;
+    background: linear-gradient(180deg, rgba(138, 97, 20, 0.78) 0%, rgba(93, 67, 16, 0.72) 100%);
+    border-color: rgba(255, 221, 128, 0.62);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 248, 217, 0.2),
+        0 0 0 1px rgba(255, 209, 102, 0.16),
+        0 0 22px rgba(255, 209, 102, 0.24);
+}
+
 :root[data-theme="vader"] .metric-chip,
 :root[data-theme="vader"] .node-status {
     background: rgba(255, 255, 255, 0.075);
     border-color: rgba(255, 255, 255, 0.11);
+}
+
+:root[data-theme="vader"] .metric-chip-rtt.ping-good {
+    background: rgba(52, 211, 153, 0.22);
+    border-color: rgba(52, 211, 153, 0.42);
+    color: #e8fff6;
+}
+
+:root[data-theme="vader"] .metric-chip-rtt.ping-warn {
+    background: rgba(245, 158, 11, 0.26);
+    border-color: rgba(245, 158, 11, 0.46);
+    color: #fff4d6;
+}
+
+:root[data-theme="vader"] .metric-chip-rtt.ping-down {
+    background: rgba(248, 113, 113, 0.26);
+    border-color: rgba(248, 113, 113, 0.44);
+    color: #ffe7e7;
+}
+
+:root[data-theme="vader"] .node-list-rtt-chip.ping-good {
+    background: rgba(22, 163, 74, 0.28);
+    border-color: rgba(74, 222, 128, 0.46);
+    box-shadow: inset 0 0 0 1px rgba(134, 239, 172, 0.12), 0 0 12px rgba(34, 197, 94, 0.1);
+}
+
+:root[data-theme="vader"] .node-list-rtt-chip.ping-warn {
+    background: rgba(217, 119, 6, 0.28);
+    border-color: rgba(251, 191, 36, 0.46);
+    box-shadow: inset 0 0 0 1px rgba(253, 224, 71, 0.12), 0 0 12px rgba(245, 158, 11, 0.08);
+}
+
+:root[data-theme="vader"] .node-list-rtt-chip.ping-down {
+    background: rgba(185, 28, 28, 0.28);
+    border-color: rgba(252, 165, 165, 0.42);
+    box-shadow: inset 0 0 0 1px rgba(254, 202, 202, 0.1), 0 0 12px rgba(248, 113, 113, 0.08);
 }
 
 :root[data-theme="vader"] .service-link.ok {

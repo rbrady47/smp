@@ -3,10 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.models import DiscoveredNode, DiscoveredNodeObservation, Node
+from app.models import DiscoveredNode, DiscoveredNodeObservation, Node, NodeRelationship
 from app.node_projection_service import build_anchor_records
 
 
@@ -56,6 +56,23 @@ def _candidate_source(site_id: str | None, name: str | None, row_type: str) -> d
     }
 
 
+def _tunnel_row_is_eligible(row: dict[str, object]) -> bool:
+    if not isinstance(row, dict):
+        return False
+    if str(row.get("ping") or "").strip().lower() != "up":
+        return False
+
+    bitmap = str(row.get("tunnel_up_bitmap") or "").strip()
+    if bitmap and "1" in bitmap:
+        return True
+
+    tunnel_health = row.get("tunnel_health")
+    if isinstance(tunnel_health, list):
+        return any(str(value or "").strip().lower() == "up" for value in tunnel_health)
+
+    return False
+
+
 def _merge_discovered_candidate(
     backend: Any,
     discovery_candidates: dict[str, dict[str, object]],
@@ -73,6 +90,8 @@ def _merge_discovered_candidate(
     source_entry = _candidate_source(source_site_id, source_site_name, source_row_type)
 
     for row in tunnels:
+        if not _tunnel_row_is_eligible(row):
+            continue
         site_id = str(row.get("mate_site_id") or "").strip()
         if not site_id or site_id in anchor_by_site_id or site_id in backend.discovered_node_tombstones:
             continue
@@ -134,27 +153,6 @@ def build_discovery_candidates(
             anchor_by_site_id=anchor_by_site_id,
         )
 
-    for cached in backend.discovered_node_cache.values():
-        if not isinstance(cached, dict):
-            continue
-        cached_detail = cached.get("detail") if isinstance(cached.get("detail"), dict) else {}
-        tunnels = cached_detail.get("tunnels") if isinstance(cached_detail.get("tunnels"), list) else []
-        if not tunnels:
-            continue
-        _merge_discovered_candidate(
-            backend,
-            discovery_candidates,
-            source_row_type="discovered",
-            source_site_id=str(cached.get("site_id") or "").strip() or None,
-            source_site_name=str(cached.get("site_name") or "").strip() or None,
-            source_location=str(cached.get("location") or "").strip() or None,
-            source_unit=str(cached.get("unit") or "").strip() or None,
-            source_level=int(cached.get("discovered_level") or cached.get("level") or 2),
-            tunnels=[row for row in tunnels if isinstance(row, dict)],
-            source_node=None,
-            anchor_by_site_id=anchor_by_site_id,
-        )
-
     return discovery_candidates
 
 
@@ -182,6 +180,7 @@ async def refresh_discovered_inventory(backend: Any, db: Session, nodes: list[No
     discovery_candidates = build_discovery_candidates(backend, nodes, anchor_by_site_id)
     now = datetime.now(timezone.utc)
     refreshed_site_ids: set[str] = set()
+    deleted_site_ids: set[str] = set()
 
     for site_id, candidate in discovery_candidates.items():
         ping_payload = await backend.get_discovered_ping_snapshot(site_id, str(candidate["host"]))
@@ -201,7 +200,10 @@ async def refresh_discovered_inventory(backend: Any, db: Session, nodes: list[No
             "host": str(candidate.get("host") or cached.get("host") or "--"),
             "location": str(candidate.get("location") or cached.get("location") or "--"),
             "unit": str(candidate.get("unit") or cached.get("unit") or "--"),
-            "version": str(cached.get("version") or "--"),
+            "version": backend._prefer_discovered_version(
+                persisted_discovered.get(site_id, {}).get("version"),
+                cached.get("version"),
+            ) or "--",
             "latency_ms": ping_payload.get("latency_ms") if ping_up else None,
             "tx_bps": cached.get("tx_bps", 0) if ping_up else 0,
             "rx_bps": cached.get("rx_bps", 0) if ping_up else 0,
@@ -228,6 +230,9 @@ async def refresh_discovered_inventory(backend: Any, db: Session, nodes: list[No
         for source in candidate.get("surfaced_by_sources") if isinstance(candidate.get("surfaced_by_sources"), list) else []:
             entry["surfaced_by_sources"] = _merge_source_entries(entry.get("surfaced_by_sources"), source)
         backend._update_discovered_ping_timestamps(entry, ping_up=ping_up, observed_at=observed_at)
+        if not ping_up:
+            deleted_site_ids.add(site_id)
+            continue
         backend._store_discovered_node_cache(site_id, entry)
         backend._upsert_discovered_record(db, entry)
         refreshed_site_ids.add(site_id)
@@ -245,52 +250,33 @@ async def refresh_discovered_inventory(backend: Any, db: Session, nodes: list[No
         *persisted_discovered.keys(),
         *(site_id for site_id, row in backend.discovered_node_cache.items() if isinstance(row, dict)),
     } - refreshed_site_ids
+    stale_site_ids |= deleted_site_ids
+    prunable_site_ids: list[str] = []
     for site_id in stale_site_ids:
         if site_id in anchor_by_site_id or site_id in backend.discovered_node_tombstones:
             continue
-        cached = {
-            **persisted_discovered.get(site_id, {}),
-            **(backend.discovered_node_cache.get(site_id, {}) if isinstance(backend.discovered_node_cache.get(site_id), dict) else {}),
-        }
-        if not cached:
-            continue
-        observed_at = now
-        entry = {
-            **cached,
-            "row_type": "discovered",
-            "pin_key": backend._discovered_pin_key(site_id),
-            "detail_url": f"/nodes/discovered/{site_id}",
-            "site_id": site_id,
-            "site_name": backend._prefer_discovered_site_name(cached.get("site_name"), None, site_id) or f"Site {site_id}",
-            "host": str(cached.get("host") or "--"),
-            "location": str(cached.get("location") or "--"),
-            "unit": str(cached.get("unit") or "--"),
-            "version": str(cached.get("version") or "--"),
-            "latency_ms": None,
-            "tx_bps": 0,
-            "rx_bps": 0,
-            "tx_display": "--",
-            "rx_display": "--",
-            "ping": "Down",
-            "web_ok": False,
-            "ssh_ok": False,
-            "last_seen": cached.get("last_seen"),
-            "last_ping_up": cached.get("last_ping_up"),
-            "ping_down_since": cached.get("ping_down_since"),
-            "discovered_parent_site_id": cached.get("discovered_parent_site_id") or cached.get("surfaced_by_site_id"),
-            "discovered_parent_name": cached.get("discovered_parent_name") or cached.get("surfaced_by_name"),
-            "surfaced_by_names": backend._merge_discovered_sources(cached.get("surfaced_by_names")),
-            "surfaced_by_sources": _merge_source_entries(cached.get("surfaced_by_sources"), None),
-            "discovered_level": int(cached.get("discovered_level") or cached.get("level") or 2),
-            "detail": cached.get("detail", {}),
-            "probed_at": cached.get("probed_at"),
-            "level": int(cached.get("discovered_level") or cached.get("level") or 2),
-            "surfaced_by_site_id": cached.get("surfaced_by_site_id"),
-            "surfaced_by_name": cached.get("surfaced_by_name"),
-        }
-        backend._update_discovered_ping_timestamps(entry, ping_up=False, observed_at=observed_at)
-        backend._store_discovered_node_cache(site_id, entry)
-        backend._upsert_discovered_record(db, entry)
+        backend.discovered_node_cache.pop(site_id, None)
+        backend.discovered_metric_history.pop(site_id, None)
+        backend.discovered_ping_cache.pop(site_id, None)
+        prunable_site_ids.append(site_id)
+
+    if prunable_site_ids:
+        db.execute(
+            delete(NodeRelationship).where(
+                (NodeRelationship.source_site_id.in_(prunable_site_ids))
+                | (NodeRelationship.target_site_id.in_(prunable_site_ids))
+            )
+        )
+        db.execute(
+            delete(DiscoveredNodeObservation).where(
+                DiscoveredNodeObservation.site_id.in_(prunable_site_ids)
+            )
+        )
+        db.execute(
+            delete(DiscoveredNode).where(
+                DiscoveredNode.site_id.in_(prunable_site_ids)
+            )
+        )
 
     db.commit()
 

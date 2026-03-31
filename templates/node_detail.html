@@ -4,32 +4,45 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ page_title }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260329-overlay3">
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260330-rttsync2">
 </head>
-<body>
+<body{% if embedded %} class="embedded-detail-body"{% endif %}>
+    {% if not embedded %}
     <header class="topbar">
         <div class="brand">SMP</div>
         <nav class="nav">
             <a href="/">Dashboard</a>
-            <a href="/nodes/dashboard">Node Dashboard</a>
             <a href="/services/dashboard">Services Dashboard</a>
             <a href="/topology">Topology</a>
             <a href="#health">Health</a>
             <a href="#admin">Admin</a>
         </nav>
     </header>
+    {% endif %}
 
     <main class="container detail-container" id="node-detail-root" data-node-id="{{ node_id }}" data-detail-endpoint="{{ detail_endpoint }}" data-detail-kind="{{ detail_kind }}">
         <section class="detail-hero">
             <div>
-                <p class="eyebrow">Anchor Node Detail</p>
+                <p class="eyebrow">Node Detail</p>
                 <h1 id="detail-node-name">{{ node_name }}</h1>
-                <p class="subtitle">Operational drill-down for one managed Seeker anchor node, including identity, mates, tunnels, channels, and route data.</p>
+                <p class="subtitle">Operational drill-down for one Seeker node, including identity, mates, tunnels, channels, and route data.</p>
             </div>
+            {% if not embedded %}
             <div class="detail-toolbar">
+                <div class="dashboard-refresh-control">
+                    <button type="button" class="button-secondary dashboard-refresh-button" id="dashboard-refresh-button">1 min</button>
+                    <div class="dashboard-refresh-menu" id="dashboard-refresh-menu" hidden>
+                        <button type="button" data-seconds="10">10 sec</button>
+                        <button type="button" data-seconds="30">30 sec</button>
+                        <button type="button" data-seconds="60">1 min</button>
+                        <button type="button" data-seconds="300">5 min</button>
+                        <button type="button" data-seconds="1800">30 min</button>
+                    </div>
+                </div>
                 <a href="/" class="button-secondary">Back to Dashboard</a>
                 <a href="/nodes" class="button-secondary">Manage Nodes</a>
             </div>
+            {% endif %}
         </section>
 
         <section class="card detail-header-card">
@@ -201,6 +214,6 @@
         </section>
     </main>
 
-    <script src="{{ url_for('static', path='js/app.js') }}?v=20260329-overlay3"></script>
+    <script src="{{ url_for('static', path='js/app.js') }}?v=20260330-rttsync2"></script>
 </body>
 </html>

@@ -4,14 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ page_title }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260329-overlay3">
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260330-discovery1">
 </head>
 <body>
     <header class="topbar">
         <div class="brand">SMP</div>
         <nav class="nav">
             <a href="/">Dashboard</a>
-            <a href="/nodes/dashboard">Node Dashboard</a>
             <a href="/services/dashboard">Services Dashboard</a>
             <a href="/topology">Topology</a>
             <a href="#health">Health</a>
@@ -27,6 +26,16 @@
                 <p class="subtitle">Anchor and discovered Seeker nodes in one operational list view, with fast drill-down and lightweight inventory management.</p>
             </div>
             <div class="dashboard-toolbar-actions">
+                <div class="dashboard-refresh-control">
+                    <button type="button" class="button-secondary dashboard-refresh-button" id="dashboard-refresh-button">1 min</button>
+                    <div class="dashboard-refresh-menu" id="dashboard-refresh-menu" hidden>
+                        <button type="button" data-seconds="10">10 sec</button>
+                        <button type="button" data-seconds="30">30 sec</button>
+                        <button type="button" data-seconds="60">1 min</button>
+                        <button type="button" data-seconds="300">5 min</button>
+                        <button type="button" data-seconds="1800">30 min</button>
+                    </div>
+                </div>
                 <button type="button" class="button-primary" id="open-node-modal-button">Add Node</button>
             </div>
         </section>
@@ -68,7 +77,10 @@
                         <h2>Discovered Nodes</h2>
                         <p class="section-copy">Only nodes currently reachable or seen up in the last 24 hours. Lvl3 nodes are indented beneath the Lvl2 node that surfaced them.</p>
                     </div>
-                    <input id="discovered-node-search" class="route-filter-input node-list-search" type="search" placeholder="Search discovered nodes">
+                    <div class="node-list-header-actions">
+                        <button type="button" class="button-secondary node-list-flush-button" id="flush-discovery-button">Flush Discovery</button>
+                        <input id="discovered-node-search" class="route-filter-input node-list-search" type="search" placeholder="Search discovered nodes">
+                    </div>
                 </div>
                 <div class="node-list-scroll">
                     <div class="node-list" id="discovered-node-list">
@@ -182,6 +194,6 @@
         </section>
     </div>
 
-    <script src="{{ url_for('static', path='js/app.js') }}?v=20260329-overlay3"></script>
+    <script src="{{ url_for('static', path='js/app.js') }}?v=20260330-discovery1"></script>
 </body>
 </html>

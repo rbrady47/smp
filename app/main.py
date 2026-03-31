@@ -20,8 +20,16 @@ from sqlalchemy.orm import Session
 
 from app.db import Base, SessionLocal, engine, get_db
 from app.bwvstats_ingest import collect_bwvstats_phase1, get_raw_bwvstats_snapshots
-from app.models import Node, ServiceCheck
+from app.models import (
+    DiscoveredNode,
+    DiscoveredNodeObservation,
+    Node,
+    NodeRelationship,
+    ServiceCheck,
+    TopologyEditorState,
+)
 from app.node_dashboard_backend import NodeDashboardBackend
+from app.node_discovery_service import refresh_discovered_inventory
 from app.node_watchlist_projection_service import build_node_watchlist_payload
 from app.seeker_api import (
     build_detail_payload,
@@ -54,13 +62,15 @@ DASHBOARD_STATUS_PRIORITY = {
     "offline": 2,
 }
 DASHBOARD_TELEMETRY_TIMEOUT_SECONDS = 3.0
-PING_HISTORY_SECONDS = 60
-PING_INTERVAL_SECONDS = 1.0
+PING_HISTORY_SAMPLES = 24          # 24 bursts × 15 s = 6 min rolling window
+PING_PROBES_PER_BURST = 3
+PING_INTERVAL_SECONDS = 15.0
 SEEKER_POLL_INTERVAL_SECONDS = 15.0
 SERVICE_POLL_INTERVAL_SECONDS = 30.0
 SERVICE_CHECK_TIMEOUT_SECONDS = 5.0
 NODE_DASHBOARD_FAST_REFRESH_SECONDS = 1.0
 NODE_DASHBOARD_PROJECTION_REFRESH_SECONDS = 5.0
+NODE_DASHBOARD_WINDOW_OPTIONS = {10, 30, 60, 300, 1800, 3600}
 ping_samples_by_node: dict[int, deque[int]] = {}
 ping_snapshot_by_node: dict[int, dict[str, object]] = {}
 ping_monitor_task: asyncio.Task | None = None
@@ -69,6 +79,53 @@ seeker_poll_task: asyncio.Task | None = None
 service_status_cache: dict[int, dict[str, object]] = {}
 service_poll_task: asyncio.Task | None = None
 node_dashboard_poll_task: asyncio.Task | None = None
+
+
+def normalize_node_dashboard_window(window_seconds: int | None) -> int:
+    try:
+        normalized = int(window_seconds or 60)
+    except (TypeError, ValueError):
+        return 60
+    return normalized if normalized in NODE_DASHBOARD_WINDOW_OPTIONS else 60
+
+
+def apply_windowed_detail_summary(
+    detail: dict[str, object],
+    *,
+    window_metrics: dict[str, object],
+) -> dict[str, object]:
+    node_summary = dict(detail.get("node_summary") or {})
+    avg_latency_ms = window_metrics.get("avg_latency_ms")
+    avg_tx_bps = window_metrics.get("avg_tx_bps")
+    avg_rx_bps = window_metrics.get("avg_rx_bps")
+    rtt_state = str(window_metrics.get("rtt_state") or "")
+
+    if avg_latency_ms is not None:
+        node_summary["latency_ms"] = avg_latency_ms
+    if avg_tx_bps is not None:
+        node_summary["tx_bps"] = avg_tx_bps
+    if avg_rx_bps is not None:
+        node_summary["rx_bps"] = avg_rx_bps
+
+    node_summary["avg_latency_ms"] = window_metrics.get("avg_latency_ms")
+    node_summary["latest_latency_ms"] = window_metrics.get("latest_latency_ms")
+    node_summary["rtt_baseline_ms"] = window_metrics.get("rtt_baseline_ms")
+    node_summary["rtt_deviation_pct"] = window_metrics.get("rtt_deviation_pct")
+    node_summary["rtt_state"] = rtt_state or node_summary.get("rtt_state") or "good"
+    node_summary["refresh_window_seconds"] = window_metrics.get("refresh_window_seconds")
+
+    health_by_rtt_state = {
+        "good": "Healthy",
+        "warn": "Degraded",
+        "down": "Critical",
+    }
+    if rtt_state:
+        node_summary["health_state"] = health_by_rtt_state.get(rtt_state, node_summary.get("health_state"))
+
+    return {
+        **detail,
+        "node_summary": node_summary,
+    }
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -128,6 +185,7 @@ async def services_page(request: Request) -> HTMLResponse:
 @app.get("/nodes/{node_id}", response_class=HTMLResponse)
 async def node_detail_page(node_id: int, request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     node = get_node_or_404(node_id, db)
+    embedded = request.query_params.get("embedded") == "1"
     return templates.TemplateResponse(
         request=request,
         name="node_detail.html",
@@ -137,6 +195,7 @@ async def node_detail_page(node_id: int, request: Request, db: Session = Depends
             "node_name": node.name,
             "detail_endpoint": f"/api/nodes/{node.id}/detail",
             "detail_kind": "anchor",
+            "embedded": embedded,
         },
     )
 
@@ -150,6 +209,7 @@ async def node_detail_alias(node_id: int, request: Request, db: Session = Depend
 async def discovered_node_detail_page(site_id: str, request: Request) -> HTMLResponse:
     cached = node_dashboard_backend.get_cached_discovered_node(site_id) or {}
     node_name = str(cached.get("site_name") or f"Discovered Site {site_id}")
+    embedded = request.query_params.get("embedded") == "1"
     return templates.TemplateResponse(
         request=request,
         name="node_detail.html",
@@ -159,6 +219,7 @@ async def discovered_node_detail_page(site_id: str, request: Request) -> HTMLRes
             "node_name": node_name,
             "detail_endpoint": f"/api/discovered-nodes/{site_id}/detail",
             "detail_kind": "discovered",
+            "embedded": embedded,
         },
     )
 
@@ -224,7 +285,7 @@ def ping_host(host: str) -> dict[str, int | bool | None]:
 
 
 def build_ping_snapshot(node_id: int, ping_result: dict[str, int | bool | None]) -> dict[str, object]:
-    samples = ping_samples_by_node.setdefault(node_id, deque(maxlen=PING_HISTORY_SECONDS))
+    samples = ping_samples_by_node.setdefault(node_id, deque(maxlen=PING_HISTORY_SAMPLES))
     ping_ok = bool(ping_result["reachable"])
     latency_ms = ping_result["latency_ms"] if ping_ok else None
 
@@ -261,6 +322,21 @@ def get_ping_snapshot(node: Node) -> dict[str, object]:
     return build_ping_snapshot(node.id, ping_host(node.host))
 
 
+async def ping_node_burst(host: str) -> dict[str, int | bool | None]:
+    """Send PING_PROBES_PER_BURST probes concurrently and return min latency."""
+    results = await asyncio.gather(
+        *(asyncio.to_thread(ping_host, host) for _ in range(PING_PROBES_PER_BURST)),
+        return_exceptions=True,
+    )
+    latencies = [
+        r["latency_ms"]
+        for r in results
+        if isinstance(r, dict) and r.get("reachable") and r.get("latency_ms") is not None
+    ]
+    reachable = any(isinstance(r, dict) and r.get("reachable") for r in results)
+    return {"reachable": reachable, "latency_ms": min(latencies) if latencies else None}
+
+
 async def ping_monitor_loop() -> None:
     while True:
         db = SessionLocal()
@@ -271,11 +347,11 @@ async def ping_monitor_loop() -> None:
 
         enabled_nodes = [node for node in nodes if node.enabled]
         if enabled_nodes:
-            ping_results = await asyncio.gather(
-                *(asyncio.to_thread(ping_host, node.host) for node in enabled_nodes),
+            burst_results = await asyncio.gather(
+                *(ping_node_burst(node.host) for node in enabled_nodes),
                 return_exceptions=True,
             )
-            for node, result in zip(enabled_nodes, ping_results):
+            for node, result in zip(enabled_nodes, burst_results):
                 if isinstance(result, Exception):
                     build_ping_snapshot(node.id, {"reachable": False, "latency_ms": None})
                 else:
@@ -327,10 +403,15 @@ async def compute_node_status(node: Node) -> dict[str, object]:
 
 
 def serialize_node(node: Node, health: dict[str, object]) -> dict[str, object]:
+    detail = seeker_detail_cache.get(node.id) or {}
+    config_summary = detail.get("config_summary") if isinstance(detail.get("config_summary"), dict) else {}
+    node_summary = detail.get("node") if isinstance(detail.get("node"), dict) else {}
+    version = config_summary.get("version") or "--"
     return {
         "id": node.id,
         "name": node.name,
         "node_id": node.node_id,
+        "version": version,
         "host": node.host,
         "web_port": node.web_port,
         "ssh_port": node.ssh_port,
@@ -347,6 +428,7 @@ def serialize_node(node: Node, health: dict[str, object]) -> dict[str, object]:
         "status": health["status"],
         "latency_ms": node.latency_ms,
         "last_checked": node.last_checked.isoformat() if node.last_checked else None,
+        "last_telemetry_pull": node_summary.get("last_telemetry_pull"),
         "web_ok": health["web_ok"],
         "ssh_ok": health["ssh_ok"],
         "ping_ok": health["ping_ok"],
@@ -406,7 +488,34 @@ async def refresh_node(node: Node) -> dict[str, object]:
 
 
 async def refresh_nodes(nodes: list[Node], db: Session) -> list[dict[str, object]]:
-    payloads = await asyncio.gather(*(refresh_node(node) for node in nodes))
+    payloads: list[dict[str, object]] = []
+    for node in nodes:
+        if node.enabled and node.api_username and node.api_password:
+            try:
+                await refresh_seeker_detail_for_node(node)
+            except Exception:
+                logger.exception("Seeker refresh failed for node %s", node.id)
+        try:
+            payloads.append(await refresh_node(node))
+        except Exception:
+            logger.exception("Node health refresh failed for node %s", node.id)
+            fallback_health = {
+                "status": "offline",
+                "latency_ms": None,
+                "last_checked": datetime.now(timezone.utc),
+                "web_ok": False,
+                "ssh_ok": False,
+                "ping_ok": False,
+                "ping_state": "down",
+                "ping_avg_ms": None,
+            }
+            apply_health_to_node(node, fallback_health)
+            payloads.append(serialize_node(node, fallback_health))
+    try:
+        await node_dashboard_backend.refresh_cache(db, nodes)
+    except Exception:
+        logger.exception("Node dashboard cache refresh failed during node refresh")
+        node_dashboard_backend.mark_cache_refresh_failed()
     db.commit()
     return sorted(
         payloads,
@@ -507,6 +616,38 @@ async def load_node_detail(node: Node) -> dict[str, object]:
 
 async def refresh_seeker_detail_for_node(node: Node) -> dict[str, object]:
     detail = await load_node_detail(node)
+    cached = seeker_detail_cache.get(node.id) if isinstance(seeker_detail_cache.get(node.id), dict) else {}
+    errors = detail.get("errors") if isinstance(detail.get("errors"), dict) else {}
+    raw = detail.get("raw") if isinstance(detail.get("raw"), dict) else {}
+    cached_raw = cached.get("raw") if isinstance(cached.get("raw"), dict) else {}
+
+    if errors.get("config") and isinstance(cached.get("config_summary"), dict) and cached.get("config_summary"):
+        detail["config_summary"] = dict(cached.get("config_summary") or {})
+        raw["bwv_cfg"] = cached_raw.get("bwv_cfg") or raw.get("bwv_cfg") or {}
+
+    if errors.get("stats"):
+        for key in ("active_sites", "tunnels", "channels"):
+            if isinstance(cached.get(key), list) and cached.get(key):
+                detail[key] = list(cached.get(key) or [])
+        cached_summary = cached.get("node_summary") if isinstance(cached.get("node_summary"), dict) else {}
+        current_summary = detail.get("node_summary") if isinstance(detail.get("node_summary"), dict) else {}
+        if cached_summary:
+            for key in ("tx_bps", "rx_bps", "site_count", "mate_count", "active_site_count", "wan_count", "cpu_avg"):
+                if current_summary.get(key) in (None, 0):
+                    current_summary[key] = cached_summary.get(key)
+            detail["node_summary"] = current_summary
+        raw["bwv_stats"] = cached_raw.get("bwv_stats") or raw.get("bwv_stats") or {}
+
+    if errors.get("routes") and isinstance(cached.get("learnt_routes"), list) and cached.get("learnt_routes"):
+        detail["learnt_routes"] = list(cached.get("learnt_routes") or [])
+        raw["bwv_stats_learnt_routes"] = cached_raw.get("bwv_stats_learnt_routes") or raw.get("bwv_stats_learnt_routes") or {}
+
+    cached_node = cached.get("node") if isinstance(cached.get("node"), dict) else {}
+    current_node = detail.get("node") if isinstance(detail.get("node"), dict) else {}
+    if cached_node.get("last_telemetry_pull") and not current_node.get("last_telemetry_pull"):
+        current_node["last_telemetry_pull"] = cached_node.get("last_telemetry_pull")
+    detail["node"] = current_node
+    detail["raw"] = raw
     detail["cached_at"] = datetime.now(timezone.utc).isoformat()
     seeker_detail_cache[node.id] = detail
     return detail
@@ -831,6 +972,14 @@ async def summarize_dashboard_node(node: Node) -> dict[str, object]:
         "latency_ms": latency_ms,
         "tx_bps": (normalized or {}).get("tx_bps", 0),
         "rx_bps": (normalized or {}).get("rx_bps", 0),
+        "wan_tx_bps": (normalized or {}).get("wan_tx_bps", 0),
+        "wan_rx_bps": (normalized or {}).get("wan_rx_bps", 0),
+        "lan_tx_bps": (normalized or {}).get("lan_tx_bps", 0),
+        "lan_rx_bps": (normalized or {}).get("lan_rx_bps", 0),
+        "lan_tx_total": (normalized or {}).get("lan_tx_total", "--"),
+        "lan_rx_total": (normalized or {}).get("lan_rx_total", "--"),
+        "wan_tx_total": (normalized or {}).get("wan_tx_total", "--"),
+        "wan_rx_total": (normalized or {}).get("wan_rx_total", "--"),
         "cpu_avg": (normalized or {}).get("cpu_avg"),
         "version": cfg_summary.get("version", "--"),
         "sites_up": sites_up,
@@ -890,8 +1039,8 @@ async def refresh_node_dashboard_cache_once() -> None:
         db.close()
 
 
-def get_serialized_node_dashboard_cache() -> dict[str, object]:
-    return node_dashboard_backend.get_serialized_cache()
+def get_serialized_node_dashboard_cache(window_seconds: int | None = None) -> dict[str, object]:
+    return node_dashboard_backend.get_serialized_cache(normalize_node_dashboard_window(window_seconds))
 
 
 async def node_dashboard_polling_loop() -> None:
@@ -953,16 +1102,56 @@ async def shutdown_ping_monitor() -> None:
         node_dashboard_poll_task = None
 
 
+@app.get("/api/nodes/ping-status")
+async def nodes_ping_status(db: Session = Depends(get_db)) -> list[dict[str, object]]:
+    """Lightweight endpoint — reads only from in-memory ping cache, no Seeker calls."""
+    nodes = db.scalars(select(Node).order_by(Node.id)).all()
+    result = []
+    for node in nodes:
+        snap = ping_snapshot_by_node.get(node.id, {})
+        result.append({
+            "id": node.id,
+            "ping_state": snap.get("state", "unknown"),
+            "latency_ms": snap.get("latency_ms"),
+            "avg_latency_ms": snap.get("avg_latency_ms"),
+            "ping_ok": bool(snap.get("ping_ok", False)),
+        })
+    return result
+
+
 @app.get("/api/nodes")
 async def list_nodes(db: Session = Depends(get_db)) -> list[dict[str, object]]:
     nodes = db.scalars(select(Node).order_by(Node.name)).all()
-    return await refresh_nodes(nodes, db)
+    cached = node_dashboard_backend.get_cached_payload(60)
+    anchor_rows_by_id = {
+        int(row["id"]): row
+        for row in (cached.get("anchors") or [])
+        if isinstance(row, dict) and row.get("id") is not None
+    }
+    result = []
+    for node in nodes:
+        cached_row = anchor_rows_by_id.get(node.id, {})
+        health = {
+            "status": cached_row.get("status", "unknown"),
+            "latency_ms": cached_row.get("latency_ms"),
+            "last_checked": node.last_checked,
+            "web_ok": bool(cached_row.get("web_ok", False)),
+            "ssh_ok": bool(cached_row.get("ssh_ok", False)),
+            "ping_ok": bool(cached_row.get("ping_ok", False)),
+            "ping_state": cached_row.get("ping_state", "unknown"),
+            "ping_avg_ms": cached_row.get("ping_avg_ms"),
+        }
+        result.append(serialize_node(node, health))
+    return result
 
 
 @app.post("/api/nodes/refresh")
 async def refresh_all_nodes(db: Session = Depends(get_db)) -> list[dict[str, object]]:
-    nodes = db.scalars(select(Node).order_by(Node.name)).all()
-    return await refresh_nodes(nodes, db)
+    try:
+        nodes = db.scalars(select(Node).order_by(Node.name)).all()
+        return await refresh_nodes(nodes, db)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"/api/nodes/refresh failed: {exc}") from exc
 
 
 @app.post("/api/nodes/{node_id}/telemetry")
@@ -1035,17 +1224,38 @@ async def node_routes(node_id: int, db: Session = Depends(get_db)) -> dict[str, 
 
 
 @app.get("/api/nodes/{node_id}/detail")
-async def node_detail(node_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+async def node_detail(
+    node_id: int,
+    window_seconds: int = Query(default=60),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
     node = get_node_or_404(node_id, db)
     detail = seeker_detail_cache.get(node.id)
     if not detail:
         detail = await refresh_seeker_detail_for_node(node)
     db.commit()
-    return detail
+    detail_dict = dict(detail)
+    detail_site_id = (
+        detail_dict.get("config_summary", {}).get("site_id")
+        if isinstance(detail_dict.get("config_summary"), dict)
+        else None
+    )
+    window_metrics = node_dashboard_backend.get_row_window_metrics(
+        "anchor",
+        node_dashboard_backend._anchor_pin_key(node.id),
+        normalize_node_dashboard_window(window_seconds),
+    )
+    if detail_site_id:
+        window_metrics["site_id"] = detail_site_id
+    return apply_windowed_detail_summary(detail_dict, window_metrics=window_metrics)
 
 
 @app.get("/api/discovered-nodes/{site_id}/detail")
-async def discovered_node_detail(site_id: str, db: Session = Depends(get_db)) -> dict[str, object]:
+async def discovered_node_detail(
+    site_id: str,
+    window_seconds: int = Query(default=60),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
     nodes = db.scalars(select(Node).order_by(Node.name)).all()
     cached = node_dashboard_backend.ensure_discovered_node_cached(db, site_id)
 
@@ -1054,7 +1264,14 @@ async def discovered_node_detail(site_id: str, db: Session = Depends(get_db)) ->
 
     detail = cached.get("detail") if isinstance(cached.get("detail"), dict) else {}
     if detail:
-        return detail
+        return apply_windowed_detail_summary(
+            dict(detail),
+            window_metrics=node_dashboard_backend.get_row_window_metrics(
+                "discovered",
+                site_id,
+                normalize_node_dashboard_window(window_seconds),
+            ),
+        )
 
     site_ip = str(cached.get("host") or "").strip()
     if not site_ip or site_ip == "--":
@@ -1079,13 +1296,97 @@ async def discovered_node_detail(site_id: str, db: Session = Depends(get_db)) ->
     detail = probed.get("detail") if isinstance(probed.get("detail"), dict) else {}
     if not detail:
         raise HTTPException(status_code=404, detail="Discovered node detail not available")
-    return detail
+    return apply_windowed_detail_summary(
+        dict(detail),
+        window_metrics=node_dashboard_backend.get_row_window_metrics(
+            "discovered",
+            site_id,
+            normalize_node_dashboard_window(window_seconds),
+        ),
+    )
 
 
 @app.delete("/api/discovered-nodes/{site_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_discovered_node(site_id: str, db: Session = Depends(get_db)) -> Response:
     node_dashboard_backend.delete_discovered_node(db, site_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.post("/api/discovered-nodes/flush-unreachable")
+async def flush_unreachable_discovered_nodes(
+    window_seconds: int = Query(default=60),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    payload = node_dashboard_backend.get_cached_payload(normalize_node_dashboard_window(window_seconds))
+    unreachable_site_ids = [
+        str(row.get("site_id", "")).strip()
+        for row in payload.get("discovered", [])
+        if str(row.get("site_id", "")).strip()
+        and str(row.get("ping") or "").strip().lower() != "up"
+    ]
+    deleted_site_ids = node_dashboard_backend.delete_discovered_nodes(db, unreachable_site_ids)
+    return {
+        "deleted_site_ids": deleted_site_ids,
+        "deleted_count": len(deleted_site_ids),
+    }
+
+
+@app.post("/api/discovered-nodes/flush-discovery")
+async def flush_discovery(
+    window_seconds: int = Query(default=60),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    existing_payload = node_dashboard_backend.get_cached_payload(normalize_node_dashboard_window(window_seconds))
+    previous_site_ids = [
+        str(row.get("site_id") or "").strip()
+        for row in existing_payload.get("discovered", [])
+        if str(row.get("site_id") or "").strip()
+    ]
+    node_dashboard_backend.clear_discovery(db)
+    nodes = db.scalars(select(Node).order_by(Node.name)).all()
+    await refresh_discovered_inventory(node_dashboard_backend, db, nodes)
+    refreshed_payload = node_dashboard_backend.get_cached_payload(normalize_node_dashboard_window(window_seconds))
+    refreshed_site_ids = [
+        str(row.get("site_id") or "").strip()
+        for row in refreshed_payload.get("discovered", [])
+        if str(row.get("site_id") or "").strip()
+    ]
+    return {
+        "deleted_site_ids": previous_site_ids,
+        "deleted_count": len(previous_site_ids),
+        "rediscovered_site_ids": refreshed_site_ids,
+        "rediscovered_count": len(refreshed_site_ids),
+    }
+
+
+@app.post("/api/nodes/flush-all")
+async def flush_all_nodes(db: Session = Depends(get_db)) -> dict[str, object]:
+    """Wipe all node inventory, discovery data, relationships, and topology editor state."""
+    node_count = len(db.scalars(select(Node)).all())
+    discovered_count = len(db.scalars(select(DiscoveredNode)).all())
+
+    db.query(DiscoveredNodeObservation).delete()
+    db.query(NodeRelationship).delete()
+    db.query(DiscoveredNode).delete()
+    db.query(Node).delete()
+    db.query(TopologyEditorState).delete()
+    db.commit()
+
+    ping_samples_by_node.clear()
+    ping_snapshot_by_node.clear()
+    seeker_detail_cache.clear()
+    node_dashboard_backend.discovered_node_cache.clear()
+    node_dashboard_backend.discovered_ping_cache.clear()
+    node_dashboard_backend.anchor_metric_history.clear()
+    node_dashboard_backend.discovered_metric_history.clear()
+    node_dashboard_backend.node_dashboard_cache.update({"anchors": [], "discovered": [], "summary": {}})
+    node_dashboard_backend.mark_projection_dirty()
+
+    return {
+        "deleted_nodes": node_count,
+        "deleted_discovered_nodes": discovered_count,
+        "status": "ok",
+    }
 
 
 @app.get("/api/nodes/{node_id}/bwvstats/phase1")
@@ -1128,16 +1429,22 @@ async def dashboard_node_watchlist(
 
 
 @app.get("/api/node-dashboard")
-async def node_dashboard_payload(db: Session = Depends(get_db)) -> dict[str, list[dict[str, object]]]:
+async def node_dashboard_payload(
+    window_seconds: int = Query(default=60),
+    db: Session = Depends(get_db),
+) -> dict[str, list[dict[str, object]]]:
     db.commit()
-    return node_dashboard_backend.get_cached_payload()
+    return node_dashboard_backend.get_cached_payload(normalize_node_dashboard_window(window_seconds))
 
 
 @app.get("/api/topology/discovery")
-async def topology_discovery_payload(db: Session = Depends(get_db)) -> dict[str, object]:
+async def topology_discovery_payload(
+    window_seconds: int = Query(default=60),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
     db.commit()
     return build_topology_discovery_payload(
-        node_dashboard_backend.get_cached_payload(),
+        node_dashboard_backend.get_cached_payload(normalize_node_dashboard_window(window_seconds)),
         node_dashboard_backend.get_topology_relationships(db),
     )
 
@@ -1156,12 +1463,12 @@ async def update_topology_editor_state(
 
 
 @app.get("/api/node-dashboard/stream")
-async def node_dashboard_stream() -> StreamingResponse:
+async def node_dashboard_stream(window_seconds: int = Query(default=60)) -> StreamingResponse:
     async def event_generator():
         last_sent: str | None = None
         try:
             while True:
-                payload = get_serialized_node_dashboard_cache()
+                payload = get_serialized_node_dashboard_cache(normalize_node_dashboard_window(window_seconds))
                 serialized = json.dumps(payload)
                 if serialized != last_sent:
                     yield f"event: snapshot\ndata: {serialized}\n\n"
@@ -1176,22 +1483,41 @@ async def node_dashboard_stream() -> StreamingResponse:
 
 
 @app.get("/api/topology")
-async def topology_payload(db: Session = Depends(get_db)) -> dict[str, object]:
+async def topology_payload(
+    window_seconds: int = Query(default=60),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
     nodes = db.scalars(select(Node).order_by(Node.name)).all()
-    health_payloads = await asyncio.gather(*(compute_node_status(node) for node in nodes))
+    dashboard_payload = node_dashboard_backend.get_cached_payload(normalize_node_dashboard_window(window_seconds))
+    anchor_rows_by_id = {
+        int(row.get("id")): row
+        for row in dashboard_payload.get("anchors") or []
+        if isinstance(row, dict) and row.get("id") is not None
+    }
     inventory_nodes = []
-    for node, health in zip(nodes, health_payloads):
-        apply_health_to_node(node, health)
+    for node in nodes:
+        anchor = anchor_rows_by_id.get(node.id, {})
         inventory_nodes.append(
             {
                 "id": node.id,
                 "name": node.name,
                 "host": node.host,
-                "location": node.location,
-                "status": health["status"],
-                "include_in_topology": node.include_in_topology,
-                "topology_level": node.topology_level,
-                "topology_unit": node.topology_unit,
+                "location": anchor.get("site") or node.location,
+                "status": anchor.get("status"),
+                "include_in_topology": anchor.get("include_in_topology", node.include_in_topology),
+                "topology_level": anchor.get("topology_level", node.topology_level),
+                "topology_unit": anchor.get("unit") or node.topology_unit,
+                "site_id": anchor.get("site_id") or node.node_id,
+                "latency_ms": anchor.get("latency_ms"),
+                "rtt_state": anchor.get("rtt_state"),
+                "tx_bps": anchor.get("tx_bps"),
+                "rx_bps": anchor.get("rx_bps"),
+                "tx_display": anchor.get("tx_display"),
+                "rx_display": anchor.get("rx_display"),
+                "cpu_avg": anchor.get("cpu_avg"),
+                "version": anchor.get("version"),
+                "web_port": anchor.get("web_port", node.web_port),
+                "web_scheme": anchor.get("web_scheme") or ("https" if node.api_use_https else "http"),
             }
         )
     db.commit()
@@ -1241,10 +1567,17 @@ async def create_node(node_data: NodeCreate, db: Session = Depends(get_db)) -> d
     db.add(node)
     db.commit()
     db.refresh(node)
-    payload = await refresh_node(node)
-    db.commit()
-    db.refresh(node)
-    return payload
+    pending_health = {
+        "status": "unknown",
+        "latency_ms": None,
+        "last_checked": None,
+        "web_ok": False,
+        "ssh_ok": False,
+        "ping_ok": False,
+        "ping_state": "unknown",
+        "ping_avg_ms": None,
+    }
+    return serialize_node(node, pending_health)
 
 
 @app.put("/api/nodes/{node_id}")
@@ -1260,16 +1593,34 @@ async def update_node(
 
     db.commit()
     db.refresh(node)
-    payload = await refresh_node(node)
-    db.commit()
-    db.refresh(node)
-    return payload
+    cached = node_dashboard_backend.get_cached_payload(60)
+    cached_row = next(
+        (r for r in (cached.get("anchors") or []) if isinstance(r, dict) and r.get("id") == node.id),
+        {},
+    )
+    health = {
+        "status": cached_row.get("status", "unknown"),
+        "latency_ms": cached_row.get("latency_ms"),
+        "last_checked": node.last_checked,
+        "web_ok": bool(cached_row.get("web_ok", False)),
+        "ssh_ok": bool(cached_row.get("ssh_ok", False)),
+        "ping_ok": bool(cached_row.get("ping_ok", False)),
+        "ping_state": cached_row.get("ping_state", "unknown"),
+        "ping_avg_ms": cached_row.get("ping_avg_ms"),
+    }
+    return serialize_node(node, health)
 
 
 @app.delete("/api/nodes/{node_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_node(node_id: int, db: Session = Depends(get_db)) -> Response:
     node = get_node_or_404(node_id, db)
+    deleted_node_id = node.id
     db.delete(node)
     db.commit()
+    seeker_detail_cache.pop(deleted_node_id, None)
+    ping_samples_by_node.pop(deleted_node_id, None)
+    ping_snapshot_by_node.pop(deleted_node_id, None)
+    remaining_nodes = db.scalars(select(Node).order_by(Node.name)).all()
+    await node_dashboard_backend.refresh_cache(db, remaining_nodes)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

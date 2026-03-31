@@ -218,6 +218,23 @@ def _build_base_url(node: Node) -> str:
     return f"{scheme}://{node.host}:{node.web_port}"
 
 
+def _build_candidate_base_urls(node: Node) -> list[str]:
+    preferred_scheme = "https" if node.api_use_https else "http"
+    alternate_scheme = "http" if preferred_scheme == "https" else "https"
+    return [
+        f"{preferred_scheme}://{node.host}:{node.web_port}",
+        f"{alternate_scheme}://{node.host}:{node.web_port}",
+    ]
+
+
+def _build_candidate_login_paths() -> list[str]:
+    return ["/acct/login/", "/acct/login"]
+
+
+def _build_candidate_request_paths() -> list[str]:
+    return ["/acct/", "/acct"]
+
+
 def _is_usable_text(value: Any) -> bool:
     text = _stringify(value).strip()
     return bool(text and text != "--")
@@ -243,6 +260,7 @@ async def login_to_seeker(
     *,
     client: httpx.AsyncClient | None = None,
     emit_logs: bool = False,
+    base_url_label: str | None = None,
 ) -> dict[str, Any]:
     if not node.api_username or not node.api_password:
         return {
@@ -258,6 +276,7 @@ async def login_to_seeker(
             base_url=_build_base_url(node),
             timeout=SEEKER_API_TIMEOUT_SECONDS,
             verify=SEEKER_API_VERIFY_TLS,
+            follow_redirects=True,
         )
 
     login_headers = {"Content-Type": "application/x-www-form-urlencoded"}
@@ -268,46 +287,70 @@ async def login_to_seeker(
     )
 
     try:
-        if emit_logs:
-            logger.warning("BV login URL for node %s: %s/acct/login/", node.name, _build_base_url(node))
-        response = await request_client.post("/acct/login/", headers=login_headers, content=login_body)
-        response.raise_for_status()
-        payload = _safe_json_loads(response.text)
-        if emit_logs:
-            logger.warning("BV login response body for node %s: %s", node.name, response.text)
-        if not isinstance(payload, dict):
-            return {
-                "status": "error",
-                "rc": None,
-                "message": "Seeker login returned non-JSON",
-                "error": {
-                    "kind": "non_json",
-                    "raw_response": response.text,
-                },
-            }
-        if payload.get("rc") not in (None, 0, "0") or not payload.get("transId") or not payload.get("transIdRefresh"):
-            return {
-                "status": "error",
-                "rc": payload.get("rc"),
-                "message": "Seeker login failed",
-                "raw": payload,
-                "error": {
-                    "kind": "login_failed",
-                    "raw_response": response.text,
-                },
-            }
-        return {
-            "status": "ok",
-            "rc": 0,
-            "trans_id": payload.get("transId"),
-            "trans_id_refresh": payload.get("transIdRefresh"),
-            "raw": payload,
+        base_url_text = base_url_label or str(getattr(request_client, "base_url", "")).rstrip("/") or _build_base_url(node)
+        last_error: dict[str, Any] | None = None
+        for login_path in _build_candidate_login_paths():
+            try:
+                if emit_logs:
+                    logger.warning("BV login URL for node %s: %s%s", node.name, base_url_text, login_path)
+                response = await request_client.post(login_path, headers=login_headers, content=login_body)
+                response.raise_for_status()
+                payload = _safe_json_loads(response.text)
+                if emit_logs:
+                    logger.warning("BV login response body for node %s: %s", node.name, response.text)
+                if not isinstance(payload, dict):
+                    last_error = {
+                        "status": "error",
+                        "rc": None,
+                        "message": f"Seeker login returned non-JSON at {base_url_text}{login_path}",
+                        "error": {
+                            "kind": "non_json",
+                            "raw_response": response.text,
+                            "attempted_url": f"{base_url_text}{login_path}",
+                        },
+                    }
+                    continue
+                if payload.get("rc") not in (None, 0, "0") or not payload.get("transId") or not payload.get("transIdRefresh"):
+                    last_error = {
+                        "status": "error",
+                        "rc": payload.get("rc"),
+                        "message": f"Seeker login failed at {base_url_text}{login_path}",
+                        "raw": payload,
+                        "error": {
+                            "kind": "login_failed",
+                            "raw_response": response.text,
+                            "attempted_url": f"{base_url_text}{login_path}",
+                        },
+                    }
+                    continue
+                return {
+                    "status": "ok",
+                    "rc": 0,
+                    "trans_id": payload.get("transId"),
+                    "trans_id_refresh": payload.get("transIdRefresh"),
+                    "raw": payload,
+                }
+            except (httpx.HTTPError, ValueError) as exc:
+                last_error = {
+                    "status": "error",
+                    "rc": None,
+                    "message": f"Seeker login failed at {base_url_text}{login_path}: {exc!r}",
+                    "error": {
+                        "kind": "http_error",
+                        "raw_response": None,
+                        "attempted_url": f"{base_url_text}{login_path}",
+                    },
+                }
+        return last_error or {
+            "status": "error",
+            "rc": None,
+            "message": f"Seeker login failed at {base_url_text}",
         }
     except (httpx.HTTPError, ValueError) as exc:
         return {
             "status": "error",
             "rc": None,
-            "message": f"Seeker login failed: {exc}",
+            "message": f"Seeker login failed: {exc!r}",
             "error": {
                 "kind": "http_error",
                 "raw_response": None,
@@ -324,85 +367,106 @@ async def _seeker_post_bwv(
     *,
     emit_logs: bool = False,
 ) -> dict[str, Any]:
-    async with httpx.AsyncClient(
-        base_url=_build_base_url(node),
-        timeout=SEEKER_API_TIMEOUT_SECONDS,
-        verify=SEEKER_API_VERIFY_TLS,
-    ) as client:
-        login_result = await login_to_seeker(node, client=client, emit_logs=emit_logs)
-        if login_result.get("status") != "ok":
-            return login_result
+    last_error: dict[str, Any] | None = None
+    for base_url in _build_candidate_base_urls(node):
+        async with httpx.AsyncClient(
+            base_url=base_url,
+            timeout=SEEKER_API_TIMEOUT_SECONDS,
+            verify=SEEKER_API_VERIFY_TLS,
+            follow_redirects=True,
+        ) as client:
+            login_result = await login_to_seeker(node, client=client, emit_logs=emit_logs, base_url_label=base_url)
+            if login_result.get("status") != "ok":
+                last_error = login_result
+                continue
 
-        serialized_data0 = json.dumps(dict(data0), separators=(",", ":"), ensure_ascii=True)
-        form_fields = {
-            "userName": str(node.api_username),
-            "transId": str(login_result["trans_id"]),
-            "transIdRefresh": str(login_result["trans_id_refresh"]),
-            "isAjaxReq": "1",
-            "reqType": "bwv",
-            "data0": serialized_data0,
-        }
-        encoded_body = urllib.parse.urlencode(form_fields)
-        headers = {
-            "User-Agent": "curl/7.55.1",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "X-Requested-With": "XMLHttpRequest",
-        }
-
-        try:
-            if emit_logs:
-                safe_fields = {key: _mask_value(key, value) for key, value in form_fields.items() if key != "data0"}
-                logger.warning("BV request URL for node %s: %s/acct/", node.name, _build_base_url(node))
-                logger.warning("BV request form fields for node %s: %s", node.name, safe_fields)
-                logger.warning("BV request data0 for node %s: %s", node.name, serialized_data0)
-
-            response = await client.post("/acct/", headers=headers, content=encoded_body)
-            response.raise_for_status()
-            response_text = response.text
-            payload = _safe_json_loads(response_text)
-            if not isinstance(payload, dict):
-                return {
-                    "status": "error",
-                    "rc": None,
-                    "message": "Seeker returned non-JSON",
-                    "error": {
-                        "kind": "non_json",
-                        "raw_response": response_text,
-                    },
-                    "fetched_at": datetime.now(timezone.utc).isoformat(),
-                }
-            rc = payload.get("rc")
-            if rc not in (None, 0, "0"):
-                if emit_logs:
-                    logger.warning("BV raw response for node %s rc=%s: %s", node.name, rc, response_text)
-                return {
-                    "status": "error",
-                    "rc": _safe_int(rc) if _safe_int(rc) is not None else rc,
-                    "message": f"Seeker request failed (rc={rc})",
-                    "raw": payload,
-                    "error": {
-                        "kind": "rc_error",
-                        "raw_response": response_text,
-                    },
-                    "fetched_at": datetime.now(timezone.utc).isoformat(),
-                }
-            return {
-                "status": "ok",
-                "rc": 0,
-                "raw": payload,
-                "error": None,
-                "fetched_at": datetime.now(timezone.utc).isoformat(),
+            serialized_data0 = json.dumps(dict(data0), separators=(",", ":"), ensure_ascii=True)
+            form_fields = {
+                "userName": str(node.api_username),
+                "transId": str(login_result["trans_id"]),
+                "transIdRefresh": str(login_result["trans_id_refresh"]),
+                "isAjaxReq": "1",
+                "reqType": "bwv",
+                "data0": serialized_data0,
             }
-        except httpx.HTTPError as exc:
-            return {
-                "status": "error",
-                "rc": None,
-                "message": f"Seeker request failed: {exc}",
-                "error": {
-                    "kind": "http_error",
-                    "raw_response": None,
-                },
+            encoded_body = urllib.parse.urlencode(form_fields)
+            headers = {
+                "User-Agent": "curl/7.55.1",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "X-Requested-With": "XMLHttpRequest",
             }
+
+            for request_path in _build_candidate_request_paths():
+                try:
+                    if emit_logs:
+                        safe_fields = {key: _mask_value(key, value) for key, value in form_fields.items() if key != "data0"}
+                        logger.warning("BV request URL for node %s: %s%s", node.name, base_url, request_path)
+                        logger.warning("BV request form fields for node %s: %s", node.name, safe_fields)
+                        logger.warning("BV request data0 for node %s: %s", node.name, serialized_data0)
+
+                    response = await client.post(request_path, headers=headers, content=encoded_body)
+                    response.raise_for_status()
+                    response_text = response.text
+                    payload = _safe_json_loads(response_text)
+                    if not isinstance(payload, dict):
+                        last_error = {
+                            "status": "error",
+                            "rc": None,
+                            "message": f"Seeker returned non-JSON from {base_url}{request_path}",
+                            "error": {
+                                "kind": "non_json",
+                                "raw_response": response_text,
+                                "attempted_url": f"{base_url}{request_path}",
+                            },
+                            "fetched_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                        continue
+                    rc = payload.get("rc")
+                    if rc not in (None, 0, "0"):
+                        if emit_logs:
+                            logger.warning("BV raw response for node %s rc=%s: %s", node.name, rc, response_text)
+                        last_error = {
+                            "status": "error",
+                            "rc": _safe_int(rc) if _safe_int(rc) is not None else rc,
+                            "message": f"Seeker request failed (rc={rc}) at {base_url}{request_path}",
+                            "raw": payload,
+                            "error": {
+                                "kind": "rc_error",
+                                "raw_response": response_text,
+                                "attempted_url": f"{base_url}{request_path}",
+                            },
+                            "fetched_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                        continue
+                    return {
+                        "status": "ok",
+                        "rc": 0,
+                        "raw": payload,
+                        "error": None,
+                        "fetched_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                except httpx.HTTPError as exc:
+                    last_error = {
+                        "status": "error",
+                        "rc": None,
+                        "message": f"Seeker request failed at {base_url}{request_path}: {exc!r}",
+                        "error": {
+                            "kind": "http_error",
+                            "raw_response": None,
+                            "attempted_url": f"{base_url}{request_path}",
+                        },
+                    }
+                    continue
+
+    return last_error or {
+        "status": "error",
+        "rc": None,
+        "message": "Seeker request failed",
+        "error": {
+            "kind": "http_error",
+            "raw_response": None,
+        },
+    }
 
 
 async def get_bwv_stats(
@@ -503,6 +567,42 @@ async def resolve_site_name_map(
     return resolved
 
 
+def _parse_seeker_bytes_str(value: Any) -> float:
+    """Parse a Seeker-formatted byte string like '284.1G' or '1555.5G' into bytes."""
+    if value is None:
+        return 0.0
+    s = str(value).strip()
+    multipliers = {"K": 1e3, "M": 1e6, "G": 1e9, "T": 1e12}
+    for suffix, mult in multipliers.items():
+        if s.endswith(suffix):
+            try:
+                return float(s[:-1]) * mult
+            except ValueError:
+                return 0.0
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+def _sum_seeker_bytes_list(values: Any) -> str:
+    """Sum a list of Seeker-formatted byte strings and return a formatted total."""
+    if not isinstance(values, list) or not values:
+        return "--"
+    total_bytes = sum(_parse_seeker_bytes_str(v) for v in values)
+    if total_bytes <= 0:
+        return "--"
+    if total_bytes >= 1e12:
+        return f"{total_bytes / 1e12:.1f}T"
+    if total_bytes >= 1e9:
+        return f"{total_bytes / 1e9:.1f}G"
+    if total_bytes >= 1e6:
+        return f"{total_bytes / 1e6:.1f}M"
+    if total_bytes >= 1e3:
+        return f"{total_bytes / 1e3:.1f}K"
+    return f"{total_bytes:.0f}"
+
+
 def normalize_bwv_stats(data: dict[str, Any]) -> dict[str, Any]:
     cpu = data.get("cpuCoreUtil", [])
     cpu_values = []
@@ -513,10 +613,33 @@ def normalize_bwv_stats(data: dict[str, Any]) -> dict[str, Any]:
                 cpu_values.append(parsed)
 
     cpu_avg = sum(cpu_values) / len(cpu_values) if cpu_values else None
+
+    user_rate = data.get("userRate", [])
+    lan_tx_bps = _safe_int(user_rate[0]) or 0 if isinstance(user_rate, list) and len(user_rate) > 0 else 0
+    lan_rx_bps = _safe_int(user_rate[1]) or 0 if isinstance(user_rate, list) and len(user_rate) > 1 else 0
+
+    tot_user = data.get("totUserBytes", [])
+    lan_tx_total = str(tot_user[0]).strip() if isinstance(tot_user, list) and len(tot_user) > 0 else "--"
+    lan_rx_total = str(tot_user[1]).strip() if isinstance(tot_user, list) and len(tot_user) > 1 else "--"
+
+    wan_tx_total = _sum_seeker_bytes_list(data.get("totChanBytesTx"))
+    wan_rx_total = _sum_seeker_bytes_list(data.get("totChanBytesRx"))
+
     return {
         "latency_ms": _safe_int(_first_or_none(data.get("chanWanDelay", []))),
+        # WAN interface rates (txTotRateIf / rxTotRateIf)
         "tx_bps": _safe_int(data.get("txTotRateIf")) or 0,
         "rx_bps": _safe_int(data.get("rxTotRateIf")) or 0,
+        "wan_tx_bps": _safe_int(data.get("txTotRateIf")) or 0,
+        "wan_rx_bps": _safe_int(data.get("rxTotRateIf")) or 0,
+        # LAN user rates (userRate[0] / userRate[1])
+        "lan_tx_bps": lan_tx_bps,
+        "lan_rx_bps": lan_rx_bps,
+        # Cumulative totals (pre-formatted strings from Seeker)
+        "lan_tx_total": lan_tx_total,
+        "lan_rx_total": lan_rx_total,
+        "wan_tx_total": wan_tx_total,
+        "wan_rx_total": wan_rx_total,
         "cpu_avg": cpu_avg,
         "discovered_sites": _safe_int(data.get("nDiscSites")) or 0,
         "is_active": data.get("isActive") == "1",

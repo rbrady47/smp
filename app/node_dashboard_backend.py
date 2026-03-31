@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from datetime import datetime, timedelta, timezone
 import json
 import logging
 import re
 from typing import Any, Awaitable, Callable
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.models import DiscoveredNode, DiscoveredNodeObservation, Node, NodeRelationship
@@ -44,12 +45,17 @@ class NodeDashboardBackend:
         self.discovered_ping_ttl_seconds = 5.0
         self.discovered_ping_memory_hours = 24
         self.projection_refresh_seconds = 5.0
+        self.history_retention_seconds = 1800
+        self.window_options_seconds = {10, 30, 60, 300, 1800}
+        self.discovery_enabled: bool = False  # disabled: topology is manually authored
 
         self.discovered_node_cache: dict[str, dict[str, object]] = {}
         self.discovered_node_tombstones: dict[str, str] = {}
         self.discovered_ping_cache: dict[str, dict[str, object]] = {}
         self.discovered_ping_inflight: set[str] = set()
         self.discovered_probe_inflight: set[str] = set()
+        self.anchor_metric_history: dict[str, deque[dict[str, object]]] = {}
+        self.discovered_metric_history: dict[str, deque[dict[str, object]]] = {}
         self.projection_dirty = True
         self.last_projection_refresh_at: datetime | None = None
         self.node_dashboard_cache: dict[str, object] = {
@@ -83,23 +89,54 @@ class NodeDashboardBackend:
         self._store_discovered_node_cache(site_id, merged)
         return merged
 
-    def delete_discovered_node(self, db: Session, site_id: str) -> None:
-        self.discovered_node_cache.pop(site_id, None)
-        self.discovered_node_tombstones[site_id] = datetime.now(timezone.utc).isoformat()
+    def delete_discovered_nodes(self, db: Session, site_ids: list[str]) -> list[str]:
+        normalized_site_ids = [str(site_id).strip() for site_id in site_ids if str(site_id).strip()]
+        if not normalized_site_ids:
+            return []
+
+        for site_id in normalized_site_ids:
+            self.discovered_node_cache.pop(site_id, None)
+            self.discovered_metric_history.pop(site_id, None)
+            self.discovered_ping_cache.pop(site_id, None)
+            self.discovered_probe_inflight.discard(site_id)
+            self.discovered_ping_inflight.discard(site_id)
+            self.discovered_node_tombstones[site_id] = datetime.now(timezone.utc).isoformat()
+
         self.mark_projection_dirty()
-        for relationship in db.scalars(
-            select(NodeRelationship).where(
-                (NodeRelationship.source_site_id == site_id) | (NodeRelationship.target_site_id == site_id)
+        self.node_dashboard_cache["discovered"] = [
+            row
+            for row in list(self.node_dashboard_cache.get("discovered") or [])
+            if isinstance(row, dict) and str(row.get("site_id") or "").strip() not in normalized_site_ids
+        ]
+        db.execute(
+            delete(NodeRelationship).where(
+                (NodeRelationship.source_site_id.in_(normalized_site_ids))
+                | (NodeRelationship.target_site_id.in_(normalized_site_ids))
             )
-        ).all():
-            db.delete(relationship)
-        observation_record = db.get(DiscoveredNodeObservation, site_id)
-        if observation_record is not None:
-            db.delete(observation_record)
-        record = db.get(DiscoveredNode, site_id)
-        if record is not None:
-            db.delete(record)
+        )
+        db.execute(
+            delete(DiscoveredNodeObservation).where(DiscoveredNodeObservation.site_id.in_(normalized_site_ids))
+        )
+        db.execute(delete(DiscoveredNode).where(DiscoveredNode.site_id.in_(normalized_site_ids)))
         db.commit()
+        return normalized_site_ids
+
+    def clear_discovery(self, db: Session) -> None:
+        self.discovered_node_cache.clear()
+        self.discovered_metric_history.clear()
+        self.discovered_ping_cache.clear()
+        self.discovered_probe_inflight.clear()
+        self.discovered_ping_inflight.clear()
+        self.discovered_node_tombstones.clear()
+        self.node_dashboard_cache["discovered"] = []
+        self.mark_projection_dirty()
+        db.execute(delete(NodeRelationship).where(NodeRelationship.target_row_type == "discovered"))
+        db.execute(delete(DiscoveredNodeObservation))
+        db.execute(delete(DiscoveredNode))
+        db.commit()
+
+    def delete_discovered_node(self, db: Session, site_id: str) -> None:
+        self.delete_discovered_nodes(db, [site_id])
 
     def _serialize_discovered_inventory_record(self, record: DiscoveredNode) -> dict[str, object]:
         surfaced_by_names: list[str] = []
@@ -261,7 +298,7 @@ class NodeDashboardBackend:
         record.host = str(row.get("host") or "").strip() or None
         record.location = str(row.get("location") or "").strip() or None
         record.unit = str(row.get("unit") or "").strip() or None
-        record.version = str(row.get("version") or "").strip() or None
+        record.version = self._prefer_discovered_version(record.version, row.get("version")) or None
         record.discovered_level = int(row.get("discovered_level") or row.get("level") or 2)
         record.discovered_parent_site_id = str(row.get("discovered_parent_site_id") or row.get("surfaced_by_site_id") or "").strip() or None
         record.discovered_parent_name = str(row.get("discovered_parent_name") or row.get("surfaced_by_name") or "").strip() or None
@@ -308,27 +345,238 @@ class NodeDashboardBackend:
 
         return next((node for node in nodes if node.api_username and node.api_password), None)
 
-    def get_cached_payload(self) -> dict[str, list[dict[str, object]]]:
+    def normalize_window_seconds(self, window_seconds: int | None) -> int:
+        try:
+            normalized = int(window_seconds or 60)
+        except (TypeError, ValueError):
+            return 60
+        return normalized if normalized in self.window_options_seconds else 60
+
+    def _get_history_store(self, row_type: str) -> dict[str, deque[dict[str, object]]]:
+        return self.anchor_metric_history if row_type == "anchor" else self.discovered_metric_history
+
+    def _append_history_sample(
+        self,
+        history_store: dict[str, deque[dict[str, object]]],
+        row_key: str,
+        *,
+        sampled_at: datetime,
+        latency_ms: object,
+        tx_bps: object,
+        rx_bps: object,
+        ping_ok: object,
+    ) -> None:
+        history = history_store.setdefault(row_key, deque())
+        history.append({
+            "sampled_at": sampled_at,
+            "latency_ms": int(latency_ms) if isinstance(latency_ms, int) else None,
+            "tx_bps": int(tx_bps) if isinstance(tx_bps, int) else 0,
+            "rx_bps": int(rx_bps) if isinstance(rx_bps, int) else 0,
+            "ping_ok": bool(ping_ok),
+        })
+        cutoff = sampled_at - timedelta(seconds=self.history_retention_seconds)
+        while history and history[0].get("sampled_at") < cutoff:
+            history.popleft()
+
+    def _record_projection_history(self, payload: dict[str, object], sampled_at: datetime) -> None:
+        for row in payload.get("anchors") or []:
+            if not isinstance(row, dict):
+                continue
+            row_key = str(row.get("pin_key") or self._anchor_pin_key(int(row.get("id") or 0))).strip()
+            if not row_key:
+                continue
+            self._append_history_sample(
+                self.anchor_metric_history,
+                row_key,
+                sampled_at=sampled_at,
+                latency_ms=row.get("latency_ms"),
+                tx_bps=row.get("tx_bps"),
+                rx_bps=row.get("rx_bps"),
+                ping_ok=row.get("ping_ok"),
+            )
+
+        for row in payload.get("discovered") or []:
+            if not isinstance(row, dict):
+                continue
+            row_key = str(row.get("site_id") or "").strip()
+            if not row_key:
+                continue
+            self._append_history_sample(
+                self.discovered_metric_history,
+                row_key,
+                sampled_at=sampled_at,
+                latency_ms=row.get("latency_ms"),
+                tx_bps=row.get("tx_bps"),
+                rx_bps=row.get("rx_bps"),
+                ping_ok=str(row.get("ping") or "").strip().lower() == "up",
+            )
+
+    @staticmethod
+    def _compute_average(values: list[int]) -> int | None:
+        return round(sum(values) / len(values)) if values else None
+
+    def _build_window_metrics(
+        self,
+        samples: list[dict[str, object]],
+        *,
+        previous_samples: list[dict[str, object]] | None = None,
+        fallback_state: str = "good",
+    ) -> dict[str, object]:
+        if not samples:
+            return {
+                "avg_latency_ms": None,
+                "latest_latency_ms": None,
+                "rtt_baseline_ms": None,
+                "rtt_deviation_pct": None,
+                "rtt_state": fallback_state,
+                "avg_tx_bps": None,
+                "avg_rx_bps": None,
+            }
+
+        latency_values = [
+            int(sample["latency_ms"])
+            for sample in samples
+            if isinstance(sample.get("latency_ms"), int)
+        ]
+        tx_values = [
+            int(sample["tx_bps"])
+            for sample in samples
+            if isinstance(sample.get("tx_bps"), int)
+        ]
+        rx_values = [
+            int(sample["rx_bps"])
+            for sample in samples
+            if isinstance(sample.get("rx_bps"), int)
+        ]
+
+        previous_latency_values = [
+            int(sample["latency_ms"])
+            for sample in (previous_samples or [])
+            if isinstance(sample.get("latency_ms"), int)
+        ]
+
+        avg_latency_ms = self._compute_average(latency_values)
+        latest_latency_ms = latency_values[-1] if latency_values else None
+        baseline_ms = self._compute_average(previous_latency_values)
+        deviation_pct = None
+        rtt_state = fallback_state
+
+        comparison_latency_ms = avg_latency_ms
+
+        if comparison_latency_ms is None:
+            rtt_state = fallback_state
+        elif baseline_ms is None or baseline_ms <= 0:
+            rtt_state = "good"
+        elif comparison_latency_ms >= baseline_ms * 1.75:
+            rtt_state = "down"
+            deviation_pct = ((comparison_latency_ms - baseline_ms) / baseline_ms) * 100
+        elif comparison_latency_ms >= baseline_ms * 1.25:
+            rtt_state = "warn"
+            deviation_pct = ((comparison_latency_ms - baseline_ms) / baseline_ms) * 100
+        else:
+            rtt_state = "good"
+            deviation_pct = ((comparison_latency_ms - baseline_ms) / baseline_ms) * 100
+
         return {
-            "anchors": list(self.node_dashboard_cache.get("anchors") or []),
-            "discovered": list(self.node_dashboard_cache.get("discovered") or []),
+            "avg_latency_ms": avg_latency_ms,
+            "latest_latency_ms": latest_latency_ms,
+            "rtt_baseline_ms": baseline_ms,
+            "rtt_deviation_pct": round(float(deviation_pct), 1) if deviation_pct is not None else None,
+            "rtt_state": rtt_state,
+            "avg_tx_bps": self._compute_average(tx_values),
+            "avg_rx_bps": self._compute_average(rx_values),
         }
 
-    def get_serialized_cache(self) -> dict[str, object]:
+    def _apply_window_to_row(self, row: dict[str, object], row_type: str, window_seconds: int) -> dict[str, object]:
+        history_store = self._get_history_store(row_type)
+        row_key = str(row.get("pin_key") or self._anchor_pin_key(int(row.get("id") or 0))).strip() if row_type == "anchor" else str(row.get("site_id") or "").strip()
+        history = list(history_store.get(row_key) or [])
+        now = datetime.now(timezone.utc)
+        current_cutoff = now - timedelta(seconds=window_seconds)
+        previous_cutoff = current_cutoff - timedelta(seconds=window_seconds)
+        samples = [
+            sample for sample in history
+            if isinstance(sample.get("sampled_at"), datetime) and sample["sampled_at"] >= current_cutoff
+        ]
+        previous_samples = [
+            sample for sample in history
+            if isinstance(sample.get("sampled_at"), datetime) and previous_cutoff <= sample["sampled_at"] < current_cutoff
+        ]
+        fallback_state = str(row.get("ping_state") or ("good" if str(row.get("ping") or "").strip().lower() == "up" else "down") or "good")
+        metrics = self._build_window_metrics(samples, previous_samples=previous_samples, fallback_state=fallback_state)
+        avg_tx_bps = metrics.get("avg_tx_bps")
+        avg_rx_bps = metrics.get("avg_rx_bps")
+        avg_latency_ms = metrics.get("avg_latency_ms")
+        rtt_state = str(metrics.get("rtt_state") or fallback_state)
+
+        updated = {
+            **row,
+            **metrics,
+            "refresh_window_seconds": window_seconds,
+            "latency_ms": avg_latency_ms if avg_latency_ms is not None else row.get("latency_ms"),
+            "tx_bps": avg_tx_bps if isinstance(avg_tx_bps, int) else row.get("tx_bps", 0),
+            "rx_bps": avg_rx_bps if isinstance(avg_rx_bps, int) else row.get("rx_bps", 0),
+            "tx_display": self._format_dashboard_rate(avg_tx_bps if isinstance(avg_tx_bps, int) else row.get("tx_bps", 0)),
+            "rx_display": self._format_dashboard_rate(avg_rx_bps if isinstance(avg_rx_bps, int) else row.get("rx_bps", 0)),
+        }
+        if row_type == "anchor":
+            updated["ping_state"] = rtt_state if bool(row.get("ping_ok")) else "down"
+        return updated
+
+    def get_row_window_metrics(self, row_type: str, row_key: str, window_seconds: int | None) -> dict[str, object]:
+        normalized_window = self.normalize_window_seconds(window_seconds)
+        history_store = self._get_history_store(row_type)
+        history = list(history_store.get(str(row_key).strip()) or [])
+        now = datetime.now(timezone.utc)
+        current_cutoff = now - timedelta(seconds=normalized_window)
+        previous_cutoff = current_cutoff - timedelta(seconds=normalized_window)
+        samples = [
+            sample for sample in history
+            if isinstance(sample.get("sampled_at"), datetime) and sample["sampled_at"] >= current_cutoff
+        ]
+        previous_samples = [
+            sample for sample in history
+            if isinstance(sample.get("sampled_at"), datetime) and previous_cutoff <= sample["sampled_at"] < current_cutoff
+        ]
         return {
-            "anchors": list(self.node_dashboard_cache.get("anchors") or []),
-            "discovered": list(self.node_dashboard_cache.get("discovered") or []),
+            **self._build_window_metrics(samples, previous_samples=previous_samples),
+            "refresh_window_seconds": normalized_window,
+        }
+
+    def get_cached_payload(self, window_seconds: int | None = None) -> dict[str, list[dict[str, object]]]:
+        normalized_window = self.normalize_window_seconds(window_seconds)
+        return {
+            "anchors": [
+                self._apply_window_to_row(row, "anchor", normalized_window)
+                for row in list(self.node_dashboard_cache.get("anchors") or [])
+                if isinstance(row, dict)
+            ],
+            "discovered": [
+                self._apply_window_to_row(row, "discovered", normalized_window)
+                for row in list(self.node_dashboard_cache.get("discovered") or [])
+                if isinstance(row, dict)
+                and str(row.get("site_id") or "").strip() not in self.discovered_node_tombstones
+            ],
+        }
+
+    def get_serialized_cache(self, window_seconds: int | None = None) -> dict[str, object]:
+        normalized_window = self.normalize_window_seconds(window_seconds)
+        return {
+            **self.get_cached_payload(normalized_window),
             "cached_at": self.node_dashboard_cache.get("cached_at"),
             "warming": bool(self.node_dashboard_cache.get("warming")),
+            "refresh_window_seconds": normalized_window,
         }
 
     async def refresh_cache(self, db: Session, nodes: list[Node]) -> None:
-        await self.refresh_discovered_inventory(db, nodes)
+        if self.discovery_enabled:
+            await self.refresh_discovered_inventory(db, nodes)
         if not self.should_refresh_projection():
             self.node_dashboard_cache["warming"] = False
             return
         payload = await self.build_projection(db, nodes)
         now = datetime.now(timezone.utc)
+        self._record_projection_history(payload, now)
         self.node_dashboard_cache.clear()
         self.node_dashboard_cache.update({
             **payload,
@@ -396,6 +644,19 @@ class NodeDashboardBackend:
         return current
 
     @staticmethod
+    def _normalize_discovered_text_value(value: object) -> str:
+        text = str(value or "").strip()
+        if not text or text == "--":
+            return ""
+        return text
+
+    def _prefer_discovered_version(self, current_value: object, candidate_value: object) -> str:
+        candidate = self._normalize_discovered_text_value(candidate_value)
+        if candidate:
+            return candidate
+        return self._normalize_discovered_text_value(current_value)
+
+    @staticmethod
     def _merge_discovered_sources(*values: object) -> list[str]:
         merged: list[str] = []
         for value in values:
@@ -436,13 +697,7 @@ class NodeDashboardBackend:
             entry["ping_down_since"] = observed_at.isoformat()
 
     def _should_keep_discovered(self, entry: dict[str, object]) -> bool:
-        last_ping_up = self._safe_parse_iso(entry.get("last_ping_up"))
-        if last_ping_up is None:
-            return False
-        down_since = self._safe_parse_iso(entry.get("ping_down_since"))
-        if down_since is None:
-            return last_ping_up >= datetime.now(timezone.utc) - timedelta(hours=self.discovered_ping_memory_hours)
-        return down_since >= datetime.now(timezone.utc) - timedelta(hours=self.discovered_ping_memory_hours)
+        return str(entry.get("ping") or "").strip().lower() == "up"
 
     @staticmethod
     def _format_dashboard_rate(value: object) -> str:
@@ -598,7 +853,10 @@ class NodeDashboardBackend:
             "host": site_ip,
             "location": transient_node.location,
             "unit": transient_node.topology_unit or "--",
-            "version": str(config_summary.get("version") or "--"),
+            "version": self._prefer_discovered_version(
+                cached.get("version") if isinstance(cached, dict) else None,
+                config_summary.get("version"),
+            ) or "--",
             "latency_ms": health["latency_ms"],
             "tx_bps": normalized.get("tx_bps", 0),
             "rx_bps": normalized.get("rx_bps", 0),

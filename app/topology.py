@@ -33,13 +33,33 @@ def normalize_topology_location(location: str | None) -> str | None:
 
 def topology_status_from_node_status(status: str | None) -> str:
     status_value = (status or "").lower()
-    if status_value == "online":
+    if status_value in {"online", "healthy", "up"}:
         return "healthy"
     if status_value == "degraded":
         return "degraded"
-    if status_value in {"offline", "disabled"}:
+    if status_value in {"offline", "disabled", "down", "failed", "unknown"}:
         return "down"
     return "neutral"
+
+
+def topology_status_from_rtt_state(rtt_state: str | None) -> str:
+    rtt_value = (rtt_state or "").lower()
+    if rtt_value == "good":
+        return "healthy"
+    if rtt_value == "warn":
+        return "degraded"
+    if rtt_value == "down":
+        return "down"
+    return "neutral"
+
+
+def topology_status_from_inventory(inventory: dict[str, Any] | None) -> str:
+    if not inventory:
+        return "neutral"
+    rtt_status = topology_status_from_rtt_state(inventory.get("rtt_state"))
+    if rtt_status != "neutral":
+        return rtt_status
+    return topology_status_from_node_status(inventory.get("status"))
 
 
 def _merge_topology_statuses(*statuses: str | None) -> str:
@@ -157,6 +177,8 @@ def build_topology_discovery_payload(
             "unit": str(row.get("unit") or "").strip() or None,
             "topology_level": int(row.get("topology_level")) if row.get("topology_level") is not None else None,
             "status": str(row.get("status") or "unknown"),
+            "rtt_state": str(row.get("rtt_state") or "").strip() or None,
+            "latency_ms": row.get("latency_ms"),
             "include_in_topology": bool(row.get("include_in_topology")),
         }
         anchors.append(anchor)
@@ -207,6 +229,8 @@ def build_topology_discovery_payload(
                 "surfaced_by_name": str(row.get("surfaced_by_name") or row.get("discovered_parent_name") or "").strip() or None,
                 "surfaced_by_names": [str(value).strip() for value in (row.get("surfaced_by_names") or []) if str(value).strip()],
                 "ping": str(row.get("ping") or "Down"),
+                "rtt_state": str(row.get("rtt_state") or "").strip() or None,
+                "latency_ms": row.get("latency_ms"),
                 "web_ok": bool(row.get("web_ok")),
                 "ssh_ok": bool(row.get("ssh_ok")),
             }
@@ -260,111 +284,68 @@ def build_topology_discovery_payload(
 
 
 def build_mock_topology_payload(inventory_nodes: list[dict[str, Any]]) -> dict[str, Any]:
-    inventory_lookup: dict[tuple[str, int, str], dict[str, Any]] = {}
-    for node in inventory_nodes:
-        if not node.get("include_in_topology", True):
-            continue
-        location = normalize_topology_location(node.get("location"))
-        level = node.get("topology_level")
-        unit = node.get("topology_unit")
-        if location not in TOPOLOGY_LOCATIONS or level not in (0, 1) or not unit:
-            continue
-        inventory_lookup[(location, int(level), str(unit))] = node
+    authored_nodes = [
+        node
+        for node in inventory_nodes
+        if node.get("include_in_topology", True)
+    ]
+    authored_nodes.sort(
+        key=lambda node: (
+            int(node.get("topology_level") or 0),
+            str(normalize_topology_location(node.get("location")) or ""),
+            str(node.get("topology_unit") or ""),
+            str(node.get("name") or ""),
+            int(node.get("id") or 0),
+        )
+    )
 
     lvl0_nodes: list[dict[str, Any]] = []
     lvl1_nodes: list[dict[str, Any]] = []
-    lvl2_clusters: list[dict[str, Any]] = []
-    links: list[dict[str, Any]] = []
 
-    for location in TOPOLOGY_LOCATIONS:
-        inventory = inventory_lookup.get((location, 0, "AGG"))
-        node_id = f"lvl0-{location.lower()}"
-        lvl0_nodes.append(
-            {
-                "id": node_id,
-                "name": f"{location} AGG",
-                "location": location,
-                "level": 0,
-                "unit": "AGG",
-                "status": topology_status_from_node_status((inventory or {}).get("status")),
-                "include_in_topology": bool((inventory or {}).get("include_in_topology", inventory is not None)),
-                "inventory_node_id": (inventory or {}).get("id"),
-                "inventory_name": (inventory or {}).get("name"),
-                "metrics_text": (inventory or {}).get("host") or "Awaiting anchor binding",
-            }
-        )
-
-    for left, right in combinations(lvl0_nodes, 2):
-        links.append(
-            {
-                "id": f"mesh-{left['id']}-{right['id']}",
-                "from": left["id"],
-                "to": right["id"],
-                "kind": "backbone",
-                "status": _merge_topology_statuses(left["status"], right["status"]),
-            }
-        )
-
-    for unit in TOPOLOGY_UNITS:
-        cluster_id = f"lvl2-{unit.lower().replace('/', '-').replace(' ', '-')}"
-        lvl2_clusters.append(
-            {
-                "id": cluster_id,
-                "name": f"{unit} Edge Nodes",
-                "count": TOPOLOGY_LVL2_COUNTS[unit],
-                "level": 2,
-                "unit": unit,
-                "status": "neutral",
-                "metrics_text": f"Edge nodes placeholder for {unit} subordinate nodes.",
-            }
-        )
-
-        for location in TOPOLOGY_LOCATIONS:
-            inventory = inventory_lookup.get((location, 1, unit))
-            node_id = f"lvl1-{location.lower()}-{unit.lower().replace('/', '-').replace(' ', '-')}"
-            lvl1_nodes.append(
-                {
-                    "id": node_id,
-                    "name": unit,
-                    "location": location,
-                    "level": 1,
-                    "unit": unit,
-                    "status": topology_status_from_node_status((inventory or {}).get("status")),
-                    "include_in_topology": bool((inventory or {}).get("include_in_topology", inventory is not None)),
-                    "inventory_node_id": (inventory or {}).get("id"),
-                    "inventory_name": (inventory or {}).get("name"),
-                    "metrics_text": (inventory or {}).get("host") or "Mock Phase 1 unit anchor slot",
-                }
-            )
-            links.append(
-                {
-                    "id": f"agg-{location.lower()}-{node_id}",
-                    "from": f"lvl0-{location.lower()}",
-                    "to": node_id,
-                    "kind": "uplink",
-                    "status": _merge_topology_statuses(
-                        next(level0["status"] for level0 in lvl0_nodes if level0["location"] == location),
-                        topology_status_from_node_status((inventory or {}).get("status")),
-                    ),
-                }
-            )
-            links.append(
-                {
-                    "id": f"{node_id}-{cluster_id}",
-                    "from": node_id,
-                    "to": cluster_id,
-                    "kind": "cluster",
-                    "status": topology_status_from_node_status((inventory or {}).get("status")),
-                }
-            )
+    for node in authored_nodes:
+        location = normalize_topology_location(node.get("location")) or "Cloud"
+        if location not in TOPOLOGY_LOCATIONS:
+            location = "Cloud"
+        level = int(node.get("topology_level") or 0)
+        if level not in (0, 1):
+            level = 0
+        unit = str(node.get("topology_unit") or ("AGG" if level == 0 else "DIV HQ")).strip() or ("AGG" if level == 0 else "DIV HQ")
+        entity = {
+            "id": f"node-{int(node.get('id') or 0)}",
+            "name": str(node.get("name") or "Node"),
+            "location": location,
+            "level": level,
+            "unit": unit,
+            "status": topology_status_from_inventory(node),
+            "include_in_topology": True,
+            "inventory_node_id": node.get("id"),
+            "inventory_name": node.get("name"),
+            "node_id": node.get("node_id"),
+            "site_id": node.get("site_id"),
+            "latency_ms": node.get("latency_ms"),
+            "rtt_state": node.get("rtt_state"),
+            "tx_bps": node.get("tx_bps"),
+            "rx_bps": node.get("rx_bps"),
+            "tx_display": node.get("tx_display"),
+            "rx_display": node.get("rx_display"),
+            "cpu_avg": node.get("cpu_avg"),
+            "version": node.get("version"),
+            "web_port": node.get("web_port"),
+            "web_scheme": node.get("web_scheme"),
+            "metrics_text": node.get("host") or "Awaiting first Seeker pull",
+        }
+        if level == 0:
+            lvl0_nodes.append(entity)
+        else:
+            lvl1_nodes.append(entity)
 
     return {
         "locations": TOPOLOGY_LOCATIONS,
         "units": TOPOLOGY_UNITS,
         "lvl0_nodes": lvl0_nodes,
         "lvl1_nodes": lvl1_nodes,
-        "lvl2_clusters": lvl2_clusters,
-        "links": links,
+        "lvl2_clusters": [],
+        "links": [],
         "inventory_nodes": inventory_nodes,
     }
 

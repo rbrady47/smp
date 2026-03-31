@@ -14,19 +14,30 @@ async def build_anchor_records(backend: Any, nodes: list[Node]) -> tuple[list[di
     anchor_summaries = await asyncio.gather(*(backend.summarize_dashboard_node(node) for node in nodes))
     anchor_by_site_id: dict[str, dict[str, object]] = {}
     anchors: list[dict[str, object]] = []
+    cached_anchor_rows = {
+        str(row.get("pin_key") or ""): row
+        for row in list((backend.node_dashboard_cache or {}).get("anchors") or [])
+        if isinstance(row, dict)
+    }
 
     for node, summary in zip(nodes, anchor_summaries):
         detail = backend.seeker_detail_cache.get(node.id) or {}
         config_summary = detail.get("config_summary") if isinstance(detail.get("config_summary"), dict) else {}
         site_id = str(node.node_id or config_summary.get("site_id") or node.id)
         site_name = str(node.name or config_summary.get("site_name") or f"Node {node.id}")
+        pin_key = backend._anchor_pin_key(node.id)
+        cached_anchor = cached_anchor_rows.get(pin_key, {})
+        current_version = str(summary.get("version") or "").strip()
+        cached_version = str(cached_anchor.get("version") or "").strip()
+        preferred_version = current_version if current_version and current_version != "--" else cached_version if cached_version and cached_version != "--" else "--"
         record = {
             **summary,
             "row_type": "anchor",
-            "pin_key": backend._anchor_pin_key(node.id),
+            "pin_key": pin_key,
             "detail_url": f"/nodes/{node.id}",
             "site_id": site_id,
             "site_name": site_name,
+            "version": preferred_version,
             "unit": node.topology_unit or "AGG",
             "last_ping_up": summary.get("last_seen"),
             "discovered_parent_site_id": None,
@@ -36,6 +47,14 @@ async def build_anchor_records(backend: Any, nodes: list[Node]) -> tuple[list[di
             "topology_level": int(node.topology_level) if node.topology_level is not None else None,
             "tx_display": backend._format_dashboard_rate(summary.get("tx_bps", 0)),
             "rx_display": backend._format_dashboard_rate(summary.get("rx_bps", 0)),
+            "wan_tx_bps": summary.get("wan_tx_bps", 0) or 0,
+            "wan_rx_bps": summary.get("wan_rx_bps", 0) or 0,
+            "lan_tx_bps": summary.get("lan_tx_bps", 0) or 0,
+            "lan_rx_bps": summary.get("lan_rx_bps", 0) or 0,
+            "lan_tx_total": summary.get("lan_tx_total", "--") or "--",
+            "lan_rx_total": summary.get("lan_rx_total", "--") or "--",
+            "wan_tx_total": summary.get("wan_tx_total", "--") or "--",
+            "wan_rx_total": summary.get("wan_rx_total", "--") or "--",
         }
         validated_record = NodeDashboardAnchorRow.model_validate(record).model_dump()
         anchors.append(validated_record)

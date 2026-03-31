@@ -62,8 +62,24 @@ class NodeDashboardAnchorRow(BaseModel):
     ping_state: str
     ping_avg_ms: int | None = None
     latency_ms: int | None = None
+    avg_latency_ms: int | None = None
+    latest_latency_ms: int | None = None
+    rtt_baseline_ms: int | None = None
+    rtt_deviation_pct: float | None = None
+    rtt_state: str | None = None
+    avg_tx_bps: int | None = None
+    avg_rx_bps: int | None = None
+    refresh_window_seconds: int | None = None
     tx_bps: int = 0
     rx_bps: int = 0
+    wan_tx_bps: int = 0
+    wan_rx_bps: int = 0
+    lan_tx_bps: int = 0
+    lan_rx_bps: int = 0
+    lan_tx_total: str = "--"
+    lan_rx_total: str = "--"
+    wan_tx_total: str = "--"
+    wan_rx_total: str = "--"
     cpu_avg: float | None = None
     version: str = "--"
     sites_up: int = 0
@@ -104,6 +120,14 @@ class NodeDashboardDiscoveredRow(BaseModel):
     discovered_parent_name: str | None = None
     surfaced_by_names: list[str] = Field(default_factory=list)
     latency_ms: int | None = None
+    avg_latency_ms: int | None = None
+    latest_latency_ms: int | None = None
+    rtt_baseline_ms: int | None = None
+    rtt_deviation_pct: float | None = None
+    rtt_state: str | None = None
+    avg_tx_bps: int | None = None
+    avg_rx_bps: int | None = None
+    refresh_window_seconds: int | None = None
     tx_bps: int = 0
     rx_bps: int = 0
     tx_display: str = "--"
