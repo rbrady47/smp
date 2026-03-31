@@ -8,6 +8,82 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-03-30 — Session handoff (Claudius v0.1.1)
+
+### Branch / commit
+- Branch: `Claudius` (pushed to `origin/Claudius`)
+- Commit: `82a22e9` — "v0.1.1 — user-authored topology map, WAN/LAN metrics, auto-refresh"
+- Base: `a053fd6` (origin/main, v0.9.3)
+- Worktree: `C:\Users\rick4\.codex\worktrees\601a\smp`
+
+### What was built this session
+
+**Topology — user-authored map (core architectural shift)**
+- Topology is now manually built node-by-node. Auto-discovery is disabled (`NodeDashboardBackend.discovery_enabled = False`).
+- `POST /api/nodes/flush-all` clears all node DB tables and in-memory caches.
+- Add Node button lives inside the Node Inventory panel (not the header). Click opens the modal, which first closes the inventory panel.
+- Node save is now instant — `create_node`, `list_nodes`, and `update_node` no longer make live TCP/API calls; all reads from the backend cache.
+
+**Auto-refresh dropdown**
+- Topology header has a dropdown (10 sec / 30 sec / 1 min / 5 min / 30 min / 1 hr) replacing the static refresh button.
+- Bug fixed: topology.html had `data-refresh-seconds` on options but the JS handler reads `data-seconds` — corrected to `data-seconds`.
+- Handler now uses `target.closest("[data-seconds]")` for robustness.
+- Styled to match the Demo dropdown (dark navy, backdrop-filter, blue-border options).
+
+**Ping RTT — separate 15s burst cycle**
+- `ping_node_burst()` fires 3 concurrent probes per node every 15s.
+- `GET /api/nodes/ping-status` — lightweight endpoint, reads in-memory ping cache only.
+- `refreshTopologyPingStatus()` + `updateTopologyPingChips()` — in-place DOM RTT chip updates with no full topology re-render.
+- `startTopologyTimers()` orchestrates: Seeker data on user interval, ping on fixed 15s, "Updated X ago" counter on 1s.
+
+**"Updated X ago" indicator**
+- Small muted timestamp in the topology header. Updates every second. Hidden until first load.
+
+**WAN / LAN TX/RX split + cumulative totals**
+- `seeker_api.py` — `normalize_bwv_stats()` now extracts:
+  - `wan_tx_bps` / `wan_rx_bps` from `txTotRateIf` / `rxTotRateIf`
+  - `lan_tx_bps` / `lan_rx_bps` from `userRate[0]` / `userRate[1]`
+  - `lan_tx_total` / `lan_rx_total` from `totUserBytes` (pre-formatted strings e.g. "1204.5G")
+  - `wan_tx_total` / `wan_rx_total` summed from `totChanBytesTx` / `totChanBytesRx`
+- `app/schemas.py` — `NodeDashboardAnchorRow` has 8 new fields (all with `extra="forbid"` safe defaults).
+- `app/node_projection_service.py` — anchor record builder passes all 8 fields.
+- `app/main.py` — `summarize_dashboard_node()` passes all 8 fields from normalized stats.
+- `getTopologyEntities()` → `mergeDashboardAnchorState()` — propagates all 8 fields into topology entity objects.
+
+**Topology node card tooltip**
+- Hover (or click-to-pin) tooltip now shows: Node ID, RTT, WAN TX/RX rate, LAN TX/RX rate, WAN Total (cumulative), LAN Total (cumulative), CPU, Version.
+- Tooltip widened: `min-width: 22rem; max-width: 28rem`.
+- Tooltip hidden in edit mode.
+
+**Click-to-pin tooltip**
+- Single click on a map node pins the tooltip; click again or click anywhere else dismisses it.
+- `topologyState.pinnedTooltipId` tracks the pinned node.
+- `document.addEventListener("click", ...)` clears pin on any click that isn't intercepted by `stopPropagation` on the node button.
+- Entering edit mode automatically clears any pinned tooltip.
+
+**Node Inventory panel row**
+- Anchor rows now show: WAN ↑/↓ rates, LAN ↑/↓ rates, WAN Total cumulative, LAN Total cumulative (replacing the old single Tx/Rx row).
+
+### Files touched this session
+- `app/main.py`
+- `app/seeker_api.py`
+- `app/schemas.py`
+- `app/node_projection_service.py`
+- `app/node_dashboard_backend.py`
+- `static/js/app.js`
+- `static/css/style.css`
+- `templates/topology.html`
+
+### State of the DB
+- PostgreSQL. Node inventory is empty (cleared this session). Discovery is disabled. Add nodes fresh from the Topology page → Add Node.
+
+### Known gaps / next steps
+- Windowed metric averaging (10s/30s/1m/5m/30m/1hr) for WAN/LAN rates not yet wired — `node_dashboard_backend.py` stores but does not yet compute per-window averages for the new fields.
+- No topology links authored yet — the map has nodes but no link lines between them.
+- Cache-bust version in topology.html is `author15`; bump to `author16` on next change.
+
+---
+
 ## 2026-03-30 10:15 ET - RTT/status presentation pass
 - Scope: Unified the main dashboard RTT chip with the Node Dashboard RTT helper so the card uses the same `rtt_state`-aware status coloring, and tightened the fallback latency threshold for rows missing an explicit RTT state.
 - Branch/worktree: `C:\Users\rick4\.codex\worktrees\601a\smp`
