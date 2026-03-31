@@ -27,6 +27,7 @@ from app.models import (
     NodeRelationship,
     ServiceCheck,
     TopologyEditorState,
+    TopologyLink,
 )
 from app.node_dashboard_backend import NodeDashboardBackend
 from app.node_discovery_service import refresh_discovered_inventory
@@ -40,7 +41,7 @@ from app.seeker_api import (
     extract_static_routes_from_cfg,
     resolve_site_name_map,
 )
-from app.schemas import NodeCreate, NodeUpdate, ServiceCheckCreate, TopologyEditorStateUpdate
+from app.schemas import NodeCreate, NodeUpdate, ServiceCheckCreate, TopologyEditorStateUpdate, TopologyLinkCreate, TopologyLinkUpdate
 from app.topology_editor_state_service import get_topology_editor_state_payload, upsert_topology_editor_state
 from app.topology import build_mock_topology_payload, build_topology_discovery_payload, normalize_topology_location
 
@@ -73,6 +74,8 @@ NODE_DASHBOARD_PROJECTION_REFRESH_SECONDS = 5.0
 NODE_DASHBOARD_WINDOW_OPTIONS = {10, 30, 60, 300, 1800, 3600}
 ping_samples_by_node: dict[int, deque[int]] = {}
 ping_snapshot_by_node: dict[int, dict[str, object]] = {}
+consecutive_misses_by_node: dict[int, int] = {}
+next_ping_at_by_node: dict[int, float] = {}
 ping_monitor_task: asyncio.Task | None = None
 seeker_detail_cache: dict[int, dict[str, object]] = {}
 seeker_poll_task: asyncio.Task | None = None
@@ -281,7 +284,8 @@ def ping_host(host: str) -> dict[str, int | bool | None]:
             except ValueError:
                 break
 
-    return {"reachable": True, "latency_ms": None}
+    # Exit code 0 but no latency found — likely "Destination host unreachable" or similar
+    return {"reachable": False, "latency_ms": None}
 
 
 def build_ping_snapshot(node_id: int, ping_result: dict[str, int | bool | None]) -> dict[str, object]:
@@ -294,20 +298,27 @@ def build_ping_snapshot(node_id: int, ping_result: dict[str, int | bool | None])
 
     average_ms = round(sum(samples) / len(samples)) if samples else None
 
-    if not ping_ok:
-        state = "down"
-    elif average_ms is None or latency_ms is None:
-        state = "good"
-    elif latency_ms <= average_ms * 1.5:
-        state = "good"
+    # --- consecutive-miss state model ---
+    if ping_ok:
+        consecutive_misses_by_node[node_id] = 0
     else:
+        consecutive_misses_by_node[node_id] = consecutive_misses_by_node.get(node_id, 0) + 1
+
+    misses = consecutive_misses_by_node[node_id]
+
+    if misses >= 5:
+        state = "down"
+    elif misses >= 3:
         state = "warn"
+    else:
+        state = "good"
 
     snapshot = {
         "ping_ok": ping_ok,
         "latency_ms": latency_ms,
         "avg_latency_ms": average_ms,
         "state": state,
+        "consecutive_misses": misses,
         "updated_at": datetime.now(timezone.utc),
     }
     ping_snapshot_by_node[node_id] = snapshot
@@ -322,42 +333,49 @@ def get_ping_snapshot(node: Node) -> dict[str, object]:
     return build_ping_snapshot(node.id, ping_host(node.host))
 
 
-async def ping_node_burst(host: str) -> dict[str, int | bool | None]:
-    """Send PING_PROBES_PER_BURST probes concurrently and return min latency."""
-    results = await asyncio.gather(
-        *(asyncio.to_thread(ping_host, host) for _ in range(PING_PROBES_PER_BURST)),
-        return_exceptions=True,
-    )
-    latencies = [
-        r["latency_ms"]
-        for r in results
-        if isinstance(r, dict) and r.get("reachable") and r.get("latency_ms") is not None
-    ]
-    reachable = any(isinstance(r, dict) and r.get("reachable") for r in results)
-    return {"reachable": reachable, "latency_ms": min(latencies) if latencies else None}
+async def ping_node_single(host: str) -> dict[str, int | bool | None]:
+    """Send a single ICMP probe and return latency."""
+    result = await asyncio.to_thread(ping_host, host)
+    return {"reachable": bool(result.get("reachable")), "latency_ms": result.get("latency_ms")}
 
 
 async def ping_monitor_loop() -> None:
+    """Per-node ping scheduler — ticks every second, pings only nodes that are due."""
+    import time as _time
+
     while True:
+        now = _time.monotonic()
         db = SessionLocal()
         try:
             nodes = db.scalars(select(Node).order_by(Node.id)).all()
         finally:
             db.close()
 
-        enabled_nodes = [node for node in nodes if node.enabled]
-        if enabled_nodes:
+        # Only consider nodes that are enabled AND have ping_enabled
+        pingable = [n for n in nodes if n.enabled and n.ping_enabled]
+
+        # Determine which nodes are due for a ping
+        due_nodes = []
+        for node in pingable:
+            deadline = next_ping_at_by_node.get(node.id, 0.0)
+            if now >= deadline:
+                due_nodes.append(node)
+
+        if due_nodes:
             burst_results = await asyncio.gather(
-                *(ping_node_burst(node.host) for node in enabled_nodes),
+                *(ping_node_single(node.host) for node in due_nodes),
                 return_exceptions=True,
             )
-            for node, result in zip(enabled_nodes, burst_results):
+            tick = _time.monotonic()
+            for node, result in zip(due_nodes, burst_results):
+                interval = max(node.ping_interval_seconds, 1)
+                next_ping_at_by_node[node.id] = tick + interval
                 if isinstance(result, Exception):
                     build_ping_snapshot(node.id, {"reachable": False, "latency_ms": None})
                 else:
                     build_ping_snapshot(node.id, result)
 
-        await asyncio.sleep(PING_INTERVAL_SECONDS)
+        await asyncio.sleep(1.0)
 
 
 async def compute_node_status(node: Node) -> dict[str, object]:
@@ -425,6 +443,8 @@ def serialize_node(node: Node, health: dict[str, object]) -> dict[str, object]:
         "api_username": node.api_username,
         "api_password": node.api_password,
         "api_use_https": node.api_use_https,
+        "ping_enabled": node.ping_enabled,
+        "ping_interval_seconds": node.ping_interval_seconds,
         "status": health["status"],
         "latency_ms": node.latency_ms,
         "last_checked": node.last_checked.isoformat() if node.last_checked else None,
@@ -966,9 +986,11 @@ async def summarize_dashboard_node(node: Node) -> dict[str, object]:
         "status": build_dashboard_status(node_status, normalized),
         "web_ok": web_ok,
         "ssh_ok": ssh_ok,
+        "ping_enabled": node.ping_enabled,
         "ping_ok": ping_ok,
-        "ping_state": ping_state,
+        "ping_state": ping_state if node.ping_enabled else "disabled",
         "ping_avg_ms": ping_avg_ms,
+        "consecutive_misses": consecutive_misses_by_node.get(node.id, 0),
         "latency_ms": latency_ms,
         "tx_bps": (normalized or {}).get("tx_bps", 0),
         "rx_bps": (normalized or {}).get("rx_bps", 0),
@@ -1111,10 +1133,12 @@ async def nodes_ping_status(db: Session = Depends(get_db)) -> list[dict[str, obj
         snap = ping_snapshot_by_node.get(node.id, {})
         result.append({
             "id": node.id,
-            "ping_state": snap.get("state", "unknown"),
+            "ping_enabled": node.ping_enabled,
+            "ping_state": snap.get("state", "unknown") if node.ping_enabled else "disabled",
             "latency_ms": snap.get("latency_ms"),
             "avg_latency_ms": snap.get("avg_latency_ms"),
             "ping_ok": bool(snap.get("ping_ok", False)),
+            "consecutive_misses": snap.get("consecutive_misses", 0),
         })
     return result
 
@@ -1462,6 +1486,88 @@ async def update_topology_editor_state(
     return upsert_topology_editor_state(payload, db)
 
 
+@app.get("/api/topology/links")
+async def list_topology_links(db: Session = Depends(get_db)) -> list[dict[str, object]]:
+    links = db.scalars(select(TopologyLink).order_by(TopologyLink.id)).all()
+    return [
+        {
+            "id": link.id,
+            "source_entity_id": link.source_entity_id,
+            "target_entity_id": link.target_entity_id,
+            "source_anchor": link.source_anchor,
+            "target_anchor": link.target_anchor,
+            "link_type": link.link_type,
+            "status_node_id": link.status_node_id,
+        }
+        for link in links
+    ]
+
+
+@app.post("/api/topology/links", status_code=status.HTTP_201_CREATED)
+async def create_topology_link(
+    payload: TopologyLinkCreate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    link = TopologyLink(
+        source_entity_id=payload.source_entity_id,
+        target_entity_id=payload.target_entity_id,
+        source_anchor=payload.source_anchor,
+        target_anchor=payload.target_anchor,
+        link_type=payload.link_type,
+        status_node_id=payload.status_node_id,
+    )
+    db.add(link)
+    db.commit()
+    db.refresh(link)
+    return {
+        "id": link.id,
+        "source_entity_id": link.source_entity_id,
+        "target_entity_id": link.target_entity_id,
+        "source_anchor": link.source_anchor,
+        "target_anchor": link.target_anchor,
+        "link_type": link.link_type,
+        "status_node_id": link.status_node_id,
+    }
+
+
+@app.put("/api/topology/links/{link_id}")
+async def update_topology_link(
+    link_id: int,
+    payload: TopologyLinkUpdate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    link = db.get(TopologyLink, link_id)
+    if not link:
+        raise HTTPException(status_code=404, detail="Link not found")
+    update_data = payload.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(link, key, value)
+    db.commit()
+    db.refresh(link)
+    return {
+        "id": link.id,
+        "source_entity_id": link.source_entity_id,
+        "target_entity_id": link.target_entity_id,
+        "source_anchor": link.source_anchor,
+        "target_anchor": link.target_anchor,
+        "link_type": link.link_type,
+        "status_node_id": link.status_node_id,
+    }
+
+
+@app.delete("/api/topology/links/{link_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_topology_link(
+    link_id: int,
+    db: Session = Depends(get_db),
+) -> Response:
+    link = db.get(TopologyLink, link_id)
+    if not link:
+        raise HTTPException(status_code=404, detail="Link not found")
+    db.delete(link)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @app.get("/api/node-dashboard/stream")
 async def node_dashboard_stream(window_seconds: int = Query(default=60)) -> StreamingResponse:
     async def event_generator():
@@ -1520,8 +1626,26 @@ async def topology_payload(
                 "web_scheme": anchor.get("web_scheme") or ("https" if node.api_use_https else "http"),
             }
         )
+    db_links = db.scalars(select(TopologyLink).order_by(TopologyLink.id)).all()
+    authored_links = [
+        {
+            "id": f"topo-link-{link.id}",
+            "db_id": link.id,
+            "from": link.source_entity_id,
+            "to": link.target_entity_id,
+            "source_anchor": link.source_anchor,
+            "target_anchor": link.target_anchor,
+            "link_type": link.link_type,
+            "status_node_id": link.status_node_id,
+            "kind": "authored",
+            "status": "neutral",
+        }
+        for link in db_links
+    ]
     db.commit()
-    return build_mock_topology_payload(inventory_nodes)
+    result = build_mock_topology_payload(inventory_nodes)
+    result["links"] = authored_links
+    return result
 
 
 @app.get("/api/services")

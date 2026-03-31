@@ -71,6 +71,21 @@ let topologyRouteListenerBound = false;
 let topologyEditorStateLoaded = false;
 let topologyEditorStateSaveTimer = null;
 let topologyRefreshTimer = null;
+const topologyLinkStatsCache = new Map();
+const topologyNetworkStateLog = (() => {
+    try {
+        const raw = localStorage.getItem("smp-topology-state-log");
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+                return parsed.slice(0, 100);
+            }
+        }
+    } catch (e) { /* ignore */ }
+    return [];
+})();
+const topologyPreviousNodeStates = new Map();
+const topologyPreviousLinkStates = new Map();
 const topologyState = {
     activeLocations: new Set(TOPOLOGY_LOCATIONS),
     activeUnits: new Set(TOPOLOGY_UNITS),
@@ -94,6 +109,7 @@ const topologyState = {
     drawerLayout: null,
     drawerDragging: null,
     pinnedTooltipId: null,
+    pinnedLinkTooltipId: null,
 };
 
 const statusPriority = {
@@ -304,64 +320,105 @@ function renderTopologyStateLogMarkup(events, options = {}) {
     `).join("");
 }
 
+function pushNetworkStateEvent(event) {
+    event.timestamp = event.timestamp || new Date().toISOString();
+    topologyNetworkStateLog.unshift(event);
+    if (topologyNetworkStateLog.length > 100) {
+        topologyNetworkStateLog.length = 100;
+    }
+    try {
+        localStorage.setItem("smp-topology-state-log", JSON.stringify(topologyNetworkStateLog));
+    } catch (e) { /* ignore storage failures */ }
+}
+
+function detectNodeStateChanges() {
+    const entities = getTopologyEntities();
+    for (const entity of entities) {
+        if (!entity.inventory_node_id) {
+            continue;
+        }
+        const key = String(entity.inventory_node_id);
+        const name = entity.inventory_name || entity.name || entity.id;
+        const pingState = String(entity.ping_state || "unknown").toLowerCase();
+        const latencyMs = typeof entity.latency_ms === "number" ? entity.latency_ms : null;
+        const prev = topologyPreviousNodeStates.get(key);
+
+        if (prev) {
+            if (prev.pingState !== pingState) {
+                if (pingState === "down" || pingState === "miss") {
+                    pushNetworkStateEvent({
+                        severity: "down",
+                        kind: "ping-down",
+                        headline: `Ping down — ${name}`,
+                        meta: [entity.location || "--", entity.unit || "--", entity.site_id || "--"],
+                        detailUrl: entity.inventory_node_id ? `/nodes/${entity.inventory_node_id}` : "",
+                    });
+                } else if (prev.pingState === "down" || prev.pingState === "miss") {
+                    pushNetworkStateEvent({
+                        severity: "up",
+                        kind: "ping-up",
+                        headline: `Ping restored — ${name}`,
+                        meta: [entity.location || "--", entity.unit || "--", entity.site_id || "--"],
+                        detailUrl: entity.inventory_node_id ? `/nodes/${entity.inventory_node_id}` : "",
+                    });
+                } else {
+                    pushNetworkStateEvent({
+                        severity: "info",
+                        kind: "ping-change",
+                        headline: `Ping ${prev.pingState} → ${pingState} — ${name}`,
+                        meta: [entity.location || "--", entity.unit || "--"],
+                        detailUrl: entity.inventory_node_id ? `/nodes/${entity.inventory_node_id}` : "",
+                    });
+                }
+            }
+            if (latencyMs !== null && prev.latencyMs !== null && prev.latencyMs !== latencyMs) {
+                const delta = latencyMs - prev.latencyMs;
+                const pctChange = prev.latencyMs > 0 ? Math.abs(delta / prev.latencyMs) : 0;
+                if (pctChange >= 0.5 || Math.abs(delta) >= 50) {
+                    pushNetworkStateEvent({
+                        severity: delta > 0 ? "warn" : "up",
+                        kind: "rtt-change",
+                        headline: `RTT ${prev.latencyMs} → ${latencyMs} ms — ${name}`,
+                        meta: [entity.location || "--", entity.unit || "--"],
+                        detailUrl: entity.inventory_node_id ? `/nodes/${entity.inventory_node_id}` : "",
+                    });
+                }
+            }
+        }
+        topologyPreviousNodeStates.set(key, { pingState, latencyMs });
+    }
+}
+
+function detectLinkStateChanges() {
+    const links = topologyPayload?.links ?? [];
+    for (let i = 0; i < links.length; i++) {
+        const link = links[i];
+        if (link.kind !== "authored" || !link.status_node_id) {
+            continue;
+        }
+        const linkId = getTopologyLinkId(link, i);
+        const currentStatus = getEffectiveTopologyLinkStatus(link, i);
+        const prev = topologyPreviousLinkStates.get(linkId);
+        if (prev && prev !== currentStatus) {
+            const entities = getTopologyEntities();
+            const fromE = entities.find((e) => e.id === link.from);
+            const toE = entities.find((e) => e.id === link.to);
+            const fromName = fromE?.name || link.from;
+            const toName = toE?.name || link.to;
+            pushNetworkStateEvent({
+                severity: currentStatus === "down" ? "down" : currentStatus === "degraded" ? "warn" : "up",
+                kind: "link-change",
+                headline: `Link ${prev} → ${currentStatus} — ${fromName} ↔ ${toName}`,
+                meta: [fromName, toName],
+                detailUrl: "",
+            });
+        }
+        topologyPreviousLinkStates.set(linkId, currentStatus);
+    }
+}
+
 function getTopologyStateLogEvents() {
-    const rows = [
-        ...((topologyNodeDashboardPayload?.anchors ?? []).map((row) => ({ ...row, row_type: "anchor" }))),
-        ...((topologyNodeDashboardPayload?.discovered ?? []).map((row) => ({ ...row, row_type: "discovered" }))),
-    ];
-
-    const events = [];
-    rows.forEach((row) => {
-        const rowType = String(row.row_type || "node");
-        const label = rowType === "anchor" ? "AN" : "DN";
-        const name = String(row.site_name || row.name || row.site_id || "Unknown");
-        const location = String(row.location || row.site || "--");
-        const unit = String(row.unit || "--");
-        const detailUrl = String(row.detail_url || "");
-        const ping = String(row.ping || row.ping_state || row.status || "").trim().toLowerCase();
-        const pingDownSince = row.ping_down_since || null;
-        const lastPingUp = row.last_ping_up || null;
-        const latencyMs = typeof row.latency_ms === "number" ? row.latency_ms : null;
-
-        if (pingDownSince) {
-            events.push({
-                severity: "down",
-                kind: "ping-down",
-                timestamp: pingDownSince,
-                headline: `Ping down on ${label} ${name}`,
-                meta: [label, location, unit, row.site_id || "--"],
-                detailUrl,
-            });
-        } else if (ping === "up" && lastPingUp) {
-            events.push({
-                severity: "up",
-                kind: "ping-up",
-                timestamp: lastPingUp,
-                headline: `Ping restored on ${label} ${name}`,
-                meta: [label, location, unit, row.site_id || "--"],
-                detailUrl,
-            });
-        }
-
-        if (latencyMs != null && latencyMs >= 120) {
-            events.push({
-                severity: latencyMs >= 180 ? "down" : "warn",
-                kind: "rtt-up",
-                timestamp: row.last_seen || lastPingUp || pingDownSince || null,
-                headline: `RTT elevated to ${latencyMs} ms on ${label} ${name}`,
-                meta: [label, location, unit, row.site_id || "--"],
-                detailUrl,
-            });
-        }
-    });
-
-    return events
-        .sort((left, right) => {
-            const leftTime = left.timestamp ? new Date(left.timestamp).getTime() : 0;
-            const rightTime = right.timestamp ? new Date(right.timestamp).getTime() : 0;
-            return rightTime - leftTime;
-        })
-        .slice(0, 40);
+    return topologyNetworkStateLog.slice(0, 40);
 }
 
 function renderTopologyStateLog() {
@@ -665,7 +722,37 @@ function getEffectiveTopologyEntityStatus(entity) {
 }
 
 function getEffectiveTopologyLinkStatus(link, index) {
-    return topologyState.demoSnapshot?.linkStatusById?.get(getTopologyLinkId(link, index)) || link.status || "neutral";
+    const demoStatus = topologyState.demoSnapshot?.linkStatusById?.get(getTopologyLinkId(link, index));
+    if (demoStatus) {
+        return demoStatus;
+    }
+    if (link.kind === "authored" && link.status_node_id) {
+        const statusEntity = getTopologyStatusNodeEntity(link.status_node_id);
+        if (statusEntity) {
+            return computeTopologyLinkStatusFromNode(statusEntity);
+        }
+    }
+    return link.status || "neutral";
+}
+
+function getTopologyStatusNodeEntity(inventoryNodeId) {
+    const entities = getTopologyEntities();
+    return entities.find((e) => e.inventory_node_id === inventoryNodeId || e.inventory_node_id === String(inventoryNodeId)) || null;
+}
+
+function computeTopologyLinkStatusFromNode(entity) {
+    const pingState = String(entity.ping_state || "").toLowerCase();
+    if (pingState === "down" || pingState === "miss" || entity.ping_ok === false) {
+        return "down";
+    }
+    const latency = entity.latency_ms;
+    const avg = entity.avg_latency_ms;
+    if (typeof latency === "number" && typeof avg === "number" && avg > 0) {
+        if (latency > avg * 1.5) {
+            return "degraded";
+        }
+    }
+    return "healthy";
 }
 
 function getEffectiveTopologyClusterUpCount(unit, fallbackCount) {
@@ -917,8 +1004,10 @@ function getTopologyConnectedAnchorMap() {
         const linkId = getTopologyLinkId(link, index);
         const assignment = topologyState.linkAnchorAssignments?.[linkId] || {};
         const linkStatus = getEffectiveTopologyLinkStatus(link, index) || "neutral";
-        if (assignment.source && link.from) {
-            const sourceKey = `${link.from}::${assignment.source}`;
+        const sourceAnchor = assignment.source || link.source_anchor || null;
+        const targetAnchor = assignment.target || link.target_anchor || null;
+        if (sourceAnchor && link.from) {
+            const sourceKey = `${link.from}::${sourceAnchor}`;
             const currentSourceStatus = connected.get(sourceKey);
             if (
                 !currentSourceStatus
@@ -927,8 +1016,8 @@ function getTopologyConnectedAnchorMap() {
                 connected.set(sourceKey, linkStatus);
             }
         }
-        if (assignment.target && link.to) {
-            const targetKey = `${link.to}::${assignment.target}`;
+        if (targetAnchor && link.to) {
+            const targetKey = `${link.to}::${targetAnchor}`;
             const currentTargetStatus = connected.get(targetKey);
             if (
                 !currentTargetStatus
@@ -1137,7 +1226,7 @@ function getTopologyAnchorTooltipMarkup(entity) {
                 <span class="topology-node-tooltip-label">Node ID</span>
                 <span class="topology-node-tooltip-value">${escapeHtml(String(nodeId))}</span>
                 <span class="topology-node-tooltip-label">RTT</span>
-                <span class="topology-node-tooltip-value">${escapeHtml(rttText)}</span>
+                <span class="topology-node-tooltip-value" data-tooltip-rtt>${escapeHtml(rttText)}</span>
                 <span class="topology-node-tooltip-label">WAN TX / RX</span>
                 <span class="topology-node-tooltip-value">${escapeHtml(`${wanTxText} / ${wanRxText}`)}</span>
                 <span class="topology-node-tooltip-label">LAN TX / RX</span>
@@ -2759,6 +2848,8 @@ function resetNodeForm() {
     document.getElementById("node-id").value = "";
     document.getElementById("node-web-port").value = "443";
     document.getElementById("node-ssh-port").value = "22";
+    document.getElementById("node-ping-enabled").checked = true;
+    document.getElementById("node-ping-interval").value = "15";
     const topologyRoot = document.getElementById("topology-root");
     const defaultLevel = topologyRoot && topologyState.focusUnit ? "1" : "0";
     const defaultUnit = topologyRoot ? (topologyState.focusUnit || (defaultLevel === "0" ? "AGG" : "DIV HQ")) : "AGG";
@@ -2966,6 +3057,8 @@ function populateNodeForm(nodeId) {
     document.getElementById("node-api-username").value = node.api_username ?? "";
     document.getElementById("node-api-password").value = node.api_password ?? "";
     document.getElementById("node-api-use-https").checked = node.api_use_https;
+    document.getElementById("node-ping-enabled").checked = node.ping_enabled !== false;
+    document.getElementById("node-ping-interval").value = String(node.ping_interval_seconds ?? 15);
     document.getElementById("node-form-title").textContent = `Edit ${node.name}`;
     document.getElementById("node-submit-button").textContent = "Save";
     document.getElementById("node-cancel-button").hidden = false;
@@ -3424,6 +3517,8 @@ function renderDetailHeaderActions(containerId, summary, node = {}) {
     const sshUsername = node.ssh_username ?? "";
     const webPort = Number(node.web_port ?? 443);
     const webScheme = node.web_scheme ?? "https";
+    const pinKey = node.pin_key || `anchor:${node.id}`;
+    const isPinned = new Set(getPinnedNodeKeys()).has(pinKey);
 
     container.innerHTML = `
         <span class="node-summary-chip node-summary-health-chip">${healthState}</span>
@@ -3450,6 +3545,13 @@ function renderDetailHeaderActions(containerId, summary, node = {}) {
             <span class="service-icon">🔐</span>
             <span>SSH</span>
         </button>
+        <button
+            type="button"
+            class="dashboard-pin-button detail-pin-button ${isPinned ? "pinned" : ""}"
+            data-node-summary-action="toggle-pin"
+            data-node-pin-key="${escapeHtml(pinKey)}"
+            title="${isPinned ? "Remove from main dashboard" : "Pin to main dashboard"}"
+        >&#9733;</button>
     `;
 }
 
@@ -3537,6 +3639,15 @@ function wireNodeSummaryActions(containerId) {
 
             if (action === "ssh") {
                 copySshCommand(host, sshUsername).catch(() => {});
+                return;
+            }
+
+            if (action === "toggle-pin") {
+                const pinKey = button.getAttribute("data-node-pin-key") || "";
+                togglePinnedNodeKey(pinKey);
+                const nowPinned = new Set(getPinnedNodeKeys()).has(pinKey);
+                button.classList.toggle("pinned", nowPinned);
+                button.title = nowPinned ? "Remove from main dashboard" : "Pin to main dashboard";
             }
         });
     });
@@ -3975,6 +4086,16 @@ function isTopologyEntityVisible(entity) {
 }
 
 function renderTopologyStage() {
+    if (topologyState.dragging?.kind === "link-create") {
+        return;
+    }
+    const linkCtxMenu = document.getElementById("topology-link-context-menu");
+    if (linkCtxMenu && !linkCtxMenu.hidden) {
+        return;
+    }
+    if (!topologyState.pinnedLinkTooltipId) {
+        hideTopologyLinkTooltip(true);
+    }
     const layer = document.getElementById("topology-node-layer");
     const stage = document.getElementById("topology-stage");
     const stateLogPreview = document.getElementById("topology-state-log-preview");
@@ -4121,6 +4242,117 @@ function renderTopologyStage() {
 
       layer.querySelectorAll("[data-topology-id]").forEach((button) => {
           button.querySelectorAll("[data-topology-anchor-point]").forEach((anchorPoint) => {
+              anchorPoint.addEventListener("pointerdown", (event) => {
+                  if (!topologyState.editMode) {
+                      return;
+                  }
+                  const entityId = button.getAttribute("data-topology-id");
+                  const anchorKey = anchorPoint.getAttribute("data-topology-anchor-point");
+                  if (!entityId || !anchorKey) {
+                      return;
+                  }
+                  event.preventDefault();
+                  event.stopPropagation();
+
+                  const svgEl = document.getElementById("topology-links");
+                  const stageEl = document.getElementById("topology-stage");
+                  if (!svgEl || !stageEl) {
+                      return;
+                  }
+                  const stageR = stageEl.getBoundingClientRect();
+                  const fromRect = button.getBoundingClientRect();
+                  const startPt = getTopologyAnchorCoordinates(fromRect, stageR, anchorKey);
+
+                  const rubberband = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                  rubberband.setAttribute("x1", String(startPt.x));
+                  rubberband.setAttribute("y1", String(startPt.y));
+                  rubberband.setAttribute("x2", String(startPt.x));
+                  rubberband.setAttribute("y2", String(startPt.y));
+                  rubberband.setAttribute("class", "topology-link topology-link-neutral");
+                  rubberband.style.pointerEvents = "none";
+                  svgEl.appendChild(rubberband);
+
+                  anchorPoint.classList.add("is-targeted");
+
+                  topologyState.dragging = {
+                      kind: "link-create",
+                      pointerId: event.pointerId,
+                      sourceEntityId: entityId,
+                      sourceAnchor: anchorKey,
+                      rubberband,
+                      snapTarget: null,
+                  };
+
+                  const moveHandler = (moveEvent) => {
+                      const drag = topologyState.dragging;
+                      if (!drag || drag.kind !== "link-create" || drag.pointerId !== moveEvent.pointerId) {
+                          return;
+                      }
+                      const cursorX = moveEvent.clientX - stageR.left;
+                      const cursorY = moveEvent.clientY - stageR.top;
+                      const snapTarget = getAnyTopologyAnchorTargetFromPoint(moveEvent.clientX, moveEvent.clientY, entityId);
+                      drag.snapTarget = snapTarget;
+                      setAnyTopologyAnchorTargetHighlight(snapTarget);
+
+                      if (snapTarget) {
+                          const targetBubble = stageEl.querySelector(`[data-topology-id="${CSS.escape(snapTarget.entityId)}"]`);
+                          if (targetBubble instanceof HTMLElement) {
+                              const snapPt = getTopologyAnchorCoordinates(targetBubble.getBoundingClientRect(), stageR, snapTarget.anchorKey);
+                              rubberband.setAttribute("x2", String(snapPt.x));
+                              rubberband.setAttribute("y2", String(snapPt.y));
+                          } else {
+                              rubberband.setAttribute("x2", String(cursorX));
+                              rubberband.setAttribute("y2", String(cursorY));
+                          }
+                      } else {
+                          rubberband.setAttribute("x2", String(cursorX));
+                          rubberband.setAttribute("y2", String(cursorY));
+                      }
+                      moveEvent.preventDefault();
+                  };
+
+                  const endHandler = async (endEvent) => {
+                      const drag = topologyState.dragging;
+                      window.removeEventListener("pointermove", moveHandler);
+                      window.removeEventListener("pointerup", endHandler);
+                      window.removeEventListener("pointercancel", endHandler);
+                      rubberband.remove();
+                      setAnyTopologyAnchorTargetHighlight(null);
+                      anchorPoint.classList.remove("is-targeted");
+                      topologyState.dragging = null;
+
+                      if (!drag || drag.kind !== "link-create") {
+                          return;
+                      }
+
+                      const finalTarget = drag.snapTarget
+                          || getAnyTopologyAnchorTargetFromPoint(endEvent.clientX, endEvent.clientY, entityId);
+                      if (finalTarget?.entityId && finalTarget?.anchorKey) {
+                          console.log("[link-create] Creating link:", drag.sourceEntityId, drag.sourceAnchor, "→", finalTarget.entityId, finalTarget.anchorKey);
+                          const created = await createTopologyLink(
+                              drag.sourceEntityId,
+                              drag.sourceAnchor,
+                              finalTarget.entityId,
+                              finalTarget.anchorKey,
+                          );
+                          if (created) {
+                              console.log("[link-create] Link created:", created);
+                              await refreshTopologyData();
+                          } else {
+                              console.warn("[link-create] API call failed — has the migration been run?");
+                          }
+                          renderTopologyStage();
+                      } else {
+                          console.log("[link-create] No snap target found, link not created");
+                          renderTopologyStage();
+                      }
+                      endEvent.preventDefault();
+                  };
+
+                  window.addEventListener("pointermove", moveHandler);
+                  window.addEventListener("pointerup", endHandler);
+                  window.addEventListener("pointercancel", endHandler);
+              });
               anchorPoint.addEventListener("click", (event) => {
                   if (!topologyState.editMode || topologyState.selectedKind !== "link" || !topologyState.selectedId) {
                       event.stopPropagation();
@@ -4258,6 +4490,7 @@ function renderTopologyStage() {
     };
 
     drawTopologyLinks(entityMap);
+    refreshPinnedLinkTooltip();
     renderTopologyDrawer();
     renderTopologyStateLog();
 }
@@ -4300,7 +4533,11 @@ function drawTopologyLinks(entityMap) {
         const linkId = getTopologyLinkId(link, index);
         const fromRect = fromNode.getBoundingClientRect();
         const toRect = toNode.getBoundingClientRect();
-        const anchorAssignment = getTopologyLinkAnchorAssignment(link, index);
+        const savedAssignment = getTopologyLinkAnchorAssignment(link, index);
+        const anchorAssignment = {
+            source: savedAssignment.source || link.source_anchor || null,
+            target: savedAssignment.target || link.target_anchor || null,
+        };
         const sourcePoint = getTopologyAnchorCoordinates(fromRect, stageRect, anchorAssignment.source);
         const targetPoint = getTopologyAnchorCoordinates(toRect, stageRect, anchorAssignment.target);
         const hitShape = document.createElementNS("http://www.w3.org/2000/svg", "line");
@@ -4322,6 +4559,9 @@ function drawTopologyLinks(entityMap) {
             `topology-link topology-link-${link.kind} topology-link-${getEffectiveTopologyLinkStatus(link, index) || "neutral"} ${topologyState.selectedKind === "link" && topologyState.selectedId === linkId ? "is-selected" : ""}`,
         );
         shape.setAttribute("data-topology-link-id", linkId);
+        if (link.link_type === "dotted") {
+            shape.setAttribute("stroke-dasharray", "8 6");
+        }
         svg.appendChild(shape);
 
         if (topologyState.editMode && topologyState.selectedKind === "link" && topologyState.selectedId === linkId) {
@@ -4342,21 +4582,63 @@ function drawTopologyLinks(entityMap) {
     });
 
     svg.querySelectorAll("[data-topology-link-id]").forEach((line) => {
+            const linkId = line.getAttribute("data-topology-link-id");
+            const link = (topologyPayload?.links ?? []).find((item, index) => getTopologyLinkId(item, index) === linkId);
             line.addEventListener("click", (event) => {
                 event.stopPropagation();
-                const nextId = line.getAttribute("data-topology-link-id");
-                if (!nextId) {
+                if (!linkId) {
+                    return;
+                }
+                if (!topologyState.editMode && link?.kind === "authored" && link?.status_node_id) {
+                    const visualLine = svg.querySelector(`.topology-link[data-topology-link-id="${CSS.escape(linkId)}"]`);
+                    if (visualLine instanceof SVGLineElement) {
+                        const mx = (parseFloat(visualLine.getAttribute("x1")) + parseFloat(visualLine.getAttribute("x2"))) / 2;
+                        const my = (parseFloat(visualLine.getAttribute("y1")) + parseFloat(visualLine.getAttribute("y2"))) / 2;
+                        pinTopologyLinkTooltip(link, mx, my);
+                    }
                     return;
                 }
                 setTopologyActiveLinkHandleTarget(null);
-                if (topologyState.selectedKind === "link" && topologyState.selectedId === nextId) {
+                if (topologyState.selectedKind === "link" && topologyState.selectedId === linkId) {
                     topologyState.selectedKind = null;
                     topologyState.selectedId = null;
                 } else {
                     topologyState.selectedKind = "link";
-                topologyState.selectedId = nextId;
+                    topologyState.selectedId = linkId;
+                }
+                renderTopologyStage();
+        });
+        line.addEventListener("contextmenu", (event) => {
+            if (!topologyState.editMode) {
+                return;
             }
-            renderTopologyStage();
+            event.preventDefault();
+            event.stopPropagation();
+            if (!link || !link.db_id) {
+                return;
+            }
+            topologyState.selectedKind = "link";
+            topologyState.selectedId = linkId;
+            openTopologyLinkContextMenu(link, event.clientX, event.clientY);
+        });
+        line.addEventListener("mouseenter", () => {
+            if (topologyState.editMode || !link?.kind === "authored" || !link?.status_node_id) {
+                return;
+            }
+            if (topologyState.pinnedLinkTooltipId) {
+                return;
+            }
+            const visualLine = svg.querySelector(`.topology-link[data-topology-link-id="${CSS.escape(linkId)}"]`);
+            if (visualLine instanceof SVGLineElement) {
+                const mx = (parseFloat(visualLine.getAttribute("x1")) + parseFloat(visualLine.getAttribute("x2"))) / 2;
+                const my = (parseFloat(visualLine.getAttribute("y1")) + parseFloat(visualLine.getAttribute("y2"))) / 2;
+                showTopologyLinkTooltip(link, mx, my);
+            }
+        });
+        line.addEventListener("mouseleave", () => {
+            if (!topologyState.pinnedLinkTooltipId) {
+                hideTopologyLinkTooltip();
+            }
         });
     });
 
@@ -4568,6 +4850,369 @@ function getTopologyAnchorTargetFromPoint(clientX, clientY, entityId) {
         };
     }
     return null;
+}
+
+function getAnyTopologyAnchorTargetFromPoint(clientX, clientY, excludeEntityId) {
+    const stage = document.getElementById("topology-stage");
+    if (!stage) {
+        return null;
+    }
+    const snapRadius = 18;
+    let best = null;
+    let bestDist = snapRadius;
+    stage.querySelectorAll("[data-topology-id]").forEach((bubble) => {
+        const entityId = bubble.getAttribute("data-topology-id") || "";
+        if (!entityId || entityId === excludeEntityId) {
+            return;
+        }
+        bubble.querySelectorAll("[data-topology-anchor-point]").forEach((ap) => {
+            const rect = ap.getBoundingClientRect();
+            const cx = rect.left + rect.width / 2;
+            const cy = rect.top + rect.height / 2;
+            const dist = Math.hypot(clientX - cx, clientY - cy);
+            if (dist < bestDist) {
+                bestDist = dist;
+                best = { entityId, anchorKey: ap.getAttribute("data-topology-anchor-point") };
+            }
+        });
+    });
+    return best;
+}
+
+function setAnyTopologyAnchorTargetHighlight(target) {
+    document.querySelectorAll(".topology-anchor-point.is-targeted").forEach((point) => {
+        point.classList.remove("is-targeted");
+    });
+    if (!target?.entityId || !target?.anchorKey) {
+        return;
+    }
+    const bubble = document.querySelector(`[data-topology-id="${CSS.escape(target.entityId)}"]`);
+    const anchorPoint = bubble?.querySelector(
+        `[data-topology-anchor-point="${CSS.escape(target.anchorKey)}"]`,
+    );
+    if (anchorPoint instanceof HTMLElement) {
+        anchorPoint.classList.add("is-targeted");
+    }
+}
+
+async function refreshTopologyData() {
+    try {
+        const result = await apiRequest(buildNodeDashboardRequestUrl("/api/topology"));
+        if (result) {
+            topologyPayload = result;
+        }
+    } catch (error) {
+        console.error("Failed to refresh topology data:", error);
+    }
+}
+
+async function createTopologyLink(sourceEntityId, sourceAnchor, targetEntityId, targetAnchor) {
+    try {
+        const response = await fetch("/api/topology/links", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                source_entity_id: sourceEntityId,
+                target_entity_id: targetEntityId,
+                source_anchor: sourceAnchor,
+                target_anchor: targetAnchor,
+                link_type: "solid",
+            }),
+        });
+        if (!response.ok) {
+            console.error("Failed to create topology link:", response.status);
+            return null;
+        }
+        return await response.json();
+    } catch (error) {
+        console.error("Failed to create topology link:", error);
+        return null;
+    }
+}
+
+async function fetchTopologyLinkStats(inventoryNodeId) {
+    const cached = topologyLinkStatsCache.get(inventoryNodeId);
+    if (cached && Date.now() - cached.fetchedAt < 10000) {
+        return cached.data;
+    }
+    try {
+        const data = await apiRequest(`/api/nodes/${inventoryNodeId}/stats`);
+        if (data?.status === "ok") {
+            topologyLinkStatsCache.set(inventoryNodeId, { data, fetchedAt: Date.now() });
+            return data;
+        }
+    } catch (error) {
+        console.error("Failed to fetch link stats:", error);
+    }
+    return null;
+}
+
+function findTunnelRowForPeer(statsData, peerSiteId) {
+    if (!statsData?.tunnels || !peerSiteId) {
+        return null;
+    }
+    const peerId = String(peerSiteId).trim();
+    return statsData.tunnels.find((t) => String(t.mate_site_id || "").trim() === peerId) || null;
+}
+
+function getTopologyLinkPeerSiteId(link) {
+    const entities = getTopologyEntities();
+    const statusNodeId = link.status_node_id;
+    const sourceEntity = entities.find((e) => e.id === link.from);
+    const targetEntity = entities.find((e) => e.id === link.to);
+    const statusEntity = (sourceEntity?.inventory_node_id == statusNodeId) ? sourceEntity : targetEntity;
+    const peerEntity = (statusEntity === sourceEntity) ? targetEntity : sourceEntity;
+    return peerEntity?.site_id || peerEntity?.node_id || null;
+}
+
+function buildTopologyLinkTooltipMarkup(link, tunnelRow) {
+    if (!link || link.kind !== "authored" || !link.status_node_id) {
+        return "";
+    }
+    const entity = getTopologyStatusNodeEntity(link.status_node_id);
+    if (!entity) {
+        return "";
+    }
+    const name = entity.inventory_name || entity.name || "Node";
+    const linkStatus = computeTopologyLinkStatusFromNode(entity);
+    const statusLabel = linkStatus === "down" ? "Down" : linkStatus === "degraded" ? "Degraded" : "Healthy";
+    const statusDot = linkStatus === "down" ? "down" : linkStatus === "degraded" ? "degraded" : "up";
+
+    const hasTunnel = tunnelRow != null;
+    const pingText = hasTunnel ? (tunnelRow.ping || "--") : (entity.ping_ok ? "Up" : "Down");
+    const rttText = hasTunnel ? (tunnelRow.rtt_ms || "--") : "--";
+    const txText = hasTunnel ? (tunnelRow.tx_rate || "--") : "--";
+    const rxText = hasTunnel ? (tunnelRow.rx_rate || "--") : "--";
+    const tunnelHealth = hasTunnel && Array.isArray(tunnelRow.tunnel_health) ? tunnelRow.tunnel_health : [];
+    const reason = linkStatus === "down"
+        ? "Ping is down"
+        : linkStatus === "degraded"
+            ? "RTT elevated >50% above average"
+            : "Link healthy";
+
+    const tunnelDots = tunnelHealth.length
+        ? `<span class="topology-link-tooltip-label">Tunnels</span>
+           <span class="topology-link-tooltip-value">${tunnelHealth.map((s, i) =>
+               `<span class="topology-link-tooltip-status-dot ${s === "up" ? "up" : s === "down" ? "down" : s === "off" ? "off" : "degraded"}" title="Tun${i}: ${escapeHtml(s)}"></span>`
+           ).join("")}</span>`
+        : "";
+
+    return `
+        <strong class="topology-link-tooltip-title">
+            <span class="topology-link-tooltip-status-dot ${statusDot}"></span>
+            ${escapeHtml(name)} — ${escapeHtml(statusLabel)}
+        </strong>
+        <span class="topology-link-tooltip-reason">${escapeHtml(reason)}</span>
+        <span class="topology-link-tooltip-grid">
+            ${tunnelDots}
+            <span class="topology-link-tooltip-label">Ping</span>
+            <span class="topology-link-tooltip-value">${escapeHtml(pingText)}</span>
+            <span class="topology-link-tooltip-label">RTT</span>
+            <span class="topology-link-tooltip-value">${escapeHtml(rttText)}</span>
+            <span class="topology-link-tooltip-label">TX Rate</span>
+            <span class="topology-link-tooltip-value">${escapeHtml(txText)}</span>
+            <span class="topology-link-tooltip-label">RX Rate</span>
+            <span class="topology-link-tooltip-value">${escapeHtml(rxText)}</span>
+        </span>
+    `;
+}
+
+async function showTopologyLinkTooltip(link, midX, midY) {
+    const tooltip = document.getElementById("topology-link-tooltip");
+    if (!tooltip) {
+        return;
+    }
+    if (!link || link.kind !== "authored" || !link.status_node_id) {
+        hideTopologyLinkTooltip();
+        return;
+    }
+    tooltip.innerHTML = '<span class="topology-link-tooltip-reason">Loading...</span>';
+    tooltip.hidden = false;
+    tooltip.style.left = `${midX}px`;
+    tooltip.style.top = `${midY}px`;
+
+    const peerSiteId = getTopologyLinkPeerSiteId(link);
+    const stats = await fetchTopologyLinkStats(link.status_node_id);
+    const tunnelRow = findTunnelRowForPeer(stats, peerSiteId);
+    const markup = buildTopologyLinkTooltipMarkup(link, tunnelRow);
+    if (!markup) {
+        hideTopologyLinkTooltip();
+        return;
+    }
+    tooltip.innerHTML = markup;
+}
+
+function hideTopologyLinkTooltip(force) {
+    const tooltip = document.getElementById("topology-link-tooltip");
+    if (!tooltip) {
+        return;
+    }
+    if (!force && tooltip.classList.contains("is-pinned")) {
+        return;
+    }
+    tooltip.hidden = true;
+    tooltip.classList.remove("is-pinned");
+    tooltip.innerHTML = "";
+}
+
+function pinTopologyLinkTooltip(link, midX, midY) {
+    const tooltip = document.getElementById("topology-link-tooltip");
+    if (!tooltip) {
+        return;
+    }
+    if (topologyState.pinnedLinkTooltipId === link.id && !tooltip.hidden) {
+        hideTopologyLinkTooltip(true);
+        topologyState.pinnedLinkTooltipId = null;
+        return;
+    }
+    showTopologyLinkTooltip(link, midX, midY);
+    tooltip.classList.add("is-pinned");
+    topologyState.pinnedLinkTooltipId = link.id;
+}
+
+async function refreshPinnedLinkTooltip() {
+    if (!topologyState.pinnedLinkTooltipId) {
+        return;
+    }
+    const links = topologyPayload?.links ?? [];
+    const link = links.find((l, i) => getTopologyLinkId(l, i) === topologyState.pinnedLinkTooltipId);
+    if (!link) {
+        hideTopologyLinkTooltip(true);
+        topologyState.pinnedLinkTooltipId = null;
+        return;
+    }
+    const svg = document.getElementById("topology-links");
+    const visualLine = svg?.querySelector(`.topology-link[data-topology-link-id="${CSS.escape(link.id)}"]`);
+    if (visualLine instanceof SVGLineElement) {
+        const mx = (parseFloat(visualLine.getAttribute("x1")) + parseFloat(visualLine.getAttribute("x2"))) / 2;
+        const my = (parseFloat(visualLine.getAttribute("y1")) + parseFloat(visualLine.getAttribute("y2"))) / 2;
+        await showTopologyLinkTooltip(link, mx, my);
+        const tooltip = document.getElementById("topology-link-tooltip");
+        if (tooltip) {
+            tooltip.classList.add("is-pinned");
+        }
+    }
+}
+
+async function updateTopologyLink(dbId, updates) {
+    try {
+        const response = await fetch(`/api/topology/links/${dbId}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(updates),
+        });
+        if (!response.ok) {
+            console.error("Failed to update topology link:", response.status);
+            return null;
+        }
+        return await response.json();
+    } catch (error) {
+        console.error("Failed to update topology link:", error);
+        return null;
+    }
+}
+
+async function deleteTopologyLink(dbId) {
+    try {
+        const response = await fetch(`/api/topology/links/${dbId}`, { method: "DELETE" });
+        return response.ok || response.status === 204;
+    } catch (error) {
+        console.error("Failed to delete topology link:", error);
+        return false;
+    }
+}
+
+function openTopologyLinkContextMenu(link, clientX, clientY) {
+    const menu = document.getElementById("topology-link-context-menu");
+    if (!menu) {
+        return;
+    }
+
+    const typeSelect = document.getElementById("topology-link-ctx-type");
+    const statusNodeSelect = document.getElementById("topology-link-ctx-status-node");
+    if (!typeSelect || !statusNodeSelect) {
+        return;
+    }
+
+    typeSelect.value = link.link_type || "solid";
+
+    const entities = getTopologyEntities();
+    const fromEntity = entities.find((e) => e.id === link.from);
+    const toEntity = entities.find((e) => e.id === link.to);
+    statusNodeSelect.innerHTML = '<option value="">None</option>';
+    [fromEntity, toEntity].filter(Boolean).forEach((entity) => {
+        const invId = entity.inventory_node_id;
+        if (!invId) {
+            return;
+        }
+        const opt = document.createElement("option");
+        opt.value = String(invId);
+        opt.textContent = entity.name || entity.id;
+        statusNodeSelect.appendChild(opt);
+    });
+    statusNodeSelect.value = link.status_node_id ? String(link.status_node_id) : "";
+
+    menu.hidden = false;
+    menu.style.left = `${Math.min(clientX, window.innerWidth - 260)}px`;
+    menu.style.top = `${Math.min(clientY, window.innerHeight - 240)}px`;
+    menu.dataset.linkId = link.id;
+    menu.dataset.dbId = String(link.db_id);
+}
+
+function closeTopologyLinkContextMenu() {
+    const menu = document.getElementById("topology-link-context-menu");
+    if (menu) {
+        menu.hidden = true;
+        delete menu.dataset.linkId;
+        delete menu.dataset.dbId;
+    }
+}
+
+function initTopologyLinkContextMenu() {
+    const menu = document.getElementById("topology-link-context-menu");
+    if (!menu) {
+        return;
+    }
+
+    document.getElementById("topology-link-context-menu-close")?.addEventListener("click", () => {
+        closeTopologyLinkContextMenu();
+    });
+
+    document.getElementById("topology-link-ctx-save")?.addEventListener("click", async () => {
+        const dbId = menu.dataset.dbId;
+        if (!dbId) {
+            return;
+        }
+        const linkType = document.getElementById("topology-link-ctx-type")?.value || "solid";
+        const statusNodeVal = document.getElementById("topology-link-ctx-status-node")?.value;
+        const statusNodeId = statusNodeVal ? Number(statusNodeVal) : null;
+        await updateTopologyLink(dbId, { link_type: linkType, status_node_id: statusNodeId });
+        closeTopologyLinkContextMenu();
+        await refreshTopologyData();
+        renderTopologyStage();
+    });
+
+    document.getElementById("topology-link-ctx-delete")?.addEventListener("click", async () => {
+        const dbId = menu.dataset.dbId;
+        if (!dbId) {
+            return;
+        }
+        await deleteTopologyLink(dbId);
+        closeTopologyLinkContextMenu();
+        topologyState.selectedKind = null;
+        topologyState.selectedId = null;
+        await refreshTopologyData();
+        renderTopologyStage();
+    });
+
+    document.addEventListener("pointerdown", (event) => {
+        if (menu.hidden) {
+            return;
+        }
+        if (!menu.contains(event.target)) {
+            closeTopologyLinkContextMenu();
+        }
+    });
 }
 
 function getTopologyInventoryNodeRecord(entity) {
@@ -4979,6 +5624,7 @@ async function loadTopologyPage() {
     }
 
     startTopologyTimers();
+    initTopologyLinkContextMenu();
 
     try {
         const requestedUnit = normalizeTopologyUnit(new URL(window.location.href).searchParams.get("unit"));
@@ -5378,39 +6024,64 @@ async function refreshTopologyPingStatus() {
         const byId = {};
         for (const s of statuses) byId[s.id] = s;
 
-        // Update ping data in the cached payloads without a full re-fetch
-        for (const list of [topologyPayload?.lvl0_nodes, topologyPayload?.lvl1_nodes]) {
+        // Update ping data in ALL cached payloads so renderTopologyStage picks it up
+        let changed = false;
+        const allLists = [
+            topologyPayload?.lvl0_nodes,
+            topologyPayload?.lvl1_nodes,
+        ];
+        // Also update the node-dashboard anchors (these take priority in mergeDashboardAnchorState)
+        if (Array.isArray(topologyNodeDashboardPayload?.anchors)) {
+            allLists.push(topologyNodeDashboardPayload.anchors);
+        }
+        for (const list of allLists) {
             if (!Array.isArray(list)) continue;
             for (const node of list) {
-                const s = byId[node.inventory_node_id];
+                const nodeId = node.inventory_node_id ?? node.id;
+                const s = byId[nodeId];
                 if (!s) continue;
+                if (node.latency_ms !== s.latency_ms || node.ping_state !== s.ping_state) {
+                    changed = true;
+                }
                 node.ping_state = s.ping_state;
                 node.latency_ms = s.latency_ms;
                 node.avg_latency_ms = s.avg_latency_ms;
             }
         }
 
-        // Update RTT chips in-place without full re-render
-        updateTopologyPingChips(byId);
+        // Detect state changes and update the log
+        detectNodeStateChanges();
+        detectLinkStateChanges();
+
+        // Re-render the stage so tooltip markup reflects fresh RTT
+        if (changed && topologyPayload) {
+            renderTopologyStage();
+        }
     } catch (err) {
-        // non-fatal — next burst will catch up
+        // non-fatal — next poll will catch up
     }
 }
 
 function updateTopologyPingChips(byId) {
     const stage = document.getElementById("topology-stage");
     if (!stage) return;
-    stage.querySelectorAll("[data-entity-id]").forEach(el => {
-        const entityId = el.dataset.entityId;
+    stage.querySelectorAll("[data-topology-id]").forEach(el => {
+        const entityId = el.dataset.topologyId;
         if (!entityId?.startsWith("node-")) return;
         const nodeId = parseInt(entityId.replace("node-", ""), 10);
         const s = byId[nodeId];
         if (!s) return;
         const chip = el.querySelector(".topology-rtt-chip");
-        if (!chip) return;
-        const state = s.ping_state || "unknown";
-        chip.className = `topology-rtt-chip rtt-${state}`;
-        chip.textContent = s.latency_ms != null ? `${s.latency_ms} ms` : "--";
+        if (chip) {
+            const state = s.ping_state || "unknown";
+            chip.className = `topology-rtt-chip rtt-${state}`;
+            chip.textContent = s.latency_ms != null ? `${s.latency_ms} ms` : "--";
+        }
+        // Update tooltip RTT value in-place
+        const tooltipRtt = el.querySelector("[data-tooltip-rtt]");
+        if (tooltipRtt) {
+            tooltipRtt.textContent = s.latency_ms != null ? `${s.latency_ms} ms` : "--";
+        }
     });
 }
 
@@ -5437,9 +6108,9 @@ function startTopologyTimers() {
     // Seeker data — user-selected interval (handled by applyDashboardRefreshInterval)
     applyDashboardRefreshInterval();
 
-    // Ping RTT — fixed 15s burst cycle
+    // Ping RTT — poll every 2s (lightweight in-memory endpoint)
     if (topologyPingTimer) clearInterval(topologyPingTimer);
-    topologyPingTimer = setInterval(refreshTopologyPingStatus, 15000);
+    topologyPingTimer = setInterval(refreshTopologyPingStatus, 2000);
 
     // "Updated X ago" counter — ticks every second
     if (topologyLastUpdatedTimer) clearInterval(topologyLastUpdatedTimer);
@@ -5634,6 +6305,11 @@ async function handleNodeDashboardListAction(button) {
     if (action === "edit-anchor") {
         const nodeId = Number(button.getAttribute("data-node-id"));
         if (Number.isFinite(nodeId)) {
+            // Close the inventory modal first so the node form isn't hidden behind it
+            const inventoryShell = document.getElementById("topology-inventory-shell");
+            if (inventoryShell) {
+                inventoryShell.hidden = true;
+            }
             if (!currentNodes.length) {
                 await loadNodes();
             }
@@ -6133,6 +6809,8 @@ function collectNodeFormPayload() {
         api_username: document.getElementById("node-api-username").value.trim() || null,
         api_password: document.getElementById("node-api-password").value.trim() || null,
         api_use_https: document.getElementById("node-api-use-https").checked,
+        ping_enabled: document.getElementById("node-ping-enabled").checked,
+        ping_interval_seconds: Number(document.getElementById("node-ping-interval").value) || 15,
     };
 }
 

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ page_title }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260330-rttsync1">
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260331-ping1">
 </head>
 <body>
     <header class="topbar">
@@ -114,6 +114,16 @@
                     <span>API Uses HTTPS</span>
                 </label>
 
+                <label class="checkbox-field">
+                    <input type="checkbox" id="node-ping-enabled" name="ping_enabled" checked>
+                    <span>Enable Ping Monitoring</span>
+                </label>
+
+                <label>
+                    <span>Ping Interval (seconds)</span>
+                    <input type="number" id="node-ping-interval" name="ping_interval_seconds" min="1" max="300" value="15">
+                </label>
+
                 <div class="form-actions full-width">
                     <button type="submit" class="button-primary" id="node-submit-button">Add Node</button>
                     <button type="button" class="button-secondary" id="node-cancel-button" hidden>Cancel Edit</button>
@@ -165,6 +175,6 @@
         </section>
     </main>
 
-    <script src="{{ url_for('static', path='js/app.js') }}?v=20260330-rttsync1"></script>
+    <script src="{{ url_for('static', path='js/app.js') }}?v=20260331-ping1"></script>
 </body>
 </html>

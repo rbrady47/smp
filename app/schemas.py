@@ -22,6 +22,8 @@ class NodeBase(BaseModel):
     api_username: str | None = Field(default=None, max_length=255)
     api_password: str | None = Field(default=None, max_length=255)
     api_use_https: bool = False
+    ping_enabled: bool = True
+    ping_interval_seconds: int = Field(default=15, ge=1, le=300)
 
 
 class NodeCreate(NodeBase):
@@ -58,9 +60,11 @@ class NodeDashboardAnchorRow(BaseModel):
     status: str
     web_ok: bool
     ssh_ok: bool
+    ping_enabled: bool = True
     ping_ok: bool
     ping_state: str
     ping_avg_ms: int | None = None
+    consecutive_misses: int = 0
     latency_ms: int | None = None
     avg_latency_ms: int | None = None
     latest_latency_ms: int | None = None
@@ -163,6 +167,8 @@ class TopologyDiscoveryAnchor(BaseModel):
     topology_level: int | None = None
     status: str
     include_in_topology: bool = False
+    latency_ms: int | None = None
+    rtt_state: str | None = None
 
 
 class TopologyDiscoveryDiscoveredNode(BaseModel):
@@ -236,6 +242,38 @@ class TopologyEditorStatePayload(TopologyEditorStateUpdate):
     scope: str
     exists: bool = False
     updated_at: str | None = None
+
+
+TopologyLinkType = Literal["solid", "dotted"]
+TopologyAnchorKey = Literal["n", "ne", "e", "se", "s", "sw", "w", "nw"]
+
+
+class TopologyLinkCreate(BaseModel):
+    source_entity_id: str = Field(..., min_length=1, max_length=128)
+    target_entity_id: str = Field(..., min_length=1, max_length=128)
+    source_anchor: TopologyAnchorKey = "e"
+    target_anchor: TopologyAnchorKey = "w"
+    link_type: TopologyLinkType = "solid"
+    status_node_id: int | None = None
+
+
+class TopologyLinkUpdate(BaseModel):
+    source_anchor: TopologyAnchorKey | None = None
+    target_anchor: TopologyAnchorKey | None = None
+    link_type: TopologyLinkType | None = None
+    status_node_id: int | None = None
+
+
+class TopologyLinkRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    source_entity_id: str
+    target_entity_id: str
+    source_anchor: str
+    target_anchor: str
+    link_type: str
+    status_node_id: int | None = None
 
 
 class MainDashboardNodeSummary(BaseModel):

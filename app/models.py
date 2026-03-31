@@ -28,6 +28,8 @@ class Node(Base):
     api_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     api_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     api_use_https: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    ping_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    ping_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=15, server_default="15")
     last_checked: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
@@ -97,6 +99,20 @@ class NodeRelationship(Base):
     target_location: Mapped[str | None] = mapped_column(String(255), nullable=True)
     discovered_level: Mapped[int | None] = mapped_column(Integer, nullable=True)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class TopologyLink(Base):
+    __tablename__ = "topology_links"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    source_entity_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    target_entity_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_anchor: Mapped[str] = mapped_column(String(8), nullable=False, default="e")
+    target_anchor: Mapped[str] = mapped_column(String(8), nullable=False, default="w")
+    link_type: Mapped[str] = mapped_column(String(16), nullable=False, default="solid")
+    status_node_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ page_title }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260330-topology-author15">
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260331-links1">
 </head>
 <body>
     <header class="topbar">
@@ -83,6 +83,7 @@
                     <div class="topology-selection-box" id="topology-selection-box" hidden></div>
                     <div class="topology-layer topology-layer-nodes" id="topology-node-layer"></div>
                     <div class="topology-layer topology-layer-handles" id="topology-link-handle-layer"></div>
+                    <div class="topology-link-tooltip" id="topology-link-tooltip" hidden></div>
                     <button type="button" class="topology-state-log-preview" id="topology-state-log-preview">
                         <div class="topology-state-log-preview-header">
                             <span class="dashboard-meta-label">Network State Log</span>
@@ -108,6 +109,32 @@
             </section>
         </section>
     </main>
+
+    <div class="topology-link-context-menu" id="topology-link-context-menu" hidden>
+        <div class="topology-link-context-menu-header">
+            <strong>Link Config</strong>
+            <button type="button" class="topology-link-context-menu-close" id="topology-link-context-menu-close">&times;</button>
+        </div>
+        <div class="topology-link-context-menu-body">
+            <label class="topology-link-context-menu-field">
+                <span>Link Type</span>
+                <select id="topology-link-ctx-type">
+                    <option value="solid">Solid</option>
+                    <option value="dotted">Dotted</option>
+                </select>
+            </label>
+            <label class="topology-link-context-menu-field">
+                <span>Status Node</span>
+                <select id="topology-link-ctx-status-node">
+                    <option value="">None</option>
+                </select>
+            </label>
+            <div class="topology-link-context-menu-actions">
+                <button type="button" class="button-primary" id="topology-link-ctx-save">Save</button>
+                <button type="button" class="button-danger" id="topology-link-ctx-delete">Delete Link</button>
+            </div>
+        </div>
+    </div>
 
     <div class="modal-shell" id="node-modal-shell" hidden>
         <div class="modal-backdrop" data-modal-close="node-modal"></div>
@@ -167,6 +194,16 @@
                 <label class="checkbox-field">
                     <input type="checkbox" id="node-api-use-https" name="api_use_https">
                     <span>API Uses HTTPS</span>
+                </label>
+
+                <label class="checkbox-field">
+                    <input type="checkbox" id="node-ping-enabled" name="ping_enabled" checked>
+                    <span>Enable Ping Monitoring</span>
+                </label>
+
+                <label>
+                    <span>Ping Interval (seconds)</span>
+                    <input type="number" id="node-ping-interval" name="ping_interval_seconds" min="1" max="300" value="15">
                 </label>
 
                 <div class="form-actions full-width node-modal-actions">
@@ -234,7 +271,7 @@
         </section>
     </div>
 
-    <script src="{{ url_for('static', path='js/app.js') }}?v=20260330-topology-author15"></script>
+    <script src="{{ url_for('static', path='js/app.js') }}?v=20260331-links1"></script>
 </body>
 </html>
 
