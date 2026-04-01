@@ -1705,13 +1705,9 @@ function wireTopologyLayoutEditor(stage, layer, entityMap) {
 
         syncTopologySelectionBox(null);
         saveTopologyLayoutOverrides();
-        const wasDragOrSelect = drag.mode === "select" || drag.mode === "drag" || drag.mode === "drag-group";
         topologyState.dragging = null;
+        topologyState._lastDragEndTime = Date.now();
         clearDragListeners();
-        if (wasDragOrSelect) {
-            topologyState._suppressNextClick = true;
-            requestAnimationFrame(() => { topologyState._suppressNextClick = false; });
-        }
         event.preventDefault();
     };
 
@@ -4536,8 +4532,7 @@ function renderTopologyStage() {
     }
 
     stage.onclick = (event) => {
-        if (topologyState._suppressNextClick) {
-            topologyState._suppressNextClick = false;
+        if (topologyState._lastDragEndTime && Date.now() - topologyState._lastDragEndTime < 300) {
             return;
         }
         const target = event.target;
@@ -5971,8 +5966,7 @@ function wireTopologyLayoutControls() {
                 target instanceof HTMLElement &&
                 (
                     target.isContentEditable ||
-                    /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) ||
-                    (target.tagName === "BUTTON" && !target.hasAttribute("data-topology-id"))
+                    /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)
                 )
             ) {
                 return;
