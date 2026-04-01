@@ -4969,6 +4969,34 @@ async function refreshTopologyData() {
     }
 }
 
+function buildSubmapEntityFromMapObject(obj) {
+    const bindingKey = obj.binding_key || "";
+    const inventoryNodeId = bindingKey.startsWith("anchor:") ? Number(bindingKey.split(":")[1]) : null;
+    const inventoryNode = inventoryNodeId
+        ? (Array.isArray(currentNodes) ? currentNodes : []).find((n) => n.id === inventoryNodeId)
+        : null;
+    return {
+        id: `map-obj-${obj.id}`,
+        map_object_id: obj.id,
+        name: obj.label || inventoryNode?.name || obj.node_site_id || "Node",
+        node_id: inventoryNode?.node_id || obj.node_site_id,
+        site_id: inventoryNode?.node_id || obj.node_site_id,
+        kind: "anchor",
+        level: 0,
+        x: obj.x,
+        y: obj.y,
+        width: obj.width || 160,
+        height: obj.height || 96,
+        status: "unknown",
+        binding_key: obj.binding_key,
+        inventory_node_id: inventoryNodeId,
+        host: inventoryNode?.host,
+        web_port: inventoryNode?.web_port,
+        web_scheme: inventoryNode?.web_scheme,
+        location: inventoryNode?.location,
+    };
+}
+
 function renderSubmapAddNodeList() {
     const listEl = document.getElementById("submap-add-node-list");
     if (!listEl) {
@@ -5029,27 +5057,12 @@ async function placeSubmapNode(siteId, displayName, bindingKey) {
             return;
         }
         const created = await response.json();
-        const entityId = `map-obj-${created.id}`;
-        const entity = {
-            id: entityId,
-            map_object_id: created.id,
-            name: displayName,
-            node_id: siteId,
-            site_id: siteId,
-            kind: "anchor",
-            level: 0,
-            x: x,
-            y: y,
-            width: 160,
-            height: 96,
-            status: "unknown",
-            binding_key: bindingKey || null,
-        };
+        const entity = buildSubmapEntityFromMapObject(created);
         if (!topologyPayload.lvl0_nodes) {
             topologyPayload.lvl0_nodes = [];
         }
         topologyPayload.lvl0_nodes.push(entity);
-        setTopologyEntityLayout(entityId, { x: x, y: y, size: 96 });
+        setTopologyEntityLayout(entity.id, { x: entity.x, y: entity.y, size: 96 });
         renderSubmapAddNodeList();
         renderTopologyStage();
     } catch (error) {
@@ -5876,21 +5889,7 @@ async function loadTopologyPage() {
             topologySubmapDetail = submapResult;
             const submapEntities = (submapResult?.objects ?? [])
                 .filter((obj) => obj.object_type === "node")
-                .map((obj) => ({
-                    id: `map-obj-${obj.id}`,
-                    map_object_id: obj.id,
-                    name: obj.label || obj.node_site_id || "Node",
-                    node_id: obj.node_site_id,
-                    site_id: obj.node_site_id,
-                    kind: "anchor",
-                    level: 0,
-                    x: obj.x,
-                    y: obj.y,
-                    width: obj.width || 160,
-                    height: obj.height || 96,
-                    status: "unknown",
-                    binding_key: obj.binding_key,
-                }));
+                .map(buildSubmapEntityFromMapObject);
             submapEntities.forEach((entity) => {
                 if (!topologyState.layoutOverrides?.[entity.id]) {
                     setTopologyEntityLayout(entity.id, { x: entity.x, y: entity.y, size: 96 }, { persist: false });
