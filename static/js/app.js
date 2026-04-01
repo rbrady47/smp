@@ -6480,7 +6480,13 @@ async function refreshTopologyPage() {
     }
     const submapId = root.getAttribute("data-map-view-id");
     if (submapId) {
-        await refreshSubmapDiscovery(submapId);
+        const [, nodeDashResult] = await Promise.allSettled([
+            refreshSubmapDiscovery(submapId),
+            apiRequest(buildNodeDashboardRequestUrl("/api/node-dashboard")),
+        ]);
+        if (nodeDashResult.status === "fulfilled") {
+            topologyNodeDashboardPayload = nodeDashResult.value;
+        }
         if (topologyPayload) {
             renderTopologyStage();
         }
