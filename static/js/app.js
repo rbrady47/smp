@@ -1136,6 +1136,15 @@ function setTopologyEditMode(editMode) {
             addNodePanel.hidden = true;
         }
     }
+    // Show all discovery links in edit mode; hide when leaving (unless pinned)
+    if (topologyState.editMode) {
+        revealAllDiscoveryLinks();
+    } else {
+        hideAllDiscoveryLinks();
+        if (topologyState.pinnedLinkNodeId) {
+            revealDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
+        }
+    }
     if (layer) {
         syncTopologyEntitySelectionStyles(layer);
     }
@@ -4662,7 +4671,7 @@ function renderTopologyStage() {
         });
         button.addEventListener("mouseleave", () => {
             const entityId = button.getAttribute("data-topology-id");
-            if (!entityId) return;
+            if (!entityId || topologyState.editMode) return;
             if (topologyState.pinnedLinkNodeId === entityId) return;
             hideDiscoveryLinksForEntity(entityId);
         });
@@ -4707,8 +4716,10 @@ function renderTopologyStage() {
     };
 
     drawTopologyLinks(entityMap);
-    // Re-reveal discovery links for pinned node after SVG rebuild
-    if (topologyState.pinnedLinkNodeId) {
+    // Re-reveal discovery links after SVG rebuild
+    if (topologyState.editMode) {
+        revealAllDiscoveryLinks();
+    } else if (topologyState.pinnedLinkNodeId) {
         revealDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
     }
     refreshPinnedLinkTooltip();
@@ -5532,6 +5543,18 @@ function hideAllDiscoveryLinks() {
     });
     svg.querySelectorAll('.topology-link-hitarea[data-link-kind="discovery"].is-link-revealed').forEach((el) => {
         el.classList.remove("is-link-revealed");
+    });
+}
+
+function revealAllDiscoveryLinks() {
+    const svg = document.getElementById("topology-links");
+    if (!svg) return;
+    svg.querySelectorAll(".topology-link-discovery").forEach((el) => {
+        el.classList.remove("is-link-flashing", "is-link-fading");
+        el.classList.add("is-link-revealed");
+    });
+    svg.querySelectorAll('.topology-link-hitarea[data-link-kind="discovery"]').forEach((el) => {
+        el.classList.add("is-link-revealed");
     });
 }
 
