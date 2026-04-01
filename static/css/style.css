@@ -1887,16 +1887,22 @@ a {
 }
 
 .topology-discovered .topology-node-icon {
-    width: 1.22rem;
-    height: 1.22rem;
+    width: 0.85rem;
+    height: 0.85rem;
 }
 
 .topology-discovered .topology-node-name {
-    font-size: 0.6rem;
-    max-width: 60px;
+    font-size: 0.5rem;
+    line-height: 1.1;
+    max-width: 48px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.topology-discovered {
+    gap: 0.1rem;
+    padding: 0.15rem;
 }
 
 .topology-submap {

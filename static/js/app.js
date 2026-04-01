@@ -5134,7 +5134,7 @@ async function refreshSubmapDiscovery(submapViewId) {
                     const distance = 200 + count * 15;
                     const x = Math.round(sourceLayout.x + Math.cos(angle) * distance);
                     const y = Math.round(sourceLayout.y + Math.sin(angle) * distance);
-                    setTopologyEntityLayout(dn.id, { x: Math.max(40, x), y: Math.max(40, y), size: 48 });
+                    setTopologyEntityLayout(dn.id, { x: Math.max(40, x), y: Math.max(40, y), size: 32 });
                 }
             });
         }
