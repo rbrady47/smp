@@ -111,6 +111,9 @@ const topologyState = {
     drawerDragging: null,
     pinnedTooltipId: null,
     pinnedLinkTooltipId: null,
+    pinnedLinkNodeId: null,
+    _prevDnStates: {},
+    _flashTimers: [],
 };
 
 const statusPriority = {
@@ -4534,6 +4537,10 @@ function renderTopologyStage() {
             }
             if (nextEntity?.level === 2) {
                 topologyState.pinnedTooltipId = null;
+                if (topologyState.pinnedLinkNodeId) {
+                    hideDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
+                    topologyState.pinnedLinkNodeId = null;
+                }
                 setTopologyUnitFocus(nextEntity.unit);
                 updateTopologyUnitRoute(nextEntity.unit);
                 topologyState.selectedKind = "entity";
@@ -4544,6 +4551,17 @@ function renderTopologyStage() {
             }
             if (isAnchorNode || nextEntity?.kind === "discovered") {
                 topologyState.pinnedTooltipId = topologyState.pinnedTooltipId === nextId ? null : nextId;
+                // Pin/unpin discovery links for this node
+                if (topologyState.pinnedLinkNodeId === nextId) {
+                    topologyState.pinnedLinkNodeId = null;
+                    hideAllDiscoveryLinks();
+                } else {
+                    if (topologyState.pinnedLinkNodeId) {
+                        hideDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
+                    }
+                    topologyState.pinnedLinkNodeId = nextId;
+                    revealDiscoveryLinksForEntity(nextId);
+                }
                 renderTopologyStage();
                 return;
             }
@@ -4635,6 +4653,19 @@ function renderTopologyStage() {
             event.preventDefault();
             event.stopPropagation();
         });
+        // Discovery link reveal on hover
+        button.addEventListener("mouseenter", () => {
+            const entityId = button.getAttribute("data-topology-id");
+            if (!entityId || topologyState.editMode) return;
+            if (topologyState.pinnedLinkNodeId && topologyState.pinnedLinkNodeId !== entityId) return;
+            revealDiscoveryLinksForEntity(entityId);
+        });
+        button.addEventListener("mouseleave", () => {
+            const entityId = button.getAttribute("data-topology-id");
+            if (!entityId) return;
+            if (topologyState.pinnedLinkNodeId === entityId) return;
+            hideDiscoveryLinksForEntity(entityId);
+        });
     });
 
     if (topologyState.editMode) {
@@ -4663,6 +4694,10 @@ function renderTopologyStage() {
         topologyState.selectedKind = null;
         topologyState.selectedId = null;
         topologyState.pinnedTooltipId = null;
+        if (topologyState.pinnedLinkNodeId) {
+            hideDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
+            topologyState.pinnedLinkNodeId = null;
+        }
         if (topologyState.pinnedLinkTooltipId) {
             topologyState.pinnedLinkTooltipId = null;
             hideTopologyLinkTooltip();
@@ -4672,6 +4707,10 @@ function renderTopologyStage() {
     };
 
     drawTopologyLinks(entityMap);
+    // Re-reveal discovery links for pinned node after SVG rebuild
+    if (topologyState.pinnedLinkNodeId) {
+        revealDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
+    }
     refreshPinnedLinkTooltip();
     renderTopologyDrawer();
     renderTopologyStateLog();
@@ -4729,6 +4768,11 @@ function drawTopologyLinks(entityMap) {
         hitShape.setAttribute("y2", String(targetPoint.y));
         hitShape.setAttribute("class", "topology-link-hitarea");
         hitShape.setAttribute("data-topology-link-id", linkId);
+        if (link.kind) {
+            hitShape.setAttribute("data-link-kind", link.kind);
+        }
+        hitShape.setAttribute("data-link-from", link.from);
+        hitShape.setAttribute("data-link-to", link.to);
         svg.appendChild(hitShape);
 
         const shape = document.createElementNS("http://www.w3.org/2000/svg", "line");
@@ -4741,6 +4785,8 @@ function drawTopologyLinks(entityMap) {
             `topology-link topology-link-${link.kind} topology-link-${getEffectiveTopologyLinkStatus(link, index) || "neutral"} ${topologyState.selectedKind === "link" && topologyState.selectedId === linkId ? "is-selected" : ""}`,
         );
         shape.setAttribute("data-topology-link-id", linkId);
+        shape.setAttribute("data-link-from", link.from);
+        shape.setAttribute("data-link-to", link.to);
         if (link.link_type === "dotted") {
             shape.setAttribute("stroke-dasharray", "8 6");
         }
@@ -5337,6 +5383,33 @@ async function refreshSubmapDiscovery(submapViewId) {
             })
             .filter(Boolean);
         topologyPayload.links = discoveryLinks;
+
+        // Detect DN status changes and flash links
+        const currentDnStates = {};
+        discoveredEntities.forEach((dn) => {
+            const state = dn.rtt_state || (dn.status === "healthy" ? "good" : "down");
+            currentDnStates[dn.id] = state;
+        });
+        // After render, flash links for DNs whose state changed
+        const prevStates = topologyState._prevDnStates || {};
+        const changedEntityIds = [];
+        for (const [entityId, state] of Object.entries(currentDnStates)) {
+            const prev = prevStates[entityId];
+            if (prev && prev !== state) {
+                changedEntityIds.push(entityId);
+            }
+        }
+        topologyState._prevDnStates = currentDnStates;
+        // Schedule flashes after next render (links need to be drawn first)
+        if (changedEntityIds.length) {
+            requestAnimationFrame(() => {
+                changedEntityIds.forEach((entityId) => {
+                    if (topologyState.pinnedLinkNodeId !== entityId) {
+                        flashDiscoveryLinksForEntity(entityId);
+                    }
+                });
+            });
+        }
     } catch (error) {
         console.error("Failed to refresh submap discovery:", error);
     }
@@ -5388,6 +5461,74 @@ async function createTopologyLink(sourceEntityId, sourceAnchor, targetEntityId, 
         return null;
     }
 }
+
+// --- Discovery link visibility helpers ---
+
+function getDiscoveryLinksForEntity(entityId) {
+    const svg = document.getElementById("topology-links");
+    if (!svg) return [];
+    return Array.from(svg.querySelectorAll(`.topology-link-discovery[data-link-from="${CSS.escape(entityId)}"], .topology-link-discovery[data-link-to="${CSS.escape(entityId)}"]`));
+}
+
+function getDiscoveryHitareasForEntity(entityId) {
+    const svg = document.getElementById("topology-links");
+    if (!svg) return [];
+    return Array.from(svg.querySelectorAll(`.topology-link-hitarea[data-link-kind="discovery"][data-link-from="${CSS.escape(entityId)}"], .topology-link-hitarea[data-link-kind="discovery"][data-link-to="${CSS.escape(entityId)}"]`));
+}
+
+function revealDiscoveryLinksForEntity(entityId) {
+    getDiscoveryLinksForEntity(entityId).forEach((el) => {
+        el.classList.remove("is-link-flashing", "is-link-fading");
+        el.classList.add("is-link-revealed");
+    });
+    getDiscoveryHitareasForEntity(entityId).forEach((el) => {
+        el.classList.add("is-link-revealed");
+    });
+}
+
+function hideDiscoveryLinksForEntity(entityId) {
+    getDiscoveryLinksForEntity(entityId).forEach((el) => {
+        el.classList.remove("is-link-revealed", "is-link-flashing", "is-link-fading");
+    });
+    getDiscoveryHitareasForEntity(entityId).forEach((el) => {
+        el.classList.remove("is-link-revealed");
+    });
+}
+
+function hideAllDiscoveryLinks() {
+    const svg = document.getElementById("topology-links");
+    if (!svg) return;
+    svg.querySelectorAll(".topology-link-discovery.is-link-revealed").forEach((el) => {
+        el.classList.remove("is-link-revealed", "is-link-flashing", "is-link-fading");
+    });
+    svg.querySelectorAll('.topology-link-hitarea[data-link-kind="discovery"].is-link-revealed').forEach((el) => {
+        el.classList.remove("is-link-revealed");
+    });
+}
+
+function flashDiscoveryLinksForEntity(entityId) {
+    const lines = getDiscoveryLinksForEntity(entityId);
+    if (!lines.length) return;
+    lines.forEach((el) => {
+        el.classList.remove("is-link-revealed", "is-link-fading");
+        el.classList.add("is-link-flashing");
+    });
+    const timer = setTimeout(() => {
+        lines.forEach((el) => {
+            el.classList.remove("is-link-flashing");
+            el.classList.add("is-link-fading");
+        });
+        const fadeTimer = setTimeout(() => {
+            lines.forEach((el) => {
+                el.classList.remove("is-link-fading");
+            });
+        }, 1600);
+        topologyState._flashTimers.push(fadeTimer);
+    }, 3000);
+    topologyState._flashTimers.push(timer);
+}
+
+// --- End discovery link visibility helpers ---
 
 async function fetchTopologyLinkStats(inventoryNodeId) {
     const cached = topologyLinkStatsCache.get(inventoryNodeId);
