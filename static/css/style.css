@@ -1063,6 +1063,29 @@ a {
     line-height: 1.45;
 }
 
+.topology-breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.82rem;
+    color: var(--muted);
+    margin-bottom: 0.35rem;
+}
+
+.topology-breadcrumb a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.topology-breadcrumb a:hover {
+    text-decoration: underline;
+}
+
+.topology-breadcrumb-separator {
+    font-size: 1.1em;
+    color: var(--muted);
+}
+
 .topology-stage-actions {
     display: flex;
     justify-content: flex-end;
@@ -1852,6 +1875,29 @@ a {
     justify-content: center;
     align-items: center;
     gap: 0.45rem;
+}
+
+.topology-submap {
+    min-width: 160px;
+    border-radius: 16px;
+    border-style: solid;
+    border-color: rgba(120, 180, 255, 0.45);
+    background:
+        radial-gradient(circle at 50% 0%, rgba(100, 160, 255, 0.14), transparent 42%),
+        linear-gradient(180deg, rgba(22, 40, 68, 0.98) 0%, rgba(16, 30, 52, 0.98) 100%);
+    cursor: pointer;
+}
+
+.topology-submap .topology-node-subtitle {
+    color: var(--accent);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.topology-submap .topology-node-icon svg {
+    width: 28px;
+    height: 28px;
 }
 
 .topology-cluster {

@@ -1118,6 +1118,10 @@ function setTopologyEditMode(editMode) {
     if (resetButton) {
         resetButton.hidden = !topologyState.editMode;
     }
+    const createSubmapButton = document.getElementById("topology-create-submap-button");
+    if (createSubmapButton) {
+        createSubmapButton.hidden = !topologyState.editMode;
+    }
     if (layer) {
         syncTopologyEntitySelectionStyles(layer);
     }
@@ -4057,6 +4061,7 @@ function getTopologyEntities() {
         ...((topologyPayload.lvl0_nodes ?? []).map(mergeDashboardAnchorState)),
         ...((topologyPayload.lvl1_nodes ?? []).map(mergeDashboardAnchorState)),
         ...(topologyPayload.lvl2_clusters ?? []),
+        ...(topologyPayload.submaps ?? []),
     ];
     return authoredEntities.filter((entity) => Boolean(topologyState.layoutOverrides?.[entity.id]));
 }
@@ -4066,6 +4071,10 @@ function getTopologyLinkId(link, index) {
 }
 
 function isTopologyEntityVisible(entity) {
+    if (entity.kind === "submap") {
+        return true;
+    }
+
     if (entity.kind === "services-cloud") {
         return topologyState.activeLocations.has("Cloud");
     }
@@ -4138,6 +4147,7 @@ function renderTopologyStage() {
         .map((entity) => {
             const layout = getTopologyEntityLayout(entity);
             const discoveredCount = getTopologyDiscoveryCount(entity, discoveryCounts);
+            const isSubmap = entity.kind === "submap";
             const isServiceCloud = entity.kind === "services-cloud";
             const isCluster = entity.level === 2;
             const isLvl1 = entity.level === 1;
@@ -4146,6 +4156,7 @@ function renderTopologyStage() {
             const classes = [
                   "topology-entity",
                   isCluster ? "topology-cluster" : "topology-node",
+                  isSubmap ? "topology-submap" : "",
                   isServiceCloud ? "topology-service-cloud" : "",
                   `topology-status-${getEffectiveTopologyEntityStatus(entity) || "neutral"}`,
                   entity.level === 0 ? "topology-node-agg" : "",
@@ -4158,7 +4169,9 @@ function renderTopologyStage() {
                 .filter(Boolean)
                 .join(" ");
 
-            const subtitle = isCluster
+            const subtitle = isSubmap
+                ? "Submap"
+                : isCluster
                 ? "Edge Nodes"
                 : escapeHtml(entity.node_id || entity.site_id || "--");
             const displayName = escapeHtml(getTopologyEntityLabel(entity));
@@ -4168,11 +4181,13 @@ function renderTopologyStage() {
             const clusterFooter = isCluster
                 ? getTopologyClusterFooterMarkup(discoveredCount, clusterUpCount)
                 : "";
-            const nodeIcon = !isCluster ? getTopologyAnchorIconMarkup({ ...entity, status: getEffectiveTopologyEntityStatus(entity) }) : "";
-            const titleText = isServiceCloud
+            const nodeIcon = (!isCluster || isSubmap) ? getTopologyAnchorIconMarkup({ ...entity, status: getEffectiveTopologyEntityStatus(entity) }) : "";
+            const titleText = isSubmap
+                ? `Submap: ${entity.name}`
+                : isServiceCloud
                 ? "Services cloud"
                 : isCluster ? `${entity.unit} Edge Nodes` : entity.level === 1 ? `${entity.unit} / ${entity.location}` : entity.name;
-            const isAnchorNode = !isCluster && !isServiceCloud && Boolean(entity.inventory_node_id);
+            const isAnchorNode = !isCluster && !isServiceCloud && !isSubmap && Boolean(entity.inventory_node_id);
             const hoverPanel = isServiceCloud
                 ? `
                     <span class="topology-service-cloud-tooltip" role="tooltip">
@@ -4450,6 +4465,12 @@ function renderTopologyStage() {
             }
             const nextId = button.getAttribute("data-topology-id");
             const nextEntity = entityMap.get(nextId || "");
+            if (nextEntity?.kind === "submap" && nextEntity?.map_view_id) {
+                window.location.href = `/topology/maps/${nextEntity.map_view_id}`;
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
             const isAnchorNode = Boolean(nextEntity?.inventory_node_id) && nextEntity?.level !== 2 && nextEntity?.kind !== "services-cloud";
             if (!isAnchorNode || !nextEntity?.metrics_text) {
                 return;
@@ -4747,6 +4768,22 @@ function drawTopologyLinks(entityMap) {
 function getTopologyAnchorIconMarkup(entity) {
     if (!entity || entity.level >= 2) {
         return "";
+    }
+
+    if (entity.kind === "submap") {
+        return `
+            <span class="topology-node-icon topology-node-icon-submap" aria-hidden="true">
+                <svg viewBox="0 0 64 64" focusable="false">
+                    <rect x="8" y="14" width="48" height="36" rx="4" class="topology-node-icon-ring"></rect>
+                    <rect x="8" y="8" width="22" height="10" rx="3" class="topology-node-icon-stroke"></rect>
+                    <circle cx="24" cy="36" r="4" class="topology-node-icon-node"></circle>
+                    <circle cx="40" cy="28" r="4" class="topology-node-icon-node"></circle>
+                    <circle cx="40" cy="42" r="4" class="topology-node-icon-node"></circle>
+                    <line x1="28" y1="35" x2="36" y2="29" class="topology-node-icon-stroke"></line>
+                    <line x1="28" y1="37" x2="36" y2="41" class="topology-node-icon-stroke"></line>
+                </svg>
+            </span>
+        `;
     }
 
     if (entity.kind === "services-cloud") {
@@ -5548,6 +5585,62 @@ function wireTopologyLayoutControls() {
             if (topologyState.demoMenuOpen) {
                 topologyState.demoMenuOpen = false;
                 updateTopologyEditStatus();
+            }
+        });
+    }
+
+    const createSubmapButton = document.getElementById("topology-create-submap-button");
+    if (createSubmapButton && createSubmapButton.dataset.bound !== "true") {
+        createSubmapButton.dataset.bound = "true";
+        createSubmapButton.addEventListener("click", async () => {
+            const name = window.prompt("Enter a name for the new submap:");
+            if (!name || !name.trim()) {
+                return;
+            }
+            const trimmedName = name.trim();
+            const slug = trimmedName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "submap";
+            try {
+                const response = await fetch("/api/topology/maps", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        name: trimmedName,
+                        slug: slug,
+                        map_type: "custom",
+                    }),
+                });
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => null);
+                    window.alert("Failed to create submap: " + (errorData?.detail || response.statusText));
+                    return;
+                }
+                const created = await response.json();
+                const viewId = created.id;
+                const submapEntityId = `submap-${viewId}`;
+                const stage = document.getElementById("topology-stage");
+                const centerX = Math.round((stage?.clientWidth || 1200) / 2);
+                const centerY = Math.round((stage?.clientHeight || 800) / 2);
+                const submapEntity = {
+                    id: submapEntityId,
+                    map_view_id: viewId,
+                    name: trimmedName,
+                    slug: slug,
+                    kind: "submap",
+                    level: 0,
+                    x: centerX,
+                    y: centerY,
+                    width: 160,
+                    height: 96,
+                };
+                if (!topologyPayload.submaps) {
+                    topologyPayload.submaps = [];
+                }
+                topologyPayload.submaps.push(submapEntity);
+                setTopologyEntityLayout(submapEntityId, { x: centerX, y: centerY, size: 96 });
+                renderTopologyStage();
+            } catch (error) {
+                console.error("Failed to create submap:", error);
+                window.alert("Failed to create submap.");
             }
         });
     }

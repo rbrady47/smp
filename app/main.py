@@ -25,6 +25,8 @@ from app.models import (
     DiscoveredNodeObservation,
     Node,
     NodeRelationship,
+    OperationalMapObject,
+    OperationalMapView,
     ServiceCheck,
     TopologyEditorState,
     TopologyLink,
@@ -179,7 +181,20 @@ async def topology_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request=request,
         name="topology.html",
-        context={"page_title": "Division C2 Information Network | Seeker Management Platform"},
+        context={"page_title": "Division C2 Information Network | Seeker Management Platform", "map_view_id": None},
+    )
+
+
+@app.get("/topology/maps/{map_view_id}", response_class=HTMLResponse)
+async def topology_submap_page(request: Request, map_view_id: int, db: Session = Depends(get_db)) -> HTMLResponse:
+    view = db.get(OperationalMapView, map_view_id)
+    if not view:
+        raise HTTPException(status_code=404, detail="Map view not found")
+    page_title = f"{view.name} | Seeker Management Platform"
+    return templates.TemplateResponse(
+        request=request,
+        name="topology.html",
+        context={"page_title": page_title, "map_view_id": map_view_id, "map_view_name": view.name},
     )
 
 
@@ -1812,9 +1827,35 @@ async def topology_payload(
         }
         for link in db_links
     ]
+    submap_views = db.scalars(
+        select(OperationalMapView).where(OperationalMapView.parent_map_id.is_(None)).order_by(OperationalMapView.name)
+    ).all()
+    submap_objects = db.scalars(
+        select(OperationalMapObject).where(
+            OperationalMapObject.object_type == "submap",
+            OperationalMapObject.child_map_view_id.isnot(None),
+        ).order_by(OperationalMapObject.id)
+    ).all()
+    submap_object_by_child_id = {obj.child_map_view_id: obj for obj in submap_objects}
+    submaps = []
+    for view in submap_views:
+        obj = submap_object_by_child_id.get(view.id)
+        submaps.append({
+            "id": f"submap-{view.id}",
+            "map_view_id": view.id,
+            "name": view.name,
+            "slug": view.slug,
+            "kind": "submap",
+            "level": 0,
+            "x": obj.x if obj else 100,
+            "y": obj.y if obj else 100,
+            "width": obj.width if obj else 160,
+            "height": obj.height if obj else 96,
+        })
     db.commit()
     result = build_mock_topology_payload(inventory_nodes)
     result["links"] = authored_links
+    result["submaps"] = submaps
     return result
 
 
