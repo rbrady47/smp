@@ -96,6 +96,11 @@ ping_snapshot_by_node: dict[int, dict[str, object]] = {}
 consecutive_misses_by_node: dict[int, int] = {}
 next_ping_at_by_node: dict[int, float] = {}
 ping_monitor_task: asyncio.Task | None = None
+# DN ping state — keyed by site_id string
+dn_ping_samples: dict[str, deque[int]] = {}
+dn_ping_snapshots: dict[str, dict[str, object]] = {}
+dn_consecutive_misses: dict[str, int] = {}
+dn_next_ping_at: dict[str, float] = {}
 seeker_detail_cache: dict[int, dict[str, object]] = {}
 seeker_poll_task: asyncio.Task | None = None
 service_status_cache: dict[int, dict[str, object]] = {}
@@ -365,6 +370,43 @@ def get_ping_snapshot(node: Node) -> dict[str, object]:
     return build_ping_snapshot(node.id, ping_host(node.host))
 
 
+def build_dn_ping_snapshot(site_id: str, ping_result: dict[str, int | bool | None]) -> dict[str, object]:
+    """Build ping snapshot for a discovered node, keyed by site_id."""
+    samples = dn_ping_samples.setdefault(site_id, deque(maxlen=PING_HISTORY_SAMPLES))
+    ping_ok = bool(ping_result["reachable"])
+    latency_ms = ping_result["latency_ms"] if ping_ok else None
+
+    if ping_ok and latency_ms is not None:
+        samples.append(int(latency_ms))
+
+    average_ms = round(sum(samples) / len(samples)) if samples else None
+
+    if ping_ok:
+        dn_consecutive_misses[site_id] = 0
+    else:
+        dn_consecutive_misses[site_id] = dn_consecutive_misses.get(site_id, 0) + 1
+
+    misses = dn_consecutive_misses[site_id]
+
+    if misses >= 5:
+        state = "down"
+    elif misses >= 3:
+        state = "warn"
+    else:
+        state = "good"
+
+    snapshot = {
+        "ping_ok": ping_ok,
+        "latency_ms": latency_ms,
+        "avg_latency_ms": average_ms,
+        "state": state,
+        "consecutive_misses": misses,
+        "updated_at": datetime.now(timezone.utc),
+    }
+    dn_ping_snapshots[site_id] = snapshot
+    return snapshot
+
+
 async def ping_node_single(host: str) -> dict[str, int | bool | None]:
     """Send a single ICMP probe and return latency."""
     result = await asyncio.to_thread(ping_host, host)
@@ -406,6 +448,38 @@ async def ping_monitor_loop() -> None:
                     build_ping_snapshot(node.id, {"reachable": False, "latency_ms": None})
                 else:
                     build_ping_snapshot(node.id, result)
+
+        # --- Discovered Node pings ---
+        db2 = SessionLocal()
+        try:
+            dns = db2.scalars(
+                select(DiscoveredNode).where(
+                    DiscoveredNode.host.isnot(None),
+                    DiscoveredNode.map_view_id.isnot(None),
+                )
+            ).all()
+            dn_due: list[tuple[str, str]] = []  # (site_id, host)
+            for dn in dns:
+                if not dn.host:
+                    continue
+                deadline = dn_next_ping_at.get(dn.site_id, 0.0)
+                if now >= deadline:
+                    dn_due.append((dn.site_id, dn.host))
+        finally:
+            db2.close()
+
+        if dn_due:
+            dn_results = await asyncio.gather(
+                *(ping_node_single(host) for _, host in dn_due),
+                return_exceptions=True,
+            )
+            tick = _time.monotonic()
+            for (site_id, _host), result in zip(dn_due, dn_results):
+                dn_next_ping_at[site_id] = tick + PING_INTERVAL_SECONDS
+                if isinstance(result, Exception):
+                    build_dn_ping_snapshot(site_id, {"reachable": False, "latency_ms": None})
+                else:
+                    build_dn_ping_snapshot(site_id, result)
 
         await asyncio.sleep(1.0)
 
@@ -1813,6 +1887,24 @@ async def get_submap_discovery(
     for dn in persisted_dns:
         if dn.map_x is not None and dn.map_y is not None:
             saved_positions[dn.site_id] = {"x": dn.map_x, "y": dn.map_y}
+
+    # Enrich peers and links with live ping data
+    live_status_by_site: dict[str, str] = {}
+    for peer in discovered_peers:
+        sid = str(peer["site_id"])
+        snap = dn_ping_snapshots.get(sid)
+        if snap:
+            peer["ping_state"] = snap.get("state", "down")
+            peer["latency_ms"] = snap.get("latency_ms")
+            peer["avg_latency_ms"] = snap.get("avg_latency_ms")
+            peer["ping_ok"] = snap.get("ping_ok", False)
+            peer["ping"] = "up" if snap.get("ping_ok") else "down"
+            live_status_by_site[sid] = "healthy" if snap.get("ping_ok") else "down"
+
+    for link in discovery_links:
+        live = live_status_by_site.get(str(link["target_site_id"]))
+        if live:
+            link["status"] = live
 
     return {
         "map_view_id": map_view_id,
