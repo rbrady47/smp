@@ -4937,6 +4937,10 @@ function setAnyTopologyAnchorTargetHighlight(target) {
 }
 
 async function refreshTopologyData() {
+    const root = document.getElementById("topology-root");
+    if (root?.getAttribute("data-map-view-id")) {
+        return;
+    }
     try {
         const result = await apiRequest(buildNodeDashboardRequestUrl("/api/topology"));
         if (result) {
