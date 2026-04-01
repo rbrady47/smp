@@ -5108,7 +5108,7 @@ async function refreshSubmapDiscovery(submapViewId) {
                     site_id: peer.site_id,
                     kind: "discovered",
                     level: 1,
-                    status: peer.ping?.toLowerCase() === "up" ? "up" : "down",
+                    status: peer.ping?.toLowerCase() === "up" ? "healthy" : "down",
                     host: peer.host,
                     source_anchor_id: peer.source_anchor_id,
                     source_name: peer.source_name,
