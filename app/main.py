@@ -86,6 +86,7 @@ PING_HISTORY_SAMPLES = 24          # 24 bursts × 15 s = 6 min rolling window
 PING_PROBES_PER_BURST = 3
 PING_INTERVAL_SECONDS = 5.0
 SEEKER_POLL_INTERVAL_SECONDS = 15.0
+DN_SEEKER_POLL_INTERVAL_SECONDS = 30.0
 SERVICE_POLL_INTERVAL_SECONDS = 30.0
 SERVICE_CHECK_TIMEOUT_SECONDS = 5.0
 NODE_DASHBOARD_FAST_REFRESH_SECONDS = 1.0
@@ -103,6 +104,7 @@ dn_consecutive_misses: dict[str, int] = {}
 dn_next_ping_at: dict[str, float] = {}
 seeker_detail_cache: dict[int, dict[str, object]] = {}
 seeker_poll_task: asyncio.Task | None = None
+dn_seeker_poll_task: asyncio.Task | None = None
 service_status_cache: dict[int, dict[str, object]] = {}
 service_poll_task: asyncio.Task | None = None
 node_dashboard_poll_task: asyncio.Task | None = None
@@ -828,6 +830,56 @@ async def seeker_polling_loop() -> None:
         await asyncio.sleep(SEEKER_POLL_INTERVAL_SECONDS)
 
 
+async def dn_seeker_polling_loop() -> None:
+    """Background loop that periodically probes DN Seeker APIs.
+
+    Uses credentials inherited from the owning anchor node (source_anchor_node_id).
+    The probe_discovered_node_detail function respects its internal TTL (5 min)
+    so we can poll frequently without hammering the Seeker APIs.
+    """
+    await asyncio.sleep(10.0)  # initial delay to let AN polling populate first
+    while True:
+        db = SessionLocal()
+        try:
+            dns = db.scalars(
+                select(DiscoveredNode).where(
+                    DiscoveredNode.source_anchor_node_id.isnot(None),
+                    DiscoveredNode.host.isnot(None),
+                )
+            ).all()
+            anchor_ids = {dn.source_anchor_node_id for dn in dns if dn.source_anchor_node_id}
+            anchors_by_id: dict[int, Node] = {}
+            if anchor_ids:
+                anchor_nodes = db.scalars(select(Node).where(Node.id.in_(anchor_ids))).all()
+                anchors_by_id = {n.id: n for n in anchor_nodes}
+        finally:
+            db.close()
+
+        tasks = []
+        for dn in dns:
+            source_node = anchors_by_id.get(dn.source_anchor_node_id) if dn.source_anchor_node_id else None
+            if not source_node or not source_node.api_username or not source_node.api_password:
+                continue
+            host = str(dn.host or "").strip()
+            if not host or host == "--":
+                continue
+            tasks.append(
+                probe_discovered_node_detail(
+                    source_node,
+                    site_id=dn.site_id,
+                    site_ip=host,
+                    level=dn.discovered_level or 2,
+                    surfaced_by_site_id=dn.discovered_parent_site_id,
+                    surfaced_by_name=dn.discovered_parent_name,
+                )
+            )
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        await asyncio.sleep(DN_SEEKER_POLL_INTERVAL_SECONDS)
+
+
 def build_service_snapshot(
     service: ServiceCheck,
     *,
@@ -1183,13 +1235,15 @@ async def node_dashboard_polling_loop() -> None:
 
 @app.on_event("startup")
 async def startup_ping_monitor() -> None:
-    global ping_monitor_task, seeker_poll_task, service_poll_task, node_dashboard_poll_task
+    global ping_monitor_task, seeker_poll_task, dn_seeker_poll_task, service_poll_task, node_dashboard_poll_task
     Base.metadata.create_all(bind=engine)
 
     if ping_monitor_task is None or ping_monitor_task.done():
         ping_monitor_task = asyncio.create_task(ping_monitor_loop())
     if seeker_poll_task is None or seeker_poll_task.done():
         seeker_poll_task = asyncio.create_task(seeker_polling_loop())
+    if dn_seeker_poll_task is None or dn_seeker_poll_task.done():
+        dn_seeker_poll_task = asyncio.create_task(dn_seeker_polling_loop())
     if service_poll_task is None or service_poll_task.done():
         service_poll_task = asyncio.create_task(service_polling_loop())
     if node_dashboard_poll_task is None or node_dashboard_poll_task.done():
@@ -1198,7 +1252,7 @@ async def startup_ping_monitor() -> None:
 
 @app.on_event("shutdown")
 async def shutdown_ping_monitor() -> None:
-    global ping_monitor_task, seeker_poll_task, service_poll_task, node_dashboard_poll_task
+    global ping_monitor_task, seeker_poll_task, dn_seeker_poll_task, service_poll_task, node_dashboard_poll_task
 
     if ping_monitor_task is not None:
         ping_monitor_task.cancel()
@@ -1214,6 +1268,13 @@ async def shutdown_ping_monitor() -> None:
         except asyncio.CancelledError:
             pass
         seeker_poll_task = None
+    if dn_seeker_poll_task is not None:
+        dn_seeker_poll_task.cancel()
+        try:
+            await dn_seeker_poll_task
+        except asyncio.CancelledError:
+            pass
+        dn_seeker_poll_task = None
     if service_poll_task is not None:
         service_poll_task.cancel()
         try:

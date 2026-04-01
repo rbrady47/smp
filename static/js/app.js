@@ -4547,6 +4547,12 @@ function renderTopologyStage() {
                 event.stopPropagation();
                 return;
             }
+            if (nextEntity?.kind === "discovered" && nextEntity?.site_id) {
+                window.location.href = `/nodes/discovered/${encodeURIComponent(nextEntity.site_id)}`;
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
             const isAnchorNode = Boolean(nextEntity?.inventory_node_id) && nextEntity?.level !== 2 && nextEntity?.kind !== "services-cloud";
             if (!isAnchorNode || !nextEntity?.metrics_text) {
                 return;
