@@ -677,6 +677,15 @@ class NodeDashboardBackend:
         sanitized_row = dict(row)
         sanitized_row.pop("source_row_type", None)
         sanitized_row.pop("surfaced_by_sources", None)
+        # Ensure dashboard-required fields have defaults for cache entries
+        # that come from probe_discovered_node_detail (not the projection).
+        site_id = str(sanitized_row.get("site_id") or "--")
+        if "row_type" not in sanitized_row:
+            sanitized_row["row_type"] = "discovered"
+        if "pin_key" not in sanitized_row:
+            sanitized_row["pin_key"] = f"discovered:{site_id}"
+        if "detail_url" not in sanitized_row:
+            sanitized_row["detail_url"] = f"/nodes/discovered/{site_id}"
         return NodeDashboardDiscoveredRow.model_validate(sanitized_row).model_dump()
 
     def _store_discovered_node_cache(self, site_id: str, row: dict[str, object]) -> bool:
