@@ -4527,7 +4527,13 @@ function renderTopologyStage() {
               const nextId = button.getAttribute("data-topology-id");
             const nextEntity = entityMap.get(nextId || "");
             const isAnchorNode = Boolean(nextEntity?.inventory_node_id) && nextEntity?.level !== 2 && nextEntity?.kind !== "services-cloud";
+            // Clear any pinned link tooltip when clicking an entity
+            if (topologyState.pinnedLinkTooltipId) {
+                topologyState.pinnedLinkTooltipId = null;
+                hideTopologyLinkTooltip();
+            }
             if (nextEntity?.level === 2) {
+                topologyState.pinnedTooltipId = null;
                 setTopologyUnitFocus(nextEntity.unit);
                 updateTopologyUnitRoute(nextEntity.unit);
                 topologyState.selectedKind = "entity";
@@ -4541,6 +4547,8 @@ function renderTopologyStage() {
                 renderTopologyStage();
                 return;
             }
+            // Clicking a non-pinnable entity clears any pinned tooltip
+            topologyState.pinnedTooltipId = null;
             if (topologyState.selectedKind === "entity" && topologyState.selectedId === nextId) {
                 topologyState.selectedKind = null;
                 topologyState.selectedId = null;
@@ -4654,6 +4662,11 @@ function renderTopologyStage() {
         }
         topologyState.selectedKind = null;
         topologyState.selectedId = null;
+        topologyState.pinnedTooltipId = null;
+        if (topologyState.pinnedLinkTooltipId) {
+            topologyState.pinnedLinkTooltipId = null;
+            hideTopologyLinkTooltip();
+        }
         topologyState.stateLogSelected = false;
         renderTopologyStage();
     };
@@ -4757,6 +4770,10 @@ function drawTopologyLinks(entityMap) {
                 event.stopPropagation();
                 if (!linkId) {
                     return;
+                }
+                // Clear any pinned entity tooltip when clicking a link
+                if (topologyState.pinnedTooltipId) {
+                    topologyState.pinnedTooltipId = null;
                 }
                 if (!topologyState.editMode && link?.kind === "authored" && link?.status_node_id) {
                     const visualLine = svg.querySelector(`.topology-link[data-topology-link-id="${CSS.escape(linkId)}"]`);
