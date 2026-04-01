@@ -4086,6 +4086,11 @@ function isTopologyEntityVisible(entity) {
         return true;
     }
 
+    const root = document.getElementById("topology-root");
+    if (root?.getAttribute("data-map-view-id")) {
+        return true;
+    }
+
     if (entity.kind === "services-cloud") {
         return topologyState.activeLocations.has("Cloud");
     }
