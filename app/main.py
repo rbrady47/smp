@@ -41,9 +41,25 @@ from app.seeker_api import (
     extract_static_routes_from_cfg,
     resolve_site_name_map,
 )
-from app.schemas import NodeCreate, NodeUpdate, ServiceCheckCreate, TopologyEditorStateUpdate, TopologyLinkCreate, TopologyLinkUpdate
+from app.schemas import (
+    NodeCreate,
+    NodeUpdate,
+    OperationalMapLinkBindingCreate,
+    OperationalMapLinkCreate,
+    OperationalMapLinkUpdate,
+    OperationalMapObjectBindingCreate,
+    OperationalMapObjectCreate,
+    OperationalMapObjectUpdate,
+    OperationalMapViewCreate,
+    OperationalMapViewUpdate,
+    ServiceCheckCreate,
+    TopologyEditorStateUpdate,
+    TopologyLinkCreate,
+    TopologyLinkUpdate,
+)
 from app.topology_editor_state_service import get_topology_editor_state_payload, upsert_topology_editor_state
 from app.topology import build_mock_topology_payload, build_topology_discovery_payload, normalize_topology_location
+import app.operational_map_service as operational_map_service
 
 app = FastAPI(title="Seeker Management Platform", version="0.1.0")
 templates = Jinja2Templates(directory="templates")
@@ -1565,6 +1581,160 @@ async def delete_topology_link(
         raise HTTPException(status_code=404, detail="Link not found")
     db.delete(link)
     db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# Operational Map (submap) routes — /api/topology/maps
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/topology/maps")
+async def list_map_views(db: Session = Depends(get_db)) -> list[dict[str, object]]:
+    return operational_map_service.list_map_views(db)
+
+
+@app.post("/api/topology/maps", status_code=status.HTTP_201_CREATED)
+async def create_map_view(
+    payload: OperationalMapViewCreate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return operational_map_service.create_map_view(payload, db)
+
+
+@app.get("/api/topology/maps/{map_view_id}")
+async def get_map_view_detail(
+    map_view_id: int,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return operational_map_service.get_map_view_detail(map_view_id, db)
+
+
+@app.put("/api/topology/maps/{map_view_id}")
+async def update_map_view(
+    map_view_id: int,
+    payload: OperationalMapViewUpdate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return operational_map_service.update_map_view(map_view_id, payload, db)
+
+
+@app.delete("/api/topology/maps/{map_view_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_map_view(
+    map_view_id: int,
+    db: Session = Depends(get_db),
+) -> Response:
+    operational_map_service.delete_map_view(map_view_id, db)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --- Map objects ---
+
+
+@app.post("/api/topology/maps/{map_view_id}/objects", status_code=status.HTTP_201_CREATED)
+async def create_map_object(
+    map_view_id: int,
+    payload: OperationalMapObjectCreate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    if payload.map_view_id != map_view_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="map_view_id in body must match URL")
+    return operational_map_service.create_map_object(payload, db)
+
+
+@app.put("/api/topology/maps/objects/{object_id}")
+async def update_map_object(
+    object_id: int,
+    payload: OperationalMapObjectUpdate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return operational_map_service.update_map_object(object_id, payload, db)
+
+
+@app.delete("/api/topology/maps/objects/{object_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_map_object(
+    object_id: int,
+    db: Session = Depends(get_db),
+) -> Response:
+    operational_map_service.delete_map_object(object_id, db)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --- Object bindings ---
+
+
+@app.post("/api/topology/maps/objects/{object_id}/bindings", status_code=status.HTTP_201_CREATED)
+async def create_map_object_binding(
+    object_id: int,
+    payload: OperationalMapObjectBindingCreate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    if payload.object_id != object_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="object_id in body must match URL")
+    return operational_map_service.create_map_object_binding(payload, db)
+
+
+@app.delete("/api/topology/maps/objects/bindings/{binding_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_map_object_binding(
+    binding_id: int,
+    db: Session = Depends(get_db),
+) -> Response:
+    operational_map_service.delete_map_object_binding(binding_id, db)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --- Map links ---
+
+
+@app.post("/api/topology/maps/{map_view_id}/links", status_code=status.HTTP_201_CREATED)
+async def create_map_link(
+    map_view_id: int,
+    payload: OperationalMapLinkCreate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    if payload.map_view_id != map_view_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="map_view_id in body must match URL")
+    return operational_map_service.create_map_link(payload, db)
+
+
+@app.put("/api/topology/maps/links/{link_id}")
+async def update_map_link(
+    link_id: int,
+    payload: OperationalMapLinkUpdate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return operational_map_service.update_map_link(link_id, payload, db)
+
+
+@app.delete("/api/topology/maps/links/{link_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_map_link(
+    link_id: int,
+    db: Session = Depends(get_db),
+) -> Response:
+    operational_map_service.delete_map_link(link_id, db)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --- Link bindings ---
+
+
+@app.post("/api/topology/maps/links/{link_id}/bindings", status_code=status.HTTP_201_CREATED)
+async def create_map_link_binding(
+    link_id: int,
+    payload: OperationalMapLinkBindingCreate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    if payload.link_id != link_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="link_id in body must match URL")
+    return operational_map_service.create_map_link_binding(payload, db)
+
+
+@app.delete("/api/topology/maps/links/bindings/{binding_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_map_link_binding(
+    binding_id: int,
+    db: Session = Depends(get_db),
+) -> Response:
+    operational_map_service.delete_map_link_binding(binding_id, db)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
