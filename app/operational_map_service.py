@@ -301,14 +301,14 @@ def _validate_link_binding_payload(binding: OperationalMapLinkBindingCreate) -> 
 def _list_available_nodes(db: Session) -> list[dict[str, object]]:
     available_nodes: list[dict[str, object]] = []
 
-    anchors = db.scalars(select(Node).where(Node.node_id.is_not(None)).order_by(Node.name, Node.id)).all()
+    anchors = db.scalars(select(Node).order_by(Node.name, Node.id)).all()
     for anchor in anchors:
-        assert anchor.node_id is not None
+        site_id = anchor.node_id or str(anchor.id)
         available_nodes.append(
             _serialize_available_node(
                 {
                     "source_type": "anchor",
-                    "site_id": anchor.node_id,
+                    "site_id": site_id,
                     "display_name": anchor.name,
                     "binding_key": f"anchor:{anchor.id}",
                     "location": anchor.location,
