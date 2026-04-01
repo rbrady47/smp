@@ -4819,12 +4819,20 @@ function drawTopologyLinks(entityMap) {
         };
         const sourcePoint = getTopologyAnchorCoordinates(fromRect, stageRect, anchorAssignment.source);
         const targetPoint = getTopologyAnchorCoordinates(toRect, stageRect, anchorAssignment.target);
+        // Pre-reveal discovery links for pinned node or edit mode at creation
+        // so they don't flash/fade-in on every SVG rebuild.
+        const shouldPreReveal = link.kind === "discovery" && (
+            topologyState.editMode
+            || topologyState.pinnedLinkNodeId === link.from
+            || topologyState.pinnedLinkNodeId === link.to
+        );
+
         const hitShape = document.createElementNS("http://www.w3.org/2000/svg", "line");
         hitShape.setAttribute("x1", String(sourcePoint.x));
         hitShape.setAttribute("y1", String(sourcePoint.y));
         hitShape.setAttribute("x2", String(targetPoint.x));
         hitShape.setAttribute("y2", String(targetPoint.y));
-        hitShape.setAttribute("class", "topology-link-hitarea");
+        hitShape.setAttribute("class", `topology-link-hitarea${shouldPreReveal ? " is-link-revealed" : ""}`);
         hitShape.setAttribute("data-topology-link-id", linkId);
         if (link.kind) {
             hitShape.setAttribute("data-link-kind", link.kind);
@@ -4840,7 +4848,7 @@ function drawTopologyLinks(entityMap) {
         shape.setAttribute("y2", String(targetPoint.y));
         shape.setAttribute(
             "class",
-            `topology-link topology-link-${link.kind} topology-link-${getEffectiveTopologyLinkStatus(link, index) || "neutral"} ${topologyState.selectedKind === "link" && topologyState.selectedId === linkId ? "is-selected" : ""}`,
+            `topology-link topology-link-${link.kind} topology-link-${getEffectiveTopologyLinkStatus(link, index) || "neutral"}${shouldPreReveal ? " is-link-revealed" : ""} ${topologyState.selectedKind === "link" && topologyState.selectedId === linkId ? "is-selected" : ""}`,
         );
         shape.setAttribute("data-topology-link-id", linkId);
         shape.setAttribute("data-link-from", link.from);
