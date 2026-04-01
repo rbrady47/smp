@@ -1656,11 +1656,13 @@ async def get_submap_discovery(
         select(Node).where(Node.id.in_(placed_anchor_ids))
     ).all() if placed_anchor_ids else []
 
-    anchor_site_ids: set[str] = set()
-    for node in anchor_nodes:
-        if node.node_id:
-            anchor_site_ids.add(node.node_id)
-        anchor_site_ids.add(str(node.id))
+    # Exclude ALL inventory nodes from discovery, not just placed ones
+    all_inventory_nodes = db.scalars(select(Node)).all()
+    inventory_site_ids: set[str] = set()
+    for inv_node in all_inventory_nodes:
+        if inv_node.node_id:
+            inventory_site_ids.add(inv_node.node_id)
+        inventory_site_ids.add(str(inv_node.id))
 
     discovered_peers: list[dict[str, object]] = []
     seen_site_ids: set[str] = set()
@@ -1676,7 +1678,7 @@ async def get_submap_discovery(
             if not _tunnel_row_is_eligible(row):
                 continue
             mate_site_id = str(row.get("mate_site_id") or "").strip()
-            if not mate_site_id or mate_site_id in anchor_site_ids or mate_site_id in seen_site_ids:
+            if not mate_site_id or mate_site_id in inventory_site_ids or mate_site_id in seen_site_ids:
                 continue
             mate_ip = str(row.get("mate_ip") or "").strip()
             mate_name = str(row.get("site_name") or row.get("mate_site_name") or "").strip() or mate_site_id

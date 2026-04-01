@@ -5116,17 +5116,26 @@ async function refreshSubmapDiscovery(submapViewId) {
             });
         topologyPayload.lvl1_nodes = discoveredEntities;
         const placedEntities = topologyPayload.lvl0_nodes ?? [];
+        const bySource = new Map();
         discoveredEntities.forEach((dn) => {
-            if (!topologyState.layoutOverrides?.[dn.id]) {
-                const source = placedEntities.find((e) => String(e.inventory_node_id) === String(dn.source_anchor_id));
-                const sourceLayout = source ? (topologyState.layoutOverrides?.[source.id] || { x: 400, y: 300 }) : { x: 400, y: 300 };
-                const angle = Math.random() * Math.PI * 2;
-                const distance = 140 + Math.random() * 80;
-                const x = Math.round(sourceLayout.x + Math.cos(angle) * distance);
-                const y = Math.round(sourceLayout.y + Math.sin(angle) * distance);
-                setTopologyEntityLayout(dn.id, { x: Math.max(40, x), y: Math.max(40, y), size: 72 });
-            }
+            const key = String(dn.source_anchor_id);
+            if (!bySource.has(key)) bySource.set(key, []);
+            bySource.get(key).push(dn);
         });
+        for (const [sourceId, peers] of bySource) {
+            const source = placedEntities.find((e) => String(e.inventory_node_id) === sourceId);
+            const sourceLayout = source ? (topologyState.layoutOverrides?.[source.id] || { x: 400, y: 300 }) : { x: 400, y: 300 };
+            const count = peers.length;
+            peers.forEach((dn, i) => {
+                if (!topologyState.layoutOverrides?.[dn.id]) {
+                    const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
+                    const distance = 200 + count * 15;
+                    const x = Math.round(sourceLayout.x + Math.cos(angle) * distance);
+                    const y = Math.round(sourceLayout.y + Math.sin(angle) * distance);
+                    setTopologyEntityLayout(dn.id, { x: Math.max(40, x), y: Math.max(40, y), size: 72 });
+                }
+            });
+        }
     } catch (error) {
         console.error("Failed to refresh submap discovery:", error);
     }
