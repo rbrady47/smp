@@ -1673,6 +1673,7 @@ async def get_submap_discovery(
 
     discovered_peers: list[dict[str, object]] = []
     seen_site_ids: set[str] = set()
+    discovery_links: list[dict[str, object]] = []
 
     for node in anchor_nodes:
         detail = seeker_detail_cache.get(node.id) or {}
@@ -1685,30 +1686,45 @@ async def get_submap_discovery(
             if not _tunnel_row_is_eligible(row):
                 continue
             mate_site_id = str(row.get("mate_site_id") or "").strip()
-            if not mate_site_id or mate_site_id in inventory_site_ids or mate_site_id.lower() in inventory_site_ids or mate_site_id in seen_site_ids:
+            if not mate_site_id or mate_site_id in inventory_site_ids or mate_site_id.lower() in inventory_site_ids:
                 continue
             mate_ip = str(row.get("mate_ip") or "").strip()
             mate_name = str(row.get("site_name") or row.get("mate_site_name") or "").strip() or mate_site_id
             if not mate_ip or mate_ip == "--":
                 continue
-            seen_site_ids.add(mate_site_id)
-            discovered_peers.append({
-                "site_id": mate_site_id,
-                "name": mate_name,
-                "host": mate_ip,
+            ping_status = str(row.get("ping") or "").strip()
+            tx_rate = str(row.get("tx_rate") or "").strip()
+            rx_rate = str(row.get("rx_rate") or "").strip()
+
+            # Add entity only once (first source wins)
+            if mate_site_id not in seen_site_ids:
+                seen_site_ids.add(mate_site_id)
+                discovered_peers.append({
+                    "site_id": mate_site_id,
+                    "name": mate_name,
+                    "host": mate_ip,
+                    "source_anchor_id": node.id,
+                    "source_site_id": source_site_id,
+                    "source_name": source_name,
+                    "ping": ping_status,
+                    "tx_rate": tx_rate,
+                    "rx_rate": rx_rate,
+                })
+
+            # Record every AN↔DN tunnel relationship as a link
+            discovery_links.append({
                 "source_anchor_id": node.id,
-                "source_site_id": source_site_id,
-                "source_name": source_name,
-                "ping": str(row.get("ping") or "").strip(),
-                "tx_rate": str(row.get("tx_rate") or "").strip(),
-                "rx_rate": str(row.get("rx_rate") or "").strip(),
+                "target_site_id": mate_site_id,
+                "status": "healthy" if ping_status.lower() == "up" else "down",
+                "tx_rate": tx_rate,
+                "rx_rate": rx_rate,
             })
 
     return {
         "map_view_id": map_view_id,
         "anchor_count": len(anchor_nodes),
         "discovered_peers": discovered_peers,
-        "debug_inventory_site_ids": sorted(inventory_site_ids),
+        "discovery_links": discovery_links,
     }
 
 

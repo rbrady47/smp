@@ -5168,6 +5168,35 @@ async function refreshSubmapDiscovery(submapViewId) {
                 setTopologyEntityLayout(dn.id, { x: Math.max(margin, x), y: Math.max(topBound, y), size: dnSize });
             });
         }
+        // Build discovery links (AN↔DN tunnel connections)
+        const placedEntities = topologyPayload.lvl0_nodes ?? [];
+        const rawLinks = result?.discovery_links ?? [];
+        const anchorEntityMap = new Map();
+        placedEntities.forEach((e) => {
+            if (e.inventory_node_id) {
+                anchorEntityMap.set(String(e.inventory_node_id), e.id);
+            }
+        });
+        const discoveryLinks = rawLinks
+            .map((link, i) => {
+                const fromEntityId = anchorEntityMap.get(String(link.source_anchor_id));
+                const toEntityId = `dn-${link.target_site_id}`;
+                if (!fromEntityId) return null;
+                // Only create link if the DN entity exists
+                if (!discoveredEntities.some((dn) => dn.id === toEntityId)) return null;
+                return {
+                    id: `discovery-link-${i}`,
+                    from: fromEntityId,
+                    to: toEntityId,
+                    source_anchor: "s",
+                    target_anchor: "n",
+                    link_type: "dotted",
+                    kind: "discovery",
+                    status: link.status || "neutral",
+                };
+            })
+            .filter(Boolean);
+        topologyPayload.links = discoveryLinks;
     } catch (error) {
         console.error("Failed to refresh submap discovery:", error);
     }
