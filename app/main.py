@@ -1894,16 +1894,26 @@ async def get_submap_discovery(
         fh_site_id = str(first_hop_peer["site_id"])
         cached_dn = node_dashboard_backend.get_cached_discovered_node(fh_site_id)
         if not cached_dn:
+            logger.debug("DN-to-DN: no cache for %s", fh_site_id)
             continue
         dn_detail = cached_dn.get("detail") if isinstance(cached_dn.get("detail"), dict) else {}
         dn_tunnels = [row for row in (dn_detail.get("tunnels") or []) if isinstance(row, dict)]
         if not dn_tunnels:
+            logger.debug("DN-to-DN: no tunnels for %s (has_detail=%s)", fh_site_id, bool(dn_detail))
             continue
+        logger.debug("DN-to-DN: %s has %d tunnels", fh_site_id, len(dn_tunnels))
 
         for row in dn_tunnels:
-            if not _tunnel_row_is_eligible(row):
+            mate_sid_dbg = str(row.get("mate_site_id") or "").strip()
+            eligible = _tunnel_row_is_eligible(row)
+            is_inventory = mate_sid_dbg in inventory_site_ids or mate_sid_dbg.lower() in inventory_site_ids
+            logger.debug(
+                "DN-to-DN: %s tunnel mate=%s eligible=%s is_inventory=%s in_seen=%s",
+                fh_site_id, mate_sid_dbg, eligible, is_inventory, mate_sid_dbg in seen_site_ids,
+            )
+            if not eligible:
                 continue
-            mate_site_id = str(row.get("mate_site_id") or "").strip()
+            mate_site_id = mate_sid_dbg
             if not mate_site_id or mate_site_id in inventory_site_ids or mate_site_id.lower() in inventory_site_ids:
                 continue
             mate_ip = str(row.get("mate_ip") or "").strip()
