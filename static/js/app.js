@@ -436,8 +436,8 @@ function renderTopologyStateLog() {
     count.textContent = String(events.length);
     preview.innerHTML = renderTopologyStateLogMarkup(events, { limit: 4, compact: true });
     container.innerHTML = renderTopologyStateLogMarkup(events, { limit: 40, compact: false });
-    flyout.hidden = !topologyState.stateLogExpanded;
-    previewButton.hidden = topologyState.stateLogExpanded;
+    flyout.hidden = true;
+    previewButton.hidden = true;
     applyTopologyStateLogLayout();
 
     if (!container.dataset.bound) {
