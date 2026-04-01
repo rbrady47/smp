@@ -4111,7 +4111,7 @@ function isTopologyEntityVisible(entity) {
 }
 
 function renderTopologyStage() {
-    if (topologyState.dragging?.kind === "link-create") {
+    if (topologyState.dragging) {
         return;
     }
     const linkCtxMenu = document.getElementById("topology-link-context-menu");
@@ -6378,6 +6378,10 @@ function getNodeListRttState(latencyValue, row) {
 async function refreshTopologyPage() {
     const root = document.getElementById("topology-root");
     if (!root) {
+        return;
+    }
+    // Skip DOM rebuild while user is dragging to avoid jitter
+    if (topologyState.dragging) {
         return;
     }
     const submapId = root.getAttribute("data-map-view-id");
