@@ -1626,6 +1626,19 @@ async def get_map_view_detail(
     return operational_map_service.get_map_view_detail(map_view_id, db)
 
 
+def _resolve_dn_owner_anchor_id(
+    candidate_anchor_id: int,
+    existing_anchor_id: int | None,
+    anchor_site_id_map: dict[int, str],
+) -> int:
+    """Ownership: AN with lowest site_id wins AN-vs-AN conflicts."""
+    if existing_anchor_id is None:
+        return candidate_anchor_id
+    candidate_sid = anchor_site_id_map.get(candidate_anchor_id, str(candidate_anchor_id))
+    existing_sid = anchor_site_id_map.get(existing_anchor_id, str(existing_anchor_id))
+    return candidate_anchor_id if candidate_sid < existing_sid else existing_anchor_id
+
+
 @app.get("/api/topology/maps/{map_view_id}/discovery")
 async def get_submap_discovery(
     map_view_id: int,
@@ -1656,6 +1669,13 @@ async def get_submap_discovery(
         select(Node).where(Node.id.in_(placed_anchor_ids))
     ).all() if placed_anchor_ids else []
 
+    # Build anchor site_id lookup for ownership resolution
+    anchor_site_id_map: dict[int, str] = {}
+    for node in anchor_nodes:
+        detail = seeker_detail_cache.get(node.id) or {}
+        cfg = detail.get("config_summary") if isinstance(detail.get("config_summary"), dict) else {}
+        anchor_site_id_map[node.id] = str(cfg.get("site_id") or node.node_id or node.id).strip()
+
     # Exclude ALL inventory nodes from discovery, not just placed ones
     all_inventory_nodes = db.scalars(select(Node)).all()
     inventory_site_ids: set[str] = set()
@@ -1664,7 +1684,6 @@ async def get_submap_discovery(
             inventory_site_ids.add(inv_node.node_id)
             inventory_site_ids.add(inv_node.node_id.lower())
         inventory_site_ids.add(str(inv_node.id))
-        # Also check the seeker_detail_cache for the real site_id from config
         inv_detail = seeker_detail_cache.get(inv_node.id) or {}
         inv_config = inv_detail.get("config_summary") if isinstance(inv_detail.get("config_summary"), dict) else {}
         cfg_site_id = str(inv_config.get("site_id") or "").strip()
@@ -1672,7 +1691,7 @@ async def get_submap_discovery(
             inventory_site_ids.add(cfg_site_id)
 
     discovered_peers: list[dict[str, object]] = []
-    seen_site_ids: set[str] = set()
+    seen_site_ids: dict[str, int] = {}  # site_id -> owning anchor node.id
     discovery_links: list[dict[str, object]] = []
 
     for node in anchor_nodes:
@@ -1696,9 +1715,9 @@ async def get_submap_discovery(
             tx_rate = str(row.get("tx_rate") or "").strip()
             rx_rate = str(row.get("rx_rate") or "").strip()
 
-            # Add entity only once (first source wins)
+            # Add entity only once; resolve owner via lowest site_id rule
             if mate_site_id not in seen_site_ids:
-                seen_site_ids.add(mate_site_id)
+                seen_site_ids[mate_site_id] = node.id
                 discovered_peers.append({
                     "site_id": mate_site_id,
                     "name": mate_name,
@@ -1710,6 +1729,19 @@ async def get_submap_discovery(
                     "tx_rate": tx_rate,
                     "rx_rate": rx_rate,
                 })
+            else:
+                # Update owner if this anchor has a lower site_id
+                new_owner = _resolve_dn_owner_anchor_id(
+                    node.id, seen_site_ids[mate_site_id], anchor_site_id_map,
+                )
+                if new_owner != seen_site_ids[mate_site_id]:
+                    seen_site_ids[mate_site_id] = new_owner
+                    for peer in discovered_peers:
+                        if peer["site_id"] == mate_site_id:
+                            peer["source_anchor_id"] = new_owner
+                            peer["source_site_id"] = source_site_id
+                            peer["source_name"] = source_name
+                            break
 
             # Record every AN↔DN tunnel relationship as a link
             discovery_links.append({
@@ -1720,12 +1752,92 @@ async def get_submap_discovery(
                 "rx_rate": rx_rate,
             })
 
+    # Persist discovered nodes to database
+    now = datetime.now(timezone.utc)
+    for peer in discovered_peers:
+        site_id = str(peer["site_id"])
+        existing = db.get(DiscoveredNode, site_id)
+        owner_anchor_id = seen_site_ids.get(site_id)
+        if existing:
+            # Update fields but preserve map position and map_view_id
+            existing.host = str(peer.get("host") or existing.host or "")
+            existing.site_name = str(peer.get("name") or existing.site_name or site_id)
+            existing.source_anchor_node_id = owner_anchor_id
+            if existing.map_view_id is None:
+                existing.map_view_id = map_view_id
+            existing.updated_at = now
+        else:
+            dn = DiscoveredNode(
+                site_id=site_id,
+                site_name=str(peer.get("name") or site_id),
+                host=str(peer.get("host") or ""),
+                map_view_id=map_view_id,
+                source_anchor_node_id=owner_anchor_id,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(dn)
+
+        # Upsert observation
+        obs = db.get(DiscoveredNodeObservation, site_id)
+        ping_up = str(peer.get("ping") or "").strip().lower() == "up"
+        if obs:
+            obs.ping = "Up" if ping_up else "Down"
+            obs.last_seen = now
+            if ping_up:
+                obs.last_ping_up = now
+                obs.ping_down_since = None
+            elif obs.ping_down_since is None:
+                obs.ping_down_since = now
+            obs.observed_at = now
+        else:
+            obs = DiscoveredNodeObservation(
+                site_id=site_id,
+                ping="Up" if ping_up else "Down",
+                last_seen=now,
+                last_ping_up=now if ping_up else None,
+                ping_down_since=None if ping_up else now,
+                observed_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(obs)
+
+    db.commit()
+
+    # Build response with saved positions
+    persisted_dns = db.scalars(
+        select(DiscoveredNode).where(DiscoveredNode.map_view_id == map_view_id)
+    ).all()
+    saved_positions: dict[str, dict[str, int | None]] = {}
+    for dn in persisted_dns:
+        if dn.map_x is not None and dn.map_y is not None:
+            saved_positions[dn.site_id] = {"x": dn.map_x, "y": dn.map_y}
+
     return {
         "map_view_id": map_view_id,
         "anchor_count": len(anchor_nodes),
         "discovered_peers": discovered_peers,
         "discovery_links": discovery_links,
+        "saved_positions": saved_positions,
     }
+
+
+@app.put("/api/topology/maps/discovered-nodes/{site_id}/position")
+async def save_dn_position(
+    site_id: str,
+    payload: dict[str, int],
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    """Save a discovered node's map position."""
+    dn = db.get(DiscoveredNode, site_id)
+    if not dn:
+        raise HTTPException(status_code=404, detail="Discovered node not found")
+    dn.map_x = payload.get("x")
+    dn.map_y = payload.get("y")
+    dn.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"status": "ok"}
 
 
 @app.put("/api/topology/maps/{map_view_id}")

@@ -1595,6 +1595,22 @@ function nudgeTopologySelection(deltaX, deltaY) {
         );
     });
     saveTopologyLayoutOverrides();
+
+    // Persist DN positions to DB after nudge
+    topologyState.selectedEntityIds.forEach((entityId) => {
+        if (entityId.startsWith("dn-")) {
+            const siteId = entityId.slice(3);
+            const lo = topologyState.layoutOverrides?.[entityId];
+            if (lo) {
+                fetch(`/api/topology/maps/discovered-nodes/${encodeURIComponent(siteId)}/position`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ x: Math.round(lo.x), y: Math.round(lo.y) }),
+                }).catch(() => {});
+            }
+        }
+    });
+
     renderTopologyStage();
 }
 
@@ -1705,6 +1721,27 @@ function wireTopologyLayoutEditor(stage, layer, entityMap) {
 
         syncTopologySelectionBox(null);
         saveTopologyLayoutOverrides();
+
+        // Persist DN positions to DB after drag
+        if (drag.mode === "drag" || drag.mode === "drag-group") {
+            const idsToSave = drag.mode === "drag-group"
+                ? (drag.entities || []).map((e) => e.entityId)
+                : [drag.entityId];
+            idsToSave.forEach((eid) => {
+                if (eid && eid.startsWith("dn-")) {
+                    const siteId = eid.slice(3);
+                    const lo = topologyState.layoutOverrides?.[eid];
+                    if (lo) {
+                        fetch(`/api/topology/maps/discovered-nodes/${encodeURIComponent(siteId)}/position`, {
+                            method: "PUT",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ x: Math.round(lo.x), y: Math.round(lo.y) }),
+                        }).catch(() => {});
+                    }
+                }
+            });
+        }
+
         topologyState.dragging = null;
         topologyState._lastDragEndTime = Date.now();
         clearDragListeners();
@@ -5122,7 +5159,8 @@ async function refreshSubmapDiscovery(submapViewId) {
             });
         topologyPayload.lvl1_nodes = discoveredEntities;
 
-        // Place DNs needing layout in an even grid in the bottom 75% of the stage
+        // Apply saved positions from DB first, then grid-place truly new DNs
+        const savedPositions = result?.saved_positions ?? {};
         const stage = document.getElementById("topology-stage");
         const stageW = stage ? stage.clientWidth : 1200;
         const stageH = stage ? stage.clientHeight : 800;
@@ -5130,16 +5168,27 @@ async function refreshSubmapDiscovery(submapViewId) {
         const dnSize = 60;
         const topBound = Math.round(stageH * 0.25);
 
+        // Restore DB-saved positions for DNs that don't have a layout override yet
+        discoveredEntities.forEach((dn) => {
+            if (!topologyState.layoutOverrides?.[dn.id]) {
+                const saved = savedPositions[dn.site_id];
+                if (saved && saved.x != null && saved.y != null) {
+                    setTopologyEntityLayout(dn.id, { x: saved.x, y: saved.y, size: dnSize });
+                }
+            }
+        });
+
         // Collect occupied rectangles from all existing layout overrides
         const occupied = [];
         const allEntities = [...(topologyPayload.lvl0_nodes ?? []), ...discoveredEntities];
         allEntities.forEach((e) => {
             const lo = topologyState.layoutOverrides?.[e.id];
-            if (lo && e.kind !== "discovered") {
+            if (lo) {
                 occupied.push({ x: lo.x, y: lo.y, size: lo.size || 96 });
             }
         });
 
+        // Grid-place only DNs with no layout override (no DB position and no local override)
         const needsLayout = discoveredEntities.filter((dn) => !topologyState.layoutOverrides?.[dn.id]);
         if (needsLayout.length) {
             const availW = stageW - margin * 2;
@@ -5812,13 +5861,23 @@ function wireTopologyLayoutControls() {
                     return;
                 }
                 const nextOverrides = { ...(topologyState.layoutOverrides || {}) };
+                const dnSiteIdsToReset = [];
                 for (const key of Object.keys(nextOverrides)) {
                     if (key.startsWith("dn-")) {
+                        dnSiteIdsToReset.push(key.slice(3));
                         delete nextOverrides[key];
                     }
                 }
                 topologyState.layoutOverrides = nextOverrides;
                 saveTopologyLayoutOverrides();
+                // Clear DB positions for reset DNs
+                dnSiteIdsToReset.forEach((siteId) => {
+                    fetch(`/api/topology/maps/discovered-nodes/${encodeURIComponent(siteId)}/position`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ x: null, y: null }),
+                    }).catch(() => {});
+                });
             } else {
                 const confirmed = window.confirm("Revert the current topology layout changes? This will reset saved bubble and widget positions.");
                 if (!confirmed) {

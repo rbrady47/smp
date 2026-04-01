@@ -59,6 +59,10 @@ class DiscoveredNode(Base):
     discovered_parent_site_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     discovered_parent_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     surfaced_by_names_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    map_view_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("operational_map_views.id"), nullable=True, index=True)
+    map_x: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    map_y: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_anchor_node_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
