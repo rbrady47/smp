@@ -4505,7 +4505,11 @@ function renderTopologyStage() {
                 return;
             }
             if (!topologyState.editMode) {
-                if (nextEntity?.inventory_node_id) {
+                if (nextEntity?.kind === "discovered" && nextEntity?.site_id) {
+                    openTopologyDetail(`/nodes/discovered/${encodeURIComponent(nextEntity.site_id)}`, nextEntity.name || nextEntity.site_id || "Discovered Node");
+                    event.preventDefault();
+                    event.stopPropagation();
+                } else if (nextEntity?.inventory_node_id) {
                     openTopologyDetail(`/nodes/${encodeURIComponent(nextEntity.inventory_node_id)}`, nextEntity.name || "Node Detail");
                     event.preventDefault();
                     event.stopPropagation();
@@ -4547,8 +4551,11 @@ function renderTopologyStage() {
                 event.stopPropagation();
                 return;
             }
-            if (nextEntity?.kind === "discovered" && nextEntity?.site_id) {
-                window.location.href = `/nodes/discovered/${encodeURIComponent(nextEntity.site_id)}`;
+            if (nextEntity?.kind === "discovered" && nextEntity?.host) {
+                topologyState.selectedKind = null;
+                topologyState.selectedId = null;
+                openWebForNode(nextEntity.host, 443, "https");
+                renderTopologyStage();
                 event.preventDefault();
                 event.stopPropagation();
                 return;
