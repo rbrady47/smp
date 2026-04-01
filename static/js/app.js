@@ -4719,8 +4719,12 @@ function renderTopologyStage() {
     // Re-reveal discovery links after SVG rebuild
     if (topologyState.editMode) {
         revealAllDiscoveryLinks();
-    } else if (topologyState.pinnedLinkNodeId) {
-        revealDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
+    } else {
+        if (topologyState.pinnedLinkNodeId) {
+            revealDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
+        }
+        // Always show down/red links so operators see problems
+        revealDownDiscoveryLinks();
     }
     refreshPinnedLinkTooltip();
     renderTopologyDrawer();
@@ -5528,9 +5532,18 @@ function revealDiscoveryLinksForEntity(entityId) {
 
 function hideDiscoveryLinksForEntity(entityId) {
     getDiscoveryLinksForEntity(entityId).forEach((el) => {
+        // Don't hide down/red links — they should always stay visible
+        if (el.classList.contains("topology-link-down")) return;
         el.classList.remove("is-link-revealed", "is-link-flashing", "is-link-fading");
     });
     getDiscoveryHitareasForEntity(entityId).forEach((el) => {
+        // Check if the corresponding link line is down
+        const linkId = el.getAttribute("data-topology-link-id");
+        const svg = el.closest("svg");
+        if (linkId && svg) {
+            const line = svg.querySelector(`.topology-link-discovery[data-topology-link-id="${CSS.escape(linkId)}"]`);
+            if (line && line.classList.contains("topology-link-down")) return;
+        }
         el.classList.remove("is-link-revealed");
     });
 }
@@ -5539,9 +5552,16 @@ function hideAllDiscoveryLinks() {
     const svg = document.getElementById("topology-links");
     if (!svg) return;
     svg.querySelectorAll(".topology-link-discovery.is-link-revealed").forEach((el) => {
+        // Don't hide down/red links
+        if (el.classList.contains("topology-link-down")) return;
         el.classList.remove("is-link-revealed", "is-link-flashing", "is-link-fading");
     });
     svg.querySelectorAll('.topology-link-hitarea[data-link-kind="discovery"].is-link-revealed').forEach((el) => {
+        const linkId = el.getAttribute("data-topology-link-id");
+        if (linkId) {
+            const line = svg.querySelector(`.topology-link-discovery[data-topology-link-id="${CSS.escape(linkId)}"]`);
+            if (line && line.classList.contains("topology-link-down")) return;
+        }
         el.classList.remove("is-link-revealed");
     });
 }
@@ -5558,6 +5578,21 @@ function revealAllDiscoveryLinks() {
     });
 }
 
+function revealDownDiscoveryLinks() {
+    const svg = document.getElementById("topology-links");
+    if (!svg) return;
+    svg.querySelectorAll(".topology-link-discovery.topology-link-down").forEach((el) => {
+        el.classList.remove("is-link-flashing", "is-link-fading");
+        el.classList.add("is-link-revealed");
+        // Also reveal the hitarea for this link
+        const linkId = el.getAttribute("data-topology-link-id");
+        if (linkId) {
+            const hitarea = svg.querySelector(`.topology-link-hitarea[data-topology-link-id="${CSS.escape(linkId)}"]`);
+            if (hitarea) hitarea.classList.add("is-link-revealed");
+        }
+    });
+}
+
 function flashDiscoveryLinksForEntity(entityId) {
     const lines = getDiscoveryLinksForEntity(entityId);
     if (!lines.length) return;
@@ -5568,7 +5603,12 @@ function flashDiscoveryLinksForEntity(entityId) {
     const timer = setTimeout(() => {
         lines.forEach((el) => {
             el.classList.remove("is-link-flashing");
-            el.classList.add("is-link-fading");
+            // Down links stay revealed instead of fading
+            if (el.classList.contains("topology-link-down")) {
+                el.classList.add("is-link-revealed");
+            } else {
+                el.classList.add("is-link-fading");
+            }
         });
         const fadeTimer = setTimeout(() => {
             lines.forEach((el) => {
