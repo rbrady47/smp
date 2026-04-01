@@ -5750,15 +5750,20 @@ function wireTopologyLayoutControls() {
                 if (!confirmed) {
                     return;
                 }
-                const submapPrefixes = ["map-obj-", "dn-"];
                 const nextOverrides = { ...(topologyState.layoutOverrides || {}) };
                 for (const key of Object.keys(nextOverrides)) {
-                    if (submapPrefixes.some((p) => key.startsWith(p))) {
+                    if (key.startsWith("dn-")) {
                         delete nextOverrides[key];
                     }
                 }
                 topologyState.layoutOverrides = nextOverrides;
                 saveTopologyLayoutOverrides();
+                // Re-apply anchor positions from their stored DB coordinates
+                (topologyPayload?.lvl0_nodes ?? []).forEach((entity) => {
+                    if (entity.id.startsWith("map-obj-")) {
+                        setTopologyEntityLayout(entity.id, { x: entity.x, y: entity.y, size: 96 });
+                    }
+                });
             } else {
                 const confirmed = window.confirm("Revert the current topology layout changes? This will reset saved bubble and widget positions.");
                 if (!confirmed) {
