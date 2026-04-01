@@ -4232,11 +4232,11 @@ function renderTopologyStage() {
     const clusterStatusCounts = getTopologyClusterStatusCounts();
     const connectedAnchorMap = getTopologyConnectedAnchorMap();
 
+    // NSL hidden from topology — will move to main dashboard later
     if (stateLogPreview) {
-        stateLogPreview.hidden = visibleEntities.length === 0;
+        stateLogPreview.hidden = true;
     }
-    if (stateLogFlyout && visibleEntities.length === 0) {
-        topologyState.stateLogExpanded = false;
+    if (stateLogFlyout) {
         stateLogFlyout.hidden = true;
     }
 
