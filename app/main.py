@@ -1826,7 +1826,7 @@ async def get_submap_discovery(
 @app.put("/api/topology/maps/discovered-nodes/{site_id}/position")
 async def save_dn_position(
     site_id: str,
-    payload: dict[str, int],
+    payload: dict[str, int | None],
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
     """Save a discovered node's map position."""
