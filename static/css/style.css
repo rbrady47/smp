@@ -1905,6 +1905,11 @@ a {
     padding: 0.15rem;
 }
 
+.topology-discovered .topology-anchor-point {
+    width: 0.38rem;
+    height: 0.38rem;
+}
+
 .topology-submap {
     min-width: 160px;
     border-radius: 16px;

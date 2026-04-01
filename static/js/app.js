@@ -5131,7 +5131,7 @@ async function refreshSubmapDiscovery(submapViewId) {
             peers.forEach((dn, i) => {
                 if (!topologyState.layoutOverrides?.[dn.id]) {
                     const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
-                    const distance = 200 + count * 15;
+                    const distance = 70 + count * 8;
                     const x = Math.round(sourceLayout.x + Math.cos(angle) * distance);
                     const y = Math.round(sourceLayout.y + Math.sin(angle) * distance);
                     setTopologyEntityLayout(dn.id, { x: Math.max(40, x), y: Math.max(40, y), size: 32 });
