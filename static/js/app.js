@@ -1705,8 +1705,13 @@ function wireTopologyLayoutEditor(stage, layer, entityMap) {
 
         syncTopologySelectionBox(null);
         saveTopologyLayoutOverrides();
+        const wasDragOrSelect = drag.mode === "select" || drag.mode === "drag" || drag.mode === "drag-group";
         topologyState.dragging = null;
         clearDragListeners();
+        if (wasDragOrSelect) {
+            topologyState._suppressNextClick = true;
+            requestAnimationFrame(() => { topologyState._suppressNextClick = false; });
+        }
         event.preventDefault();
     };
 
@@ -4531,6 +4536,10 @@ function renderTopologyStage() {
     }
 
     stage.onclick = (event) => {
+        if (topologyState._suppressNextClick) {
+            topologyState._suppressNextClick = false;
+            return;
+        }
         const target = event.target;
         if (target instanceof Element && target.closest("[data-topology-id], [data-topology-link-id], #topology-state-log-preview, #topology-state-log-flyout")) {
             return;
