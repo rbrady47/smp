@@ -4775,7 +4775,7 @@ function drawTopologyLinks(entityMap) {
                 if (topologyState.pinnedTooltipId) {
                     topologyState.pinnedTooltipId = null;
                 }
-                if (!topologyState.editMode && link?.kind === "authored" && link?.status_node_id) {
+                if (!topologyState.editMode && (link?.kind === "authored" || link?.kind === "discovery") && link?.status_node_id) {
                     const visualLine = svg.querySelector(`.topology-link[data-topology-link-id="${CSS.escape(linkId)}"]`);
                     if (visualLine instanceof SVGLineElement) {
                         const mx = (parseFloat(visualLine.getAttribute("x1")) + parseFloat(visualLine.getAttribute("x2"))) / 2;
@@ -4808,7 +4808,7 @@ function drawTopologyLinks(entityMap) {
             openTopologyLinkContextMenu(link, event.clientX, event.clientY);
         });
         line.addEventListener("mouseenter", () => {
-            if (topologyState.editMode || !link?.kind === "authored" || !link?.status_node_id) {
+            if (topologyState.editMode || !link?.status_node_id || (link?.kind !== "authored" && link?.kind !== "discovery")) {
                 return;
             }
             if (topologyState.pinnedLinkTooltipId) {
@@ -5331,6 +5331,8 @@ async function refreshSubmapDiscovery(submapViewId) {
                     link_type: "dotted",
                     kind: "discovery",
                     status: link.status || "neutral",
+                    status_node_id: link.source_anchor_id,
+                    target_site_id: link.target_site_id,
                 };
             })
             .filter(Boolean);
@@ -5423,15 +5425,27 @@ function getTopologyLinkPeerSiteId(link) {
 }
 
 function buildTopologyLinkTooltipMarkup(link, tunnelRow) {
-    if (!link || link.kind !== "authored" || !link.status_node_id) {
+    if (!link || (link.kind !== "authored" && link.kind !== "discovery")) {
         return "";
     }
-    const entity = getTopologyStatusNodeEntity(link.status_node_id);
+    let name;
+    let entity;
+    if (link.kind === "discovery") {
+        const entities = getTopologyEntities();
+        const dnEntity = entities.find((e) => e.id === link.to);
+        const anEntity = entities.find((e) => e.id === link.from);
+        name = `${anEntity?.name || "AN"} ↔ ${dnEntity?.site_id || "DN"}`;
+        entity = anEntity || dnEntity;
+    } else {
+        entity = getTopologyStatusNodeEntity(link.status_node_id);
+        name = entity?.inventory_name || entity?.name || "Node";
+    }
     if (!entity) {
         return "";
     }
-    const name = entity.inventory_name || entity.name || "Node";
-    const linkStatus = computeTopologyLinkStatusFromNode(entity);
+    const linkStatus = link.kind === "discovery"
+        ? (link.status === "down" ? "down" : link.status === "degraded" ? "degraded" : "healthy")
+        : computeTopologyLinkStatusFromNode(entity);
     const statusLabel = linkStatus === "down" ? "Down" : linkStatus === "degraded" ? "Degraded" : "Healthy";
     const statusDot = linkStatus === "down" ? "down" : linkStatus === "degraded" ? "degraded" : "up";
 
@@ -5479,7 +5493,11 @@ async function showTopologyLinkTooltip(link, midX, midY) {
     if (!tooltip) {
         return;
     }
-    if (!link || link.kind !== "authored" || !link.status_node_id) {
+    if (!link || (!link.status_node_id && link.kind !== "discovery")) {
+        hideTopologyLinkTooltip();
+        return;
+    }
+    if (link.kind !== "authored" && link.kind !== "discovery") {
         hideTopologyLinkTooltip();
         return;
     }
@@ -5488,8 +5506,8 @@ async function showTopologyLinkTooltip(link, midX, midY) {
     tooltip.style.left = `${midX}px`;
     tooltip.style.top = `${midY}px`;
 
-    const peerSiteId = getTopologyLinkPeerSiteId(link);
-    const stats = await fetchTopologyLinkStats(link.status_node_id);
+    const peerSiteId = link.kind === "discovery" ? String(link.target_site_id || "") : getTopologyLinkPeerSiteId(link);
+    const stats = link.status_node_id ? await fetchTopologyLinkStats(link.status_node_id) : null;
     const tunnelRow = findTunnelRowForPeer(stats, peerSiteId);
     const markup = buildTopologyLinkTooltipMarkup(link, tunnelRow);
     if (!markup) {
