@@ -6087,6 +6087,9 @@ async function refreshTopologyPage() {
     if (!root) {
         return;
     }
+    if (root.getAttribute("data-map-view-id")) {
+        return;
+    }
 
     try {
         const [topologyResult, discoveryResult, nodeDashboardResult, dashboardServicesResult] = await Promise.allSettled([
