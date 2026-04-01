@@ -1917,6 +1917,10 @@ a {
     gap: 0.5rem;
 }
 
+.submap-add-node-panel[hidden] {
+    display: none;
+}
+
 .submap-add-node-header {
     display: flex;
     align-items: center;
