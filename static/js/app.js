@@ -5117,25 +5117,51 @@ async function refreshSubmapDiscovery(submapViewId) {
                 };
             });
         topologyPayload.lvl1_nodes = discoveredEntities;
-        const placedEntities = topologyPayload.lvl0_nodes ?? [];
-        const bySource = new Map();
-        discoveredEntities.forEach((dn) => {
-            const key = String(dn.source_anchor_id);
-            if (!bySource.has(key)) bySource.set(key, []);
-            bySource.get(key).push(dn);
+
+        // Place DNs needing layout in an even grid in the bottom 75% of the stage
+        const stage = document.getElementById("topology-stage");
+        const stageW = stage ? stage.clientWidth : 1200;
+        const stageH = stage ? stage.clientHeight : 800;
+        const margin = 40;
+        const dnSize = 60;
+        const topBound = Math.round(stageH * 0.25);
+
+        // Collect occupied rectangles from all existing layout overrides
+        const occupied = [];
+        const allEntities = [...(topologyPayload.lvl0_nodes ?? []), ...discoveredEntities];
+        allEntities.forEach((e) => {
+            const lo = topologyState.layoutOverrides?.[e.id];
+            if (lo && e.kind !== "discovered") {
+                occupied.push({ x: lo.x, y: lo.y, size: lo.size || 96 });
+            }
         });
-        for (const [sourceId, peers] of bySource) {
-            const source = placedEntities.find((e) => String(e.inventory_node_id) === sourceId);
-            const sourceLayout = source ? (topologyState.layoutOverrides?.[source.id] || { x: 400, y: 300 }) : { x: 400, y: 300 };
-            const count = peers.length;
-            peers.forEach((dn, i) => {
-                if (!topologyState.layoutOverrides?.[dn.id]) {
-                    const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
-                    const distance = 70 + count * 8;
-                    const x = Math.round(sourceLayout.x + Math.cos(angle) * distance);
-                    const y = Math.round(sourceLayout.y + Math.sin(angle) * distance);
-                    setTopologyEntityLayout(dn.id, { x: Math.max(40, x), y: Math.max(40, y), size: 60 });
+
+        const needsLayout = discoveredEntities.filter((dn) => !topologyState.layoutOverrides?.[dn.id]);
+        if (needsLayout.length) {
+            const availW = stageW - margin * 2;
+            const availH = stageH - topBound - margin;
+            const cols = Math.max(1, Math.floor(availW / (dnSize + 30)));
+            const rows = Math.ceil(needsLayout.length / cols);
+            const cellW = availW / cols;
+            const cellH = Math.max(dnSize + 20, availH / Math.max(rows, 1));
+
+            needsLayout.forEach((dn, i) => {
+                const col = i % cols;
+                const row = Math.floor(i / cols);
+                let x = Math.round(margin + col * cellW + cellW / 2 - dnSize / 2);
+                let y = Math.round(topBound + row * cellH + cellH / 2 - dnSize / 2);
+
+                // Nudge if overlapping an occupied node
+                for (const occ of occupied) {
+                    const dx = Math.abs(x - occ.x);
+                    const dy = Math.abs(y - occ.y);
+                    if (dx < (dnSize + occ.size) / 2 + 20 && dy < (dnSize + occ.size) / 2 + 20) {
+                        y = occ.y + occ.size + 30;
+                    }
                 }
+
+                occupied.push({ x, y, size: dnSize });
+                setTopologyEntityLayout(dn.id, { x: Math.max(margin, x), y: Math.max(topBound, y), size: dnSize });
             });
         }
     } catch (error) {
