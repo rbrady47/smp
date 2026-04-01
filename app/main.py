@@ -907,7 +907,9 @@ async def dn_seeker_polling_loop() -> None:
             )
 
         tasks = []
+        task_site_ids = []
         for site_id, (source_node, host, level, parent_sid, parent_name) in probe_targets.items():
+            task_site_ids.append(site_id)
             tasks.append(
                 probe_discovered_node_detail(
                     source_node,
@@ -919,8 +921,20 @@ async def dn_seeker_polling_loop() -> None:
                 )
             )
 
+        logger.info(
+            "DN poll: %d DB rows, %d cache entries, %d probe targets: %s",
+            len(dns), len(node_dashboard_backend.discovered_node_cache),
+            len(tasks), ", ".join(task_site_ids[:20]),
+        )
+
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for sid, result in zip(task_site_ids, results):
+                if isinstance(result, Exception):
+                    logger.warning("DN poll probe failed for %s: %s", sid, result)
+                elif isinstance(result, dict):
+                    has_tunnels = bool(result.get("detail", {}).get("tunnels") if isinstance(result.get("detail"), dict) else False)
+                    logger.info("DN poll probed %s ok (has_tunnels=%s)", sid, has_tunnels)
 
         await asyncio.sleep(DN_SEEKER_POLL_INTERVAL_SECONDS)
 
