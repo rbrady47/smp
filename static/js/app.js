@@ -4474,6 +4474,16 @@ function renderTopologyStage() {
                 topologyState.selectedEntityIds = new Set([nextId]);
             }
             syncTopologyEntitySelectionStyles(layer);
+            const root = document.getElementById("topology-root");
+            if (root?.getAttribute("data-map-view-id") && nextEntity?.map_object_id) {
+                event.preventDefault();
+                event.stopPropagation();
+                const confirmed = window.confirm(`Remove "${nextEntity.name || "this node"}" from the submap?`);
+                if (confirmed) {
+                    deleteSubmapObject(nextEntity.map_object_id, nextEntity.id);
+                }
+                return;
+            }
             if (nextEntity?.inventory_node_id) {
                 populateNodeForm(Number(nextEntity.inventory_node_id));
                 openNodeModal({ reset: false });
@@ -5068,6 +5078,29 @@ async function placeSubmapNode(siteId, displayName, bindingKey) {
     } catch (error) {
         console.error("Failed to place node on submap:", error);
         window.alert("Failed to place node.");
+    }
+}
+
+async function deleteSubmapObject(mapObjectId, entityId) {
+    try {
+        const response = await fetch(`/api/topology/maps/objects/${encodeURIComponent(mapObjectId)}`, {
+            method: "DELETE",
+        });
+        if (!response.ok && response.status !== 204) {
+            console.error("Failed to delete submap object:", response.status);
+            return;
+        }
+        if (topologyPayload?.lvl0_nodes) {
+            topologyPayload.lvl0_nodes = topologyPayload.lvl0_nodes.filter((e) => e.id !== entityId);
+        }
+        removeTopologyEntityLayout(entityId);
+        topologyState.selectedKind = null;
+        topologyState.selectedId = null;
+        topologyState.selectedEntityIds.delete(entityId);
+        renderSubmapAddNodeList();
+        renderTopologyStage();
+    } catch (error) {
+        console.error("Failed to delete submap object:", error);
     }
 }
 
