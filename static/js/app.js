@@ -4965,9 +4965,12 @@ async function refreshTopologyData() {
 function renderSubmapAddNodeList() {
     const listEl = document.getElementById("submap-add-node-list");
     if (!listEl) {
+        console.warn("submap-add-node-list element not found");
         return;
     }
+    console.log("renderSubmapAddNodeList called, topologySubmapDetail:", topologySubmapDetail);
     const availableNodes = topologySubmapDetail?.available_nodes ?? [];
+    console.log("availableNodes count:", availableNodes.length);
     const placedSiteIds = new Set(
         (topologyPayload?.lvl0_nodes ?? []).map((e) => e.site_id).filter(Boolean)
     );
@@ -5865,7 +5868,9 @@ async function loadTopologyPage() {
             throw topologyResult.reason;
         }
         if (submapViewId) {
+            console.log("Fetching submap detail for viewId:", submapViewId);
             const submapResult = await apiRequest(`/api/topology/maps/${encodeURIComponent(submapViewId)}`);
+            console.log("Submap detail result:", submapResult);
             topologySubmapDetail = submapResult;
             const submapEntities = (submapResult?.objects ?? [])
                 .filter((obj) => obj.object_type === "node")
