@@ -43,6 +43,7 @@ from app.seeker_api import (
     extract_static_routes_from_cfg,
     resolve_site_name_map,
 )
+from app.node_discovery_service import _tunnel_row_is_eligible
 from app.schemas import (
     NodeCreate,
     NodeUpdate,
@@ -1623,6 +1624,82 @@ async def get_map_view_detail(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     return operational_map_service.get_map_view_detail(map_view_id, db)
+
+
+@app.get("/api/topology/maps/{map_view_id}/discovery")
+async def get_submap_discovery(
+    map_view_id: int,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Return tunnel peers for anchor nodes placed on this submap."""
+    map_view = db.get(OperationalMapView, map_view_id)
+    if not map_view:
+        raise HTTPException(status_code=404, detail="Map view not found")
+
+    placed_objects = db.scalars(
+        select(OperationalMapObject).where(
+            OperationalMapObject.map_view_id == map_view_id,
+            OperationalMapObject.object_type == "node",
+        )
+    ).all()
+
+    placed_anchor_ids: set[int] = set()
+    for obj in placed_objects:
+        binding_key = obj.binding_key or ""
+        if binding_key.startswith("anchor:"):
+            try:
+                placed_anchor_ids.add(int(binding_key.split(":")[1]))
+            except (ValueError, IndexError):
+                pass
+
+    anchor_nodes = db.scalars(
+        select(Node).where(Node.id.in_(placed_anchor_ids))
+    ).all() if placed_anchor_ids else []
+
+    anchor_site_ids: set[str] = set()
+    for node in anchor_nodes:
+        if node.node_id:
+            anchor_site_ids.add(node.node_id)
+        anchor_site_ids.add(str(node.id))
+
+    discovered_peers: list[dict[str, object]] = []
+    seen_site_ids: set[str] = set()
+
+    for node in anchor_nodes:
+        detail = seeker_detail_cache.get(node.id) or {}
+        config_summary = detail.get("config_summary") if isinstance(detail.get("config_summary"), dict) else {}
+        source_site_id = str(config_summary.get("site_id") or node.node_id or "").strip() or str(node.id)
+        source_name = str(config_summary.get("site_name") or node.name or "").strip() or node.name
+        tunnels = [row for row in (detail.get("tunnels") or []) if isinstance(row, dict)]
+
+        for row in tunnels:
+            if not _tunnel_row_is_eligible(row):
+                continue
+            mate_site_id = str(row.get("mate_site_id") or "").strip()
+            if not mate_site_id or mate_site_id in anchor_site_ids or mate_site_id in seen_site_ids:
+                continue
+            mate_ip = str(row.get("mate_ip") or "").strip()
+            mate_name = str(row.get("site_name") or row.get("mate_site_name") or "").strip() or mate_site_id
+            if not mate_ip or mate_ip == "--":
+                continue
+            seen_site_ids.add(mate_site_id)
+            discovered_peers.append({
+                "site_id": mate_site_id,
+                "name": mate_name,
+                "host": mate_ip,
+                "source_anchor_id": node.id,
+                "source_site_id": source_site_id,
+                "source_name": source_name,
+                "ping": str(row.get("ping") or "").strip(),
+                "tx_rate": str(row.get("tx_rate") or "").strip(),
+                "rx_rate": str(row.get("rx_rate") or "").strip(),
+            })
+
+    return {
+        "map_view_id": map_view_id,
+        "anchor_count": len(anchor_nodes),
+        "discovered_peers": discovered_peers,
+    }
 
 
 @app.put("/api/topology/maps/{map_view_id}")

@@ -1878,6 +1878,19 @@ a {
     gap: 0.45rem;
 }
 
+.topology-discovered {
+    border-style: dashed;
+    border-color: rgba(100, 200, 255, 0.35);
+    background:
+        radial-gradient(circle at 50% 0%, rgba(60, 200, 255, 0.10), transparent 42%),
+        linear-gradient(180deg, rgba(18, 34, 58, 0.98) 0%, rgba(12, 26, 46, 0.98) 100%);
+}
+
+.topology-discovered .topology-node-meta {
+    font-size: 0.65rem;
+    opacity: 0.75;
+}
+
 .topology-submap {
     min-width: 160px;
     border-radius: 16px;

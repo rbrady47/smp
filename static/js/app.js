@@ -4171,10 +4171,12 @@ function renderTopologyStage() {
             const isLvl1 = entity.level === 1;
             const isFocusedUnit = entity.level === 2 && topologyState.focusUnit && topologyState.focusUnit === entity.unit;
             const serviceSummary = isServiceCloud ? (entity.service_summary || getTopologyServiceCloudSummary()) : null;
+            const isDiscovered = entity.kind === "discovered";
             const classes = [
                   "topology-entity",
                   isCluster ? "topology-cluster" : "topology-node",
                   isSubmap ? "topology-submap" : "",
+                  isDiscovered ? "topology-discovered" : "",
                   isServiceCloud ? "topology-service-cloud" : "",
                   `topology-status-${getEffectiveTopologyEntityStatus(entity) || "neutral"}`,
                   entity.level === 0 ? "topology-node-agg" : "",
@@ -4189,6 +4191,8 @@ function renderTopologyStage() {
 
             const subtitle = isSubmap
                 ? "Submap"
+                : isDiscovered
+                ? `via ${escapeHtml(entity.source_name || "anchor")}`
                 : isCluster
                 ? "Edge Nodes"
                 : escapeHtml(entity.node_id || entity.site_id || "--");
@@ -4205,7 +4209,7 @@ function renderTopologyStage() {
                 : isServiceCloud
                 ? "Services cloud"
                 : isCluster ? `${entity.unit} Edge Nodes` : entity.level === 1 ? `${entity.unit} / ${entity.location}` : entity.name;
-            const isAnchorNode = !isCluster && !isServiceCloud && !isSubmap && Boolean(entity.inventory_node_id);
+            const isAnchorNode = !isCluster && !isServiceCloud && !isSubmap && !isDiscovered && Boolean(entity.inventory_node_id);
             const hoverPanel = isServiceCloud
                 ? `
                     <span class="topology-service-cloud-tooltip" role="tooltip">
@@ -5081,6 +5085,53 @@ async function placeSubmapNode(siteId, displayName, bindingKey) {
     }
 }
 
+async function refreshSubmapDiscovery(submapViewId) {
+    if (!submapViewId || !topologyPayload) {
+        return;
+    }
+    try {
+        const result = await apiRequest(`/api/topology/maps/${encodeURIComponent(submapViewId)}/discovery`);
+        const peers = result?.discovered_peers ?? [];
+        const placedSiteIds = new Set(
+            (topologyPayload.lvl0_nodes ?? []).map((e) => e.site_id).filter(Boolean)
+        );
+        const discoveredEntities = peers
+            .filter((p) => !placedSiteIds.has(p.site_id))
+            .map((peer) => {
+                const entityId = `dn-${peer.site_id}`;
+                return {
+                    id: entityId,
+                    name: peer.name || peer.site_id,
+                    node_id: peer.site_id,
+                    site_id: peer.site_id,
+                    kind: "discovered",
+                    level: 1,
+                    status: peer.ping?.toLowerCase() === "up" ? "up" : "down",
+                    host: peer.host,
+                    source_anchor_id: peer.source_anchor_id,
+                    source_name: peer.source_name,
+                    tx_display: peer.tx_rate,
+                    rx_display: peer.rx_rate,
+                };
+            });
+        topologyPayload.lvl1_nodes = discoveredEntities;
+        const placedEntities = topologyPayload.lvl0_nodes ?? [];
+        discoveredEntities.forEach((dn) => {
+            if (!topologyState.layoutOverrides?.[dn.id]) {
+                const source = placedEntities.find((e) => String(e.inventory_node_id) === String(dn.source_anchor_id));
+                const sourceLayout = source ? (topologyState.layoutOverrides?.[source.id] || { x: 400, y: 300 }) : { x: 400, y: 300 };
+                const angle = Math.random() * Math.PI * 2;
+                const distance = 140 + Math.random() * 80;
+                const x = Math.round(sourceLayout.x + Math.cos(angle) * distance);
+                const y = Math.round(sourceLayout.y + Math.sin(angle) * distance);
+                setTopologyEntityLayout(dn.id, { x: Math.max(40, x), y: Math.max(40, y), size: 72 }, { persist: false });
+            }
+        });
+    } catch (error) {
+        console.error("Failed to refresh submap discovery:", error);
+    }
+}
+
 async function deleteSubmapObject(mapObjectId, entityId) {
     try {
         const response = await fetch(`/api/topology/maps/objects/${encodeURIComponent(mapObjectId)}`, {
@@ -5929,6 +5980,7 @@ async function loadTopologyPage() {
                 }
             });
             topologyPayload = { lvl0_nodes: submapEntities, lvl1_nodes: [], lvl2_clusters: [], submaps: [], links: [] };
+            await refreshSubmapDiscovery(submapViewId);
             renderSubmapAddNodeList();
         } else {
             topologyPayload = topologyResult.value;
@@ -6274,7 +6326,12 @@ async function refreshTopologyPage() {
     if (!root) {
         return;
     }
-    if (root.getAttribute("data-map-view-id")) {
+    const submapId = root.getAttribute("data-map-view-id");
+    if (submapId) {
+        await refreshSubmapDiscovery(submapId);
+        if (topologyPayload) {
+            renderTopologyStage();
+        }
         return;
     }
 
