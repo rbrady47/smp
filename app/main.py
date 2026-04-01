@@ -43,7 +43,7 @@ from app.seeker_api import (
     extract_static_routes_from_cfg,
     resolve_site_name_map,
 )
-from app.node_discovery_service import _tunnel_row_is_eligible
+from app.node_discovery_service import _tunnel_row_is_eligible, _tunnel_row_exists
 from app.schemas import (
     NodeCreate,
     NodeUpdate,
@@ -1918,6 +1918,18 @@ async def get_submap_discovery(
     seen_site_ids: dict[str, int] = {}  # site_id -> owning anchor node.id
     discovery_links: list[dict[str, object]] = []
 
+    # Pre-seed seen_site_ids with DNs already known on this submap so that
+    # down tunnels to previously-discovered peers still produce links.
+    known_dns = db.scalars(
+        select(DiscoveredNode).where(
+            DiscoveredNode.map_view_id == map_view_id,
+            DiscoveredNode.source_anchor_node_id.isnot(None),
+        )
+    ).all()
+    for kdn in known_dns:
+        if kdn.site_id not in seen_site_ids and kdn.source_anchor_node_id:
+            seen_site_ids[kdn.site_id] = kdn.source_anchor_node_id
+
     for node in anchor_nodes:
         detail = seeker_detail_cache.get(node.id) or {}
         config_summary = detail.get("config_summary") if isinstance(detail.get("config_summary"), dict) else {}
@@ -1926,7 +1938,7 @@ async def get_submap_discovery(
         tunnels = [row for row in (detail.get("tunnels") or []) if isinstance(row, dict)]
 
         for row in tunnels:
-            if not _tunnel_row_is_eligible(row):
+            if not _tunnel_row_exists(row):
                 continue
             mate_site_id = str(row.get("mate_site_id") or "").strip()
             if not mate_site_id or mate_site_id in inventory_site_ids or mate_site_id.lower() in inventory_site_ids:
@@ -1938,15 +1950,34 @@ async def get_submap_discovery(
             ping_status = str(row.get("ping") or "").strip()
             tx_rate = str(row.get("tx_rate") or "").strip()
             rx_rate = str(row.get("rx_rate") or "").strip()
+            is_up = _tunnel_row_is_eligible(row)
 
-            # Add entity only once; resolve owner via lowest site_id rule
+            # Only discover NEW peers from active tunnels (ping up).
+            # For already-known peers (pre-seeded from DB), still add them
+            # to discovered_peers so the entity renders on the map.
+            peer_in_list = any(p["site_id"] == mate_site_id for p in discovered_peers)
             if mate_site_id not in seen_site_ids:
+                if not is_up:
+                    continue  # Don't discover new nodes from down tunnels
                 seen_site_ids[mate_site_id] = node.id
                 discovered_peers.append({
                     "site_id": mate_site_id,
                     "name": mate_name,
                     "host": mate_ip,
                     "source_anchor_id": node.id,
+                    "source_site_id": source_site_id,
+                    "source_name": source_name,
+                    "ping": ping_status,
+                    "tx_rate": tx_rate,
+                    "rx_rate": rx_rate,
+                })
+            elif not peer_in_list:
+                # Known from DB but not yet in discovered_peers — add it
+                discovered_peers.append({
+                    "site_id": mate_site_id,
+                    "name": mate_name,
+                    "host": mate_ip,
+                    "source_anchor_id": seen_site_ids[mate_site_id],
                     "source_site_id": source_site_id,
                     "source_name": source_name,
                     "ping": ping_status,
@@ -1967,7 +1998,7 @@ async def get_submap_discovery(
                             peer["source_name"] = source_name
                             break
 
-            # Record every AN↔DN tunnel relationship as a link
+            # Record every AN↔DN tunnel relationship as a link (up or down)
             discovery_links.append({
                 "source_anchor_id": node.id,
                 "target_site_id": mate_site_id,
@@ -1993,18 +2024,13 @@ async def get_submap_discovery(
         logger.debug("DN-to-DN: %s has %d tunnels", fh_site_id, len(dn_tunnels))
 
         for row in dn_tunnels:
+            if not _tunnel_row_exists(row):
+                continue
             mate_sid_dbg = str(row.get("mate_site_id") or "").strip()
-            eligible = _tunnel_row_is_eligible(row)
             is_inventory = mate_sid_dbg in inventory_site_ids or mate_sid_dbg.lower() in inventory_site_ids
-            logger.debug(
-                "DN-to-DN: %s tunnel mate=%s eligible=%s is_inventory=%s in_seen=%s",
-                fh_site_id, mate_sid_dbg, eligible, is_inventory, mate_sid_dbg in seen_site_ids,
-            )
-            if not eligible:
+            if not mate_sid_dbg or is_inventory:
                 continue
             mate_site_id = mate_sid_dbg
-            if not mate_site_id or mate_site_id in inventory_site_ids or mate_site_id.lower() in inventory_site_ids:
-                continue
             mate_ip = str(row.get("mate_ip") or "").strip()
             mate_name = str(row.get("site_name") or row.get("mate_site_name") or "").strip() or mate_site_id
             if not mate_ip or mate_ip == "--":
@@ -2012,9 +2038,12 @@ async def get_submap_discovery(
             ping_status = str(row.get("ping") or "").strip()
             tx_rate = str(row.get("tx_rate") or "").strip()
             rx_rate = str(row.get("rx_rate") or "").strip()
+            is_up = _tunnel_row_is_eligible(row)
 
-            # Discover new second-hop peer if not already seen
+            # Only discover NEW second-hop peers from active tunnels
             if mate_site_id not in seen_site_ids:
+                if not is_up:
+                    continue
                 owner_anchor_id = seen_site_ids.get(fh_site_id)
                 if owner_anchor_id is not None:
                     seen_site_ids[mate_site_id] = owner_anchor_id
@@ -2030,7 +2059,7 @@ async def get_submap_discovery(
                         "rx_rate": rx_rate,
                     })
 
-            # Create DN↔DN link if both endpoints are discovered
+            # Create DN↔DN link if both endpoints are known (up or down)
             if mate_site_id in seen_site_ids:
                 discovery_links.append({
                     "source_anchor_id": seen_site_ids.get(fh_site_id),

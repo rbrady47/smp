@@ -73,6 +73,20 @@ def _tunnel_row_is_eligible(row: dict[str, object]) -> bool:
     return False
 
 
+def _tunnel_row_exists(row: dict[str, object]) -> bool:
+    """Check if a tunnel row represents a valid S&T entry regardless of ping.
+
+    Used for link status tracking: if the tunnel is in the S&T list it should
+    produce a link (red/down or green/healthy). Only when Seeker removes the
+    tunnel from S&T entirely does the link disappear.
+    """
+    if not isinstance(row, dict):
+        return False
+    mate_site_id = str(row.get("mate_site_id") or "").strip()
+    mate_ip = str(row.get("mate_ip") or "").strip()
+    return bool(mate_site_id and mate_ip and mate_ip != "--")
+
+
 def _merge_discovered_candidate(
     backend: Any,
     discovery_candidates: dict[str, dict[str, object]],
