@@ -5890,6 +5890,7 @@ async function loadTopologyPage() {
                 }
             });
             topologyPayload = { lvl0_nodes: submapEntities, lvl1_nodes: [], lvl2_clusters: [], submaps: [], links: [] };
+            renderSubmapAddNodeList();
         } else {
             topologyPayload = topologyResult.value;
         }
