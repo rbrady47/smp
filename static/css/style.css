@@ -2536,6 +2536,10 @@ a {
     transform: translate(-50%, -6px);
 }
 
+.topology-entity.is-tooltip-pinned {
+    z-index: 10;
+}
+
 .topology-node.is-tooltip-pinned .topology-node-tooltip {
     opacity: 1;
     transform: translate(-50%, 0);

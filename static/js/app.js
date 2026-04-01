@@ -4536,7 +4536,7 @@ function renderTopologyStage() {
                 renderTopologyStage();
                 return;
             }
-            if (isAnchorNode) {
+            if (isAnchorNode || nextEntity?.kind === "discovered") {
                 topologyState.pinnedTooltipId = topologyState.pinnedTooltipId === nextId ? null : nextId;
                 renderTopologyStage();
                 return;
