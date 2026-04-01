@@ -2771,7 +2771,7 @@ a {
     transform: none;
     z-index: 4;
     width: min(860px, calc(100% - 2rem));
-    display: grid;
+    display: none; /* hidden from topology — will move to main dashboard */
     gap: 0.6rem;
     text-align: left;
     padding: 0.9rem 1rem;
