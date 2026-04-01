@@ -1259,6 +1259,61 @@ function getTopologyAnchorTooltipMarkup(entity) {
     `;
 }
 
+function getTopologyDiscoveredTooltipMarkup(entity) {
+    if (!entity || entity.kind !== "discovered") {
+        return "";
+    }
+
+    const siteId = entity.site_id || entity.node_id || "--";
+    const hostIp = entity.host || "--";
+    const rttState = String(entity.rtt_state || "unknown").toLowerCase();
+    const rttText = typeof entity.latency_ms === "number" && Number.isFinite(entity.latency_ms)
+        ? `${Math.round(entity.latency_ms)} ms`
+        : "--";
+    const avgRttText = typeof entity.avg_latency_ms === "number" && Number.isFinite(entity.avg_latency_ms)
+        ? `${Math.round(entity.avg_latency_ms)} ms`
+        : "--";
+    const txText = entity.tx_display || "--";
+    const rxText = entity.rx_display || "--";
+    const sourceName = entity.source_name || "--";
+
+    let statusReason;
+    if (rttState === "good") {
+        statusReason = rttText !== "--"
+            ? `Green: Ping is healthy (${rttText}).`
+            : "Green: Ping is healthy.";
+    } else if (rttState === "warn") {
+        statusReason = rttText !== "--"
+            ? `Yellow: Ping is degraded (${rttText}).`
+            : "Yellow: Ping is degraded.";
+    } else if (rttState === "down") {
+        statusReason = "Red: Ping is down.";
+    } else {
+        statusReason = "Ping state not available yet.";
+    }
+
+    return `
+        <span class="topology-node-tooltip" role="tooltip">
+            <strong class="topology-node-tooltip-title">${escapeHtml(entity.name || siteId)}</strong>
+            <span class="topology-node-tooltip-reason">${escapeHtml(statusReason)}</span>
+            <span class="topology-node-tooltip-grid">
+                <span class="topology-node-tooltip-label">Site ID</span>
+                <span class="topology-node-tooltip-value">${escapeHtml(String(siteId))}</span>
+                <span class="topology-node-tooltip-label">Host</span>
+                <span class="topology-node-tooltip-value">${escapeHtml(hostIp)}</span>
+                <span class="topology-node-tooltip-label">RTT</span>
+                <span class="topology-node-tooltip-value" data-tooltip-rtt>${escapeHtml(rttText)}</span>
+                <span class="topology-node-tooltip-label">Avg RTT</span>
+                <span class="topology-node-tooltip-value">${escapeHtml(avgRttText)}</span>
+                <span class="topology-node-tooltip-label">TX / RX</span>
+                <span class="topology-node-tooltip-value">${escapeHtml(`${txText} / ${rxText}`)}</span>
+                <span class="topology-node-tooltip-label">Owner AN</span>
+                <span class="topology-node-tooltip-value">${escapeHtml(sourceName)}</span>
+            </span>
+        </span>
+    `;
+}
+
 function getTopologyEntityLabel(entity) {
     const override = topologyState.layoutOverrides?.[entity.id];
     const overrideLabel = typeof override?.label === "string" ? override.label.trim() : "";
@@ -4267,6 +4322,7 @@ function renderTopologyStage() {
                     </span>
                 `
                 : isAnchorNode ? getTopologyAnchorTooltipMarkup(entity)
+                : isDiscovered ? getTopologyDiscoveredTooltipMarkup(entity)
                 : "";
             const bubbleStyle = `left:${layout.x}px; top:${layout.y}px; --topology-bubble-size:${layout.size}px;`;
             const resizeHandle = topologyState.editMode
