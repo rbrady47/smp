@@ -1034,6 +1034,46 @@ function getTopologyConnectedAnchorMap() {
     return connected;
 }
 
+/**
+ * Build a map of entity::anchorKey -> worst discovery link status.
+ * Unlike getTopologyConnectedAnchorMap (which uses highest-score-wins for
+ * authored links), this uses worst-wins so a single down discovery link
+ * turns the AP dot red even if other links on the same AP are healthy.
+ */
+function getDiscoveryWorstAnchorMap() {
+    const worst = new Map();
+    const scoreWorst = (status) => {
+        switch (String(status || "").toLowerCase()) {
+            case "down": case "offline": return 3;
+            case "degraded": return 2;
+            case "healthy": case "up": case "online": return 1;
+            default: return 0;
+        }
+    };
+    (topologyPayload?.links ?? []).forEach((link, index) => {
+        if (link.kind !== "discovery") return;
+        const linkStatus = getEffectiveTopologyLinkStatus(link, index) || "neutral";
+        const assignment = topologyState.linkAnchorAssignments?.[getTopologyLinkId(link, index)] || {};
+        const sourceAnchor = assignment.source || link.source_anchor || null;
+        const targetAnchor = assignment.target || link.target_anchor || null;
+        if (sourceAnchor && link.from) {
+            const key = `${link.from}::${sourceAnchor}`;
+            const cur = worst.get(key);
+            if (!cur || scoreWorst(linkStatus) > scoreWorst(cur)) {
+                worst.set(key, linkStatus);
+            }
+        }
+        if (targetAnchor && link.to) {
+            const key = `${link.to}::${targetAnchor}`;
+            const cur = worst.get(key);
+            if (!cur || scoreWorst(linkStatus) > scoreWorst(cur)) {
+                worst.set(key, linkStatus);
+            }
+        }
+    });
+    return worst;
+}
+
 function getTopologyLinkAnchorAssignment(link, index) {
     const linkId = getTopologyLinkId(link, index);
     const assignment = topologyState.linkAnchorAssignments?.[linkId] || {};
@@ -4243,6 +4283,7 @@ function renderTopologyStage() {
     const discoveryCounts = getTopologyDiscoveryCounts();
     const clusterStatusCounts = getTopologyClusterStatusCounts();
     const connectedAnchorMap = getTopologyConnectedAnchorMap();
+    const discoveryWorstMap = getDiscoveryWorstAnchorMap();
 
     // NSL hidden from topology — will move to main dashboard later
     if (stateLogPreview) {
@@ -4341,7 +4382,13 @@ function renderTopologyStage() {
                 ? '<span class="topology-resize-handle" data-topology-resize-handle="true" aria-hidden="true"></span>'
                 : "";
             const anchorPoints = getTopologyAnchorPointDefinitions().map((point) => {
-                const connectedStatus = connectedAnchorMap.get(`${entity.id}::${point.key}`) || null;
+                const apKey = `${entity.id}::${point.key}`;
+                const authoredStatus = connectedAnchorMap.get(apKey) || null;
+                const discoveryWorst = discoveryWorstMap.get(apKey) || null;
+                // Use the worst discovery link status if it's "down" or "degraded"
+                const connectedStatus = (discoveryWorst === "down" || discoveryWorst === "degraded")
+                    ? discoveryWorst
+                    : authoredStatus || discoveryWorst;
                 const isConnected = Boolean(connectedStatus);
                 const isTargeted = topologyState.activeLinkHandleTarget?.entityId === entity.id
                     && topologyState.activeLinkHandleTarget?.anchorKey === point.key;
@@ -4719,12 +4766,8 @@ function renderTopologyStage() {
     // Re-reveal discovery links after SVG rebuild
     if (topologyState.editMode) {
         revealAllDiscoveryLinks();
-    } else {
-        if (topologyState.pinnedLinkNodeId) {
-            revealDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
-        }
-        // Always show down/red links so operators see problems
-        revealDownDiscoveryLinks();
+    } else if (topologyState.pinnedLinkNodeId) {
+        revealDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
     }
     refreshPinnedLinkTooltip();
     renderTopologyDrawer();
@@ -5532,18 +5575,9 @@ function revealDiscoveryLinksForEntity(entityId) {
 
 function hideDiscoveryLinksForEntity(entityId) {
     getDiscoveryLinksForEntity(entityId).forEach((el) => {
-        // Don't hide down/red links — they should always stay visible
-        if (el.classList.contains("topology-link-down")) return;
         el.classList.remove("is-link-revealed", "is-link-flashing", "is-link-fading");
     });
     getDiscoveryHitareasForEntity(entityId).forEach((el) => {
-        // Check if the corresponding link line is down
-        const linkId = el.getAttribute("data-topology-link-id");
-        const svg = el.closest("svg");
-        if (linkId && svg) {
-            const line = svg.querySelector(`.topology-link-discovery[data-topology-link-id="${CSS.escape(linkId)}"]`);
-            if (line && line.classList.contains("topology-link-down")) return;
-        }
         el.classList.remove("is-link-revealed");
     });
 }
@@ -5552,16 +5586,9 @@ function hideAllDiscoveryLinks() {
     const svg = document.getElementById("topology-links");
     if (!svg) return;
     svg.querySelectorAll(".topology-link-discovery.is-link-revealed").forEach((el) => {
-        // Don't hide down/red links
-        if (el.classList.contains("topology-link-down")) return;
         el.classList.remove("is-link-revealed", "is-link-flashing", "is-link-fading");
     });
     svg.querySelectorAll('.topology-link-hitarea[data-link-kind="discovery"].is-link-revealed').forEach((el) => {
-        const linkId = el.getAttribute("data-topology-link-id");
-        if (linkId) {
-            const line = svg.querySelector(`.topology-link-discovery[data-topology-link-id="${CSS.escape(linkId)}"]`);
-            if (line && line.classList.contains("topology-link-down")) return;
-        }
         el.classList.remove("is-link-revealed");
     });
 }
@@ -5578,20 +5605,6 @@ function revealAllDiscoveryLinks() {
     });
 }
 
-function revealDownDiscoveryLinks() {
-    const svg = document.getElementById("topology-links");
-    if (!svg) return;
-    svg.querySelectorAll(".topology-link-discovery.topology-link-down").forEach((el) => {
-        el.classList.remove("is-link-flashing", "is-link-fading");
-        el.classList.add("is-link-revealed");
-        // Also reveal the hitarea for this link
-        const linkId = el.getAttribute("data-topology-link-id");
-        if (linkId) {
-            const hitarea = svg.querySelector(`.topology-link-hitarea[data-topology-link-id="${CSS.escape(linkId)}"]`);
-            if (hitarea) hitarea.classList.add("is-link-revealed");
-        }
-    });
-}
 
 function flashDiscoveryLinksForEntity(entityId) {
     const lines = getDiscoveryLinksForEntity(entityId);
@@ -5603,12 +5616,7 @@ function flashDiscoveryLinksForEntity(entityId) {
     const timer = setTimeout(() => {
         lines.forEach((el) => {
             el.classList.remove("is-link-flashing");
-            // Down links stay revealed instead of fading
-            if (el.classList.contains("topology-link-down")) {
-                el.classList.add("is-link-revealed");
-            } else {
-                el.classList.add("is-link-fading");
-            }
+            el.classList.add("is-link-fading");
         });
         const fadeTimer = setTimeout(() => {
             lines.forEach((el) => {
