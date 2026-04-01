@@ -5720,6 +5720,8 @@ async function loadTopologyPage() {
         return;
     }
 
+    const submapViewId = root.getAttribute("data-map-view-id") || null;
+
     startTopologyTimers();
     initTopologyLinkContextMenu();
 
@@ -5735,7 +5737,11 @@ async function loadTopologyPage() {
         if (topologyResult.status !== "fulfilled") {
             throw topologyResult.reason;
         }
-        topologyPayload = topologyResult.value;
+        if (submapViewId) {
+            topologyPayload = { lvl0_nodes: [], lvl1_nodes: [], lvl2_clusters: [], submaps: [], links: [] };
+        } else {
+            topologyPayload = topologyResult.value;
+        }
         topologyDiscoveryPayload = discoveryResult.status === "fulfilled"
             ? discoveryResult.value
             : { anchors: [], discovered: [], relationships: [], summary: {} };
