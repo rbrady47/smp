@@ -5743,13 +5743,31 @@ function wireTopologyLayoutControls() {
     if (resetButton && resetButton.dataset.bound !== "true") {
         resetButton.dataset.bound = "true";
         resetButton.addEventListener("click", () => {
-            const confirmed = window.confirm("Revert the current topology layout changes? This will reset saved bubble and widget positions.");
-            if (!confirmed) {
-                return;
+            const root = document.getElementById("topology-root");
+            const submapViewId = root?.getAttribute("data-map-view-id");
+            if (submapViewId) {
+                const confirmed = window.confirm("Reset submap layout? This only affects positions on this submap.");
+                if (!confirmed) {
+                    return;
+                }
+                const submapPrefixes = ["map-obj-", "dn-"];
+                const nextOverrides = { ...(topologyState.layoutOverrides || {}) };
+                for (const key of Object.keys(nextOverrides)) {
+                    if (submapPrefixes.some((p) => key.startsWith(p))) {
+                        delete nextOverrides[key];
+                    }
+                }
+                topologyState.layoutOverrides = nextOverrides;
+                saveTopologyLayoutOverrides();
+            } else {
+                const confirmed = window.confirm("Revert the current topology layout changes? This will reset saved bubble and widget positions.");
+                if (!confirmed) {
+                    return;
+                }
+                clearTopologyLayoutOverrides();
+                topologyState.stateLogLayout = null;
+                saveTopologyStateLogLayout();
             }
-            clearTopologyLayoutOverrides();
-            topologyState.stateLogLayout = null;
-            saveTopologyStateLogLayout();
             renderTopologyStage();
         });
     }
