@@ -41,7 +41,7 @@ class NodeDashboardBackend:
         self.build_detail_payload = build_detail_payload
         self.logger = logger or logging.getLogger(__name__)
 
-        self.discovered_probe_ttl_seconds = 300.0
+        self.discovered_probe_ttl_seconds = 5.0
         self.discovered_ping_ttl_seconds = 5.0
         self.discovered_ping_memory_hours = 24
         self.projection_refresh_seconds = 5.0
