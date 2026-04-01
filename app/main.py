@@ -1662,7 +1662,14 @@ async def get_submap_discovery(
     for inv_node in all_inventory_nodes:
         if inv_node.node_id:
             inventory_site_ids.add(inv_node.node_id)
+            inventory_site_ids.add(inv_node.node_id.lower())
         inventory_site_ids.add(str(inv_node.id))
+        # Also check the seeker_detail_cache for the real site_id from config
+        inv_detail = seeker_detail_cache.get(inv_node.id) or {}
+        inv_config = inv_detail.get("config_summary") if isinstance(inv_detail.get("config_summary"), dict) else {}
+        cfg_site_id = str(inv_config.get("site_id") or "").strip()
+        if cfg_site_id:
+            inventory_site_ids.add(cfg_site_id)
 
     discovered_peers: list[dict[str, object]] = []
     seen_site_ids: set[str] = set()
@@ -1678,7 +1685,7 @@ async def get_submap_discovery(
             if not _tunnel_row_is_eligible(row):
                 continue
             mate_site_id = str(row.get("mate_site_id") or "").strip()
-            if not mate_site_id or mate_site_id in inventory_site_ids or mate_site_id in seen_site_ids:
+            if not mate_site_id or mate_site_id in inventory_site_ids or mate_site_id.lower() in inventory_site_ids or mate_site_id in seen_site_ids:
                 continue
             mate_ip = str(row.get("mate_ip") or "").strip()
             mate_name = str(row.get("site_name") or row.get("mate_site_name") or "").strip() or mate_site_id
@@ -1701,6 +1708,7 @@ async def get_submap_discovery(
         "map_view_id": map_view_id,
         "anchor_count": len(anchor_nodes),
         "discovered_peers": discovered_peers,
+        "debug_inventory_site_ids": sorted(inventory_site_ids),
     }
 
 
