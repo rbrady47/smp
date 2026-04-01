@@ -5124,7 +5124,7 @@ async function refreshSubmapDiscovery(submapViewId) {
                 const distance = 140 + Math.random() * 80;
                 const x = Math.round(sourceLayout.x + Math.cos(angle) * distance);
                 const y = Math.round(sourceLayout.y + Math.sin(angle) * distance);
-                setTopologyEntityLayout(dn.id, { x: Math.max(40, x), y: Math.max(40, y), size: 72 }, { persist: false });
+                setTopologyEntityLayout(dn.id, { x: Math.max(40, x), y: Math.max(40, y), size: 72 });
             }
         });
     } catch (error) {
@@ -5976,7 +5976,7 @@ async function loadTopologyPage() {
                 .map(buildSubmapEntityFromMapObject);
             submapEntities.forEach((entity) => {
                 if (!topologyState.layoutOverrides?.[entity.id]) {
-                    setTopologyEntityLayout(entity.id, { x: entity.x, y: entity.y, size: 96 }, { persist: false });
+                    setTopologyEntityLayout(entity.id, { x: entity.x, y: entity.y, size: 96 });
                 }
             });
             topologyPayload = { lvl0_nodes: submapEntities, lvl1_nodes: [], lvl2_clusters: [], submaps: [], links: [] };
