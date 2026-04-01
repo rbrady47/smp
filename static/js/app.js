@@ -4430,6 +4430,10 @@ function renderTopologyStage() {
                 topologyState.selectedKind = "entity";
                 topologyState.selectedId = nextId;
             }
+            if (nextEntity?.kind === "submap") {
+                syncTopologyEntitySelectionStyles(layer);
+                return;
+            }
             renderTopologyStage();
         });
         button.addEventListener("contextmenu", (event) => {
