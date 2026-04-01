@@ -1886,9 +1886,17 @@ a {
         linear-gradient(180deg, rgba(18, 34, 58, 0.98) 0%, rgba(12, 26, 46, 0.98) 100%);
 }
 
-.topology-discovered .topology-node-meta {
-    font-size: 0.65rem;
-    opacity: 0.75;
+.topology-discovered .topology-node-icon {
+    width: 1.22rem;
+    height: 1.22rem;
+}
+
+.topology-discovered .topology-node-name {
+    font-size: 0.6rem;
+    max-width: 60px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .topology-submap {

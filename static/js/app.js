@@ -4196,7 +4196,9 @@ function renderTopologyStage() {
                 : isCluster
                 ? "Edge Nodes"
                 : escapeHtml(entity.node_id || entity.site_id || "--");
-            const displayName = escapeHtml(getTopologyEntityLabel(entity));
+            const displayName = isDiscovered
+                ? escapeHtml(entity.site_id || entity.node_id || entity.name)
+                : escapeHtml(getTopologyEntityLabel(entity));
             const clusterUpCount = isCluster
                 ? getEffectiveTopologyClusterUpCount(entity.unit, clusterStatusCounts.upByUnit.get(entity.unit) || 0)
                 : 0;
@@ -4258,7 +4260,7 @@ function renderTopologyStage() {
                 >
                     ${nodeIcon}
                     <span class="topology-node-name">${displayName}</span>
-                    ${isServiceCloud ? "" : `<span class="topology-node-meta">${subtitle}</span>`}
+                    ${(isServiceCloud || isDiscovered) ? "" : `<span class="topology-node-meta">${subtitle}</span>`}
                     ${clusterFooter}
                     ${hoverPanel}
                     ${anchorPoints}
@@ -5132,7 +5134,7 @@ async function refreshSubmapDiscovery(submapViewId) {
                     const distance = 200 + count * 15;
                     const x = Math.round(sourceLayout.x + Math.cos(angle) * distance);
                     const y = Math.round(sourceLayout.y + Math.sin(angle) * distance);
-                    setTopologyEntityLayout(dn.id, { x: Math.max(40, x), y: Math.max(40, y), size: 72 });
+                    setTopologyEntityLayout(dn.id, { x: Math.max(40, x), y: Math.max(40, y), size: 48 });
                 }
             });
         }
