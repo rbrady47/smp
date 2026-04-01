@@ -1354,28 +1354,29 @@ a {
 /* Discovery links: hidden by default, revealed on hover/pin/flash */
 .topology-link-discovery,
 .topology-link-hitarea[data-link-kind="discovery"] {
-    opacity: 0;
+    opacity: 0 !important;
     pointer-events: none;
     transition: opacity 0.4s ease;
-    animation: none;  /* Override down-pulse so hidden links stay hidden */
+    animation: none !important;
 }
 .topology-link-discovery.is-link-revealed,
 .topology-link-hitarea[data-link-kind="discovery"].is-link-revealed {
-    opacity: 0.72;
+    opacity: 0.72 !important;
     pointer-events: stroke;
 }
 .topology-link-discovery.is-link-revealed.topology-link-down {
-    animation: topology-link-down-pulse 2.2s ease-in-out infinite;
+    animation: topology-link-down-pulse 2.2s ease-in-out infinite !important;
 }
 .topology-link-discovery.is-link-flashing {
-    opacity: 0.85;
+    opacity: 0.85 !important;
     pointer-events: none;
     transition: opacity 0.3s ease;
-    animation: none;  /* Suppress down-pulse during flash */
+    animation: none !important;
 }
 .topology-link-discovery.is-link-fading {
-    opacity: 0;
+    opacity: 0 !important;
     pointer-events: none;
+    animation: none !important;
     transition: opacity 1.5s ease;
 }
 .topology-link.is-selected {
