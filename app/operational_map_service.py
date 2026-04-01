@@ -242,6 +242,11 @@ def _resolve_node_binding_key(node_site_id: str, db: Session) -> str:
     if anchor is not None:
         return f"anchor:{anchor.id}"
 
+    if node_site_id.isdigit():
+        anchor_by_id = db.get(Node, int(node_site_id))
+        if anchor_by_id is not None:
+            return f"anchor:{anchor_by_id.id}"
+
     discovered = db.get(DiscoveredNode, node_site_id)
     if discovered is not None:
         return f"discovered:{discovered.site_id}"
