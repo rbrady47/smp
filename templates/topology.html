@@ -57,7 +57,11 @@
                         <button type="button" class="button-secondary" id="open-topology-inventory-button">
                             Inventory
                         </button>
-                        {% if not map_view_id %}
+                        {% if map_view_id %}
+                        <button type="button" class="button-secondary" id="submap-add-node-button" hidden>
+                            Add Node
+                        </button>
+                        {% else %}
                         <button type="button" class="button-secondary" id="topology-create-submap-button" hidden>
                             Create Submap
                         </button>
@@ -93,6 +97,18 @@
                         </button>
                     </div>
                 </div>
+                {% if map_view_id %}
+                <div class="submap-add-node-panel" id="submap-add-node-panel" hidden>
+                    <div class="submap-add-node-header">
+                        <strong>Add Node</strong>
+                        <button type="button" class="button-secondary submap-add-node-close" id="submap-add-node-close">&times;</button>
+                    </div>
+                    <p class="section-copy">Click a node to place it on the canvas.</p>
+                    <div class="submap-add-node-list" id="submap-add-node-list">
+                        <p class="table-message">Loading...</p>
+                    </div>
+                </div>
+                {% endif %}
                 <div class="topology-stage" id="topology-stage">
                     <svg class="topology-links" id="topology-links" aria-hidden="true"></svg>
                     <div class="topology-selection-box" id="topology-selection-box" hidden></div>

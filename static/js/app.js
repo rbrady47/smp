@@ -63,6 +63,7 @@ const TOPOLOGY_LOCATION_ALIASES = {
     epis: "Episodic",
 };
 let topologyPayload = null;
+let topologySubmapDetail = null;
 let topologyDiscoveryPayload = { anchors: [], discovered: [], relationships: [], summary: {} };
 let topologyNodeDashboardPayload = { anchors: [], discovered: [] };
 let topologyDashboardServicesPayload = { summary: {}, services: [] };
@@ -1121,6 +1122,16 @@ function setTopologyEditMode(editMode) {
     const createSubmapButton = document.getElementById("topology-create-submap-button");
     if (createSubmapButton) {
         createSubmapButton.hidden = !topologyState.editMode;
+    }
+    const addNodeButton = document.getElementById("submap-add-node-button");
+    if (addNodeButton) {
+        addNodeButton.hidden = !topologyState.editMode;
+    }
+    if (!topologyState.editMode) {
+        const addNodePanel = document.getElementById("submap-add-node-panel");
+        if (addNodePanel) {
+            addNodePanel.hidden = true;
+        }
     }
     if (layer) {
         syncTopologyEntitySelectionStyles(layer);
@@ -4951,6 +4962,95 @@ async function refreshTopologyData() {
     }
 }
 
+function renderSubmapAddNodeList() {
+    const listEl = document.getElementById("submap-add-node-list");
+    if (!listEl) {
+        return;
+    }
+    const availableNodes = topologySubmapDetail?.available_nodes ?? [];
+    const placedSiteIds = new Set(
+        (topologyPayload?.lvl0_nodes ?? []).map((e) => e.site_id).filter(Boolean)
+    );
+    const unplaced = availableNodes.filter((n) => !placedSiteIds.has(n.site_id));
+    if (unplaced.length === 0) {
+        listEl.innerHTML = '<p class="table-message">All inventory nodes have been placed.</p>';
+        return;
+    }
+    listEl.innerHTML = unplaced.map((node) => `
+        <button type="button" class="submap-add-node-item" data-site-id="${escapeHtml(node.site_id)}" data-display-name="${escapeHtml(node.display_name)}" data-binding-key="${escapeHtml(node.binding_key || "")}">
+            <strong>${escapeHtml(node.display_name)}</strong>
+            <span class="submap-add-node-meta">${escapeHtml(node.site_id)}${node.location ? " · " + escapeHtml(node.location) : ""}</span>
+        </button>
+    `).join("");
+    listEl.querySelectorAll(".submap-add-node-item").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            placeSubmapNode(
+                btn.getAttribute("data-site-id"),
+                btn.getAttribute("data-display-name"),
+                btn.getAttribute("data-binding-key"),
+            );
+        });
+    });
+}
+
+async function placeSubmapNode(siteId, displayName, bindingKey) {
+    const root = document.getElementById("topology-root");
+    const submapViewId = root?.getAttribute("data-map-view-id");
+    if (!submapViewId) {
+        return;
+    }
+    const stage = document.getElementById("topology-stage");
+    const x = 100 + Math.round(Math.random() * Math.max((stage?.clientWidth || 800) - 300, 200));
+    const y = 100 + Math.round(Math.random() * Math.max((stage?.clientHeight || 600) - 300, 200));
+    try {
+        const response = await fetch(`/api/topology/maps/${encodeURIComponent(submapViewId)}/objects`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                map_view_id: Number(submapViewId),
+                object_type: "node",
+                label: displayName,
+                node_site_id: siteId,
+                binding_key: bindingKey || null,
+                x: x,
+                y: y,
+            }),
+        });
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => null);
+            window.alert("Failed to place node: " + (errorData?.detail || response.statusText));
+            return;
+        }
+        const created = await response.json();
+        const entityId = `map-obj-${created.id}`;
+        const entity = {
+            id: entityId,
+            map_object_id: created.id,
+            name: displayName,
+            node_id: siteId,
+            site_id: siteId,
+            kind: "anchor",
+            level: 0,
+            x: x,
+            y: y,
+            width: 160,
+            height: 96,
+            status: "unknown",
+            binding_key: bindingKey || null,
+        };
+        if (!topologyPayload.lvl0_nodes) {
+            topologyPayload.lvl0_nodes = [];
+        }
+        topologyPayload.lvl0_nodes.push(entity);
+        setTopologyEntityLayout(entityId, { x: x, y: y, size: 96 });
+        renderSubmapAddNodeList();
+        renderTopologyStage();
+    } catch (error) {
+        console.error("Failed to place node on submap:", error);
+        window.alert("Failed to place node.");
+    }
+}
+
 async function createTopologyLink(sourceEntityId, sourceAnchor, targetEntityId, targetAnchor) {
     try {
         const response = await fetch("/api/topology/links", {
@@ -5653,6 +5753,29 @@ function wireTopologyLayoutControls() {
         });
     }
 
+    const addNodeButton = document.getElementById("submap-add-node-button");
+    const addNodePanel = document.getElementById("submap-add-node-panel");
+    const addNodeClose = document.getElementById("submap-add-node-close");
+    if (addNodeButton && addNodeButton.dataset.bound !== "true") {
+        addNodeButton.dataset.bound = "true";
+        addNodeButton.addEventListener("click", () => {
+            if (addNodePanel) {
+                addNodePanel.hidden = !addNodePanel.hidden;
+                if (!addNodePanel.hidden) {
+                    renderSubmapAddNodeList();
+                }
+            }
+        });
+    }
+    if (addNodeClose && addNodeClose.dataset.bound !== "true") {
+        addNodeClose.dataset.bound = "true";
+        addNodeClose.addEventListener("click", () => {
+            if (addNodePanel) {
+                addNodePanel.hidden = true;
+            }
+        });
+    }
+
     if (fullscreenButton && fullscreenButton.dataset.bound !== "true") {
         fullscreenButton.dataset.bound = "true";
         fullscreenButton.addEventListener("click", async () => {
@@ -5742,7 +5865,31 @@ async function loadTopologyPage() {
             throw topologyResult.reason;
         }
         if (submapViewId) {
-            topologyPayload = { lvl0_nodes: [], lvl1_nodes: [], lvl2_clusters: [], submaps: [], links: [] };
+            const submapResult = await apiRequest(`/api/topology/maps/${encodeURIComponent(submapViewId)}`);
+            topologySubmapDetail = submapResult;
+            const submapEntities = (submapResult?.objects ?? [])
+                .filter((obj) => obj.object_type === "node")
+                .map((obj) => ({
+                    id: `map-obj-${obj.id}`,
+                    map_object_id: obj.id,
+                    name: obj.label || obj.node_site_id || "Node",
+                    node_id: obj.node_site_id,
+                    site_id: obj.node_site_id,
+                    kind: "anchor",
+                    level: 0,
+                    x: obj.x,
+                    y: obj.y,
+                    width: obj.width || 160,
+                    height: obj.height || 96,
+                    status: "unknown",
+                    binding_key: obj.binding_key,
+                }));
+            submapEntities.forEach((entity) => {
+                if (!topologyState.layoutOverrides?.[entity.id]) {
+                    setTopologyEntityLayout(entity.id, { x: entity.x, y: entity.y, size: 96 }, { persist: false });
+                }
+            });
+            topologyPayload = { lvl0_nodes: submapEntities, lvl1_nodes: [], lvl2_clusters: [], submaps: [], links: [] };
         } else {
             topologyPayload = topologyResult.value;
         }

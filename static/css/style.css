@@ -1014,6 +1014,7 @@ a {
 }
 
 .topology-stage-card {
+    position: relative;
     overflow: hidden;
 }
 
@@ -1898,6 +1899,78 @@ a {
 .topology-submap .topology-node-icon svg {
     width: 28px;
     height: 28px;
+}
+
+.submap-add-node-panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 280px;
+    max-height: 100%;
+    overflow-y: auto;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    padding: 0.75rem;
+    gap: 0.5rem;
+}
+
+.submap-add-node-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.submap-add-node-header strong {
+    font-size: 0.9rem;
+}
+
+.submap-add-node-close {
+    padding: 0.15rem 0.45rem;
+    font-size: 1.1rem;
+    line-height: 1;
+    min-width: 0;
+}
+
+.submap-add-node-panel .section-copy {
+    font-size: 0.78rem;
+    margin: 0;
+}
+
+.submap-add-node-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.submap-add-node-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    padding: 0.5rem 0.65rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-alt);
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+    color: var(--text);
+    transition: border-color 0.15s;
+}
+
+.submap-add-node-item:hover {
+    border-color: var(--accent);
+}
+
+.submap-add-node-item strong {
+    font-size: 0.82rem;
+}
+
+.submap-add-node-meta {
+    font-size: 0.72rem;
+    color: var(--muted);
 }
 
 .topology-cluster {
