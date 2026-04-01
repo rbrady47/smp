@@ -827,6 +827,34 @@ async def seeker_polling_loop() -> None:
                         "cached_at": datetime.now(timezone.utc).isoformat(),
                     }
 
+            # Backfill node_id from Seeker config_summary.site_id for nodes
+            # that don't have it set — makes the inventory exclusion filter
+            # work reliably even on cold starts before the cache populates.
+            backfill_needed = []
+            for node in enabled_nodes:
+                if node.node_id:
+                    continue
+                detail = seeker_detail_cache.get(node.id) or {}
+                cfg = detail.get("config_summary") if isinstance(detail.get("config_summary"), dict) else {}
+                cfg_site_id = str(cfg.get("site_id") or "").strip()
+                if cfg_site_id and cfg_site_id != "--":
+                    backfill_needed.append((node.id, cfg_site_id))
+
+            if backfill_needed:
+                bdb = SessionLocal()
+                try:
+                    for node_id_pk, site_id_val in backfill_needed:
+                        db_node = bdb.get(Node, node_id_pk)
+                        if db_node and not db_node.node_id:
+                            db_node.node_id = site_id_val
+                            logger.info("Backfilled node_id=%s for Node.id=%d", site_id_val, node_id_pk)
+                    bdb.commit()
+                except Exception:
+                    logger.exception("Failed to backfill node_id values")
+                    bdb.rollback()
+                finally:
+                    bdb.close()
+
         await asyncio.sleep(SEEKER_POLL_INTERVAL_SECONDS)
 
 
@@ -907,9 +935,7 @@ async def dn_seeker_polling_loop() -> None:
             )
 
         tasks = []
-        task_site_ids = []
         for site_id, (source_node, host, level, parent_sid, parent_name) in probe_targets.items():
-            task_site_ids.append(site_id)
             tasks.append(
                 probe_discovered_node_detail(
                     source_node,
@@ -921,20 +947,8 @@ async def dn_seeker_polling_loop() -> None:
                 )
             )
 
-        logger.info(
-            "DN poll: %d DB rows, %d cache entries, %d probe targets: %s",
-            len(dns), len(node_dashboard_backend.discovered_node_cache),
-            len(tasks), ", ".join(task_site_ids[:20]),
-        )
-
         if tasks:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for sid, result in zip(task_site_ids, results):
-                if isinstance(result, Exception):
-                    logger.warning("DN poll probe failed for %s: %s", sid, result)
-                elif isinstance(result, dict):
-                    has_tunnels = bool(result.get("detail", {}).get("tunnels") if isinstance(result.get("detail"), dict) else False)
-                    logger.info("DN poll probed %s ok (has_tunnels=%s)", sid, has_tunnels)
+            await asyncio.gather(*tasks, return_exceptions=True)
 
         await asyncio.sleep(DN_SEEKER_POLL_INTERVAL_SECONDS)
 
@@ -1873,16 +1887,32 @@ async def get_submap_discovery(
     # Exclude ALL inventory nodes from discovery, not just placed ones
     all_inventory_nodes = db.scalars(select(Node)).all()
     inventory_site_ids: set[str] = set()
+    inventory_hosts: set[str] = set()  # for reverse-matching tunnel mates to ANs
     for inv_node in all_inventory_nodes:
         if inv_node.node_id:
             inventory_site_ids.add(inv_node.node_id)
             inventory_site_ids.add(inv_node.node_id.lower())
         inventory_site_ids.add(str(inv_node.id))
+        if inv_node.host:
+            inventory_hosts.add(str(inv_node.host).strip().lower())
         inv_detail = seeker_detail_cache.get(inv_node.id) or {}
         inv_config = inv_detail.get("config_summary") if isinstance(inv_detail.get("config_summary"), dict) else {}
         cfg_site_id = str(inv_config.get("site_id") or "").strip()
         if cfg_site_id:
             inventory_site_ids.add(cfg_site_id)
+
+    # Second pass: scan all cached AN tunnel data for mates whose IP matches
+    # a registered AN host — add their site_id to the exclusion set.
+    # This catches ANs that lack node_id and haven't been polled yet.
+    for inv_node in all_inventory_nodes:
+        inv_detail = seeker_detail_cache.get(inv_node.id) or {}
+        for tun in (inv_detail.get("tunnels") or []):
+            if not isinstance(tun, dict):
+                continue
+            mate_ip = str(tun.get("mate_ip") or "").strip().lower()
+            mate_sid = str(tun.get("mate_site_id") or "").strip()
+            if mate_ip and mate_ip in inventory_hosts and mate_sid:
+                inventory_site_ids.add(mate_sid)
 
     discovered_peers: list[dict[str, object]] = []
     seen_site_ids: dict[str, int] = {}  # site_id -> owning anchor node.id
