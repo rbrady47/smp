@@ -1887,14 +1887,14 @@ a {
 }
 
 .topology-discovered .topology-node-icon {
-    width: 0.85rem;
-    height: 0.85rem;
+    width: 1.06rem;
+    height: 1.06rem;
 }
 
 .topology-discovered .topology-node-name {
-    font-size: 0.5rem;
+    font-size: 0.625rem;
     line-height: 1.1;
-    max-width: 48px;
+    max-width: 60px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
