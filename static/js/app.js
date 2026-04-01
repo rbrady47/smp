@@ -5352,7 +5352,7 @@ async function refreshSubmapDiscovery(submapViewId) {
                 setTopologyEntityLayout(dn.id, { x: Math.max(margin, x), y: Math.max(topBound, y), size: dnSize });
             });
         }
-        // Build discovery links (AN↔DN tunnel connections)
+        // Build discovery links (AN↔DN and DN↔DN tunnel connections)
         const placedEntities = topologyPayload.lvl0_nodes ?? [];
         const rawLinks = result?.discovery_links ?? [];
         const anchorEntityMap = new Map();
@@ -5361,13 +5361,34 @@ async function refreshSubmapDiscovery(submapViewId) {
                 anchorEntityMap.set(String(e.inventory_node_id), e.id);
             }
         });
+        const dnEntityIds = new Set(discoveredEntities.map((dn) => dn.id));
         const discoveryLinks = rawLinks
             .map((link, i) => {
-                const fromEntityId = anchorEntityMap.get(String(link.source_anchor_id));
                 const toEntityId = `dn-${link.target_site_id}`;
+                if (!dnEntityIds.has(toEntityId)) return null;
+
+                // DN↔DN link: from is a DN entity
+                if (link.kind === "dn-dn" && link.source_dn_site_id) {
+                    const fromEntityId = `dn-${link.source_dn_site_id}`;
+                    if (!dnEntityIds.has(fromEntityId)) return null;
+                    if (fromEntityId === toEntityId) return null; // self-link guard
+                    return {
+                        id: `discovery-link-${i}`,
+                        from: fromEntityId,
+                        to: toEntityId,
+                        source_anchor: "s",
+                        target_anchor: "n",
+                        link_type: "dotted",
+                        kind: "discovery",
+                        status: link.status || "neutral",
+                        status_node_id: link.source_anchor_id || null,
+                        target_site_id: link.target_site_id,
+                    };
+                }
+
+                // AN↔DN link: from is an anchor entity
+                const fromEntityId = anchorEntityMap.get(String(link.source_anchor_id));
                 if (!fromEntityId) return null;
-                // Only create link if the DN entity exists
-                if (!discoveredEntities.some((dn) => dn.id === toEntityId)) return null;
                 return {
                     id: `discovery-link-${i}`,
                     from: fromEntityId,
@@ -5382,7 +5403,15 @@ async function refreshSubmapDiscovery(submapViewId) {
                 };
             })
             .filter(Boolean);
-        topologyPayload.links = discoveryLinks;
+        // Deduplicate: if A→B and B→A both exist, keep only one
+        const seenLinkPairs = new Set();
+        const dedupedLinks = discoveryLinks.filter((link) => {
+            const pairKey = [link.from, link.to].sort().join("::");
+            if (seenLinkPairs.has(pairKey)) return false;
+            seenLinkPairs.add(pairKey);
+            return true;
+        });
+        topologyPayload.links = dedupedLinks;
 
         // Detect DN status changes and flash links
         const currentDnStates = {};

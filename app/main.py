@@ -1887,6 +1887,62 @@ async def get_submap_discovery(
                 "rx_rate": rx_rate,
             })
 
+    # --- Second-hop: DN-to-DN discovery from cached DN tunnel data ---
+    # For each first-hop DN, check its cached detail for tunnels to other DNs
+    first_hop_site_ids = set(seen_site_ids.keys())
+    for first_hop_peer in list(discovered_peers):
+        fh_site_id = str(first_hop_peer["site_id"])
+        cached_dn = node_dashboard_backend.get_cached_discovered_node(fh_site_id)
+        if not cached_dn:
+            continue
+        dn_detail = cached_dn.get("detail") if isinstance(cached_dn.get("detail"), dict) else {}
+        dn_tunnels = [row for row in (dn_detail.get("tunnels") or []) if isinstance(row, dict)]
+        if not dn_tunnels:
+            continue
+
+        for row in dn_tunnels:
+            if not _tunnel_row_is_eligible(row):
+                continue
+            mate_site_id = str(row.get("mate_site_id") or "").strip()
+            if not mate_site_id or mate_site_id in inventory_site_ids or mate_site_id.lower() in inventory_site_ids:
+                continue
+            mate_ip = str(row.get("mate_ip") or "").strip()
+            mate_name = str(row.get("site_name") or row.get("mate_site_name") or "").strip() or mate_site_id
+            if not mate_ip or mate_ip == "--":
+                continue
+            ping_status = str(row.get("ping") or "").strip()
+            tx_rate = str(row.get("tx_rate") or "").strip()
+            rx_rate = str(row.get("rx_rate") or "").strip()
+
+            # Discover new second-hop peer if not already seen
+            if mate_site_id not in seen_site_ids:
+                owner_anchor_id = seen_site_ids.get(fh_site_id)
+                if owner_anchor_id is not None:
+                    seen_site_ids[mate_site_id] = owner_anchor_id
+                    discovered_peers.append({
+                        "site_id": mate_site_id,
+                        "name": mate_name,
+                        "host": mate_ip,
+                        "source_anchor_id": owner_anchor_id,
+                        "source_site_id": fh_site_id,
+                        "source_name": str(first_hop_peer.get("name") or fh_site_id),
+                        "ping": ping_status,
+                        "tx_rate": tx_rate,
+                        "rx_rate": rx_rate,
+                    })
+
+            # Create DN↔DN link if both endpoints are discovered
+            if mate_site_id in seen_site_ids:
+                discovery_links.append({
+                    "source_anchor_id": seen_site_ids.get(fh_site_id),
+                    "source_dn_site_id": fh_site_id,
+                    "target_site_id": mate_site_id,
+                    "kind": "dn-dn",
+                    "status": "healthy" if ping_status.lower() == "up" else "down",
+                    "tx_rate": tx_rate,
+                    "rx_rate": rx_rate,
+                })
+
     # Persist discovered nodes to database
     now = datetime.now(timezone.utc)
     for peer in discovered_peers:
