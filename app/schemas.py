@@ -189,6 +189,8 @@ class TopologyDiscoveryDiscoveredNode(BaseModel):
     ping: str = "Down"
     web_ok: bool = False
     ssh_ok: bool = False
+    rtt_state: str | None = None
+    latency_ms: int | float | None = None
 
 
 class TopologyDiscoveryRelationship(BaseModel):
