@@ -8,6 +8,68 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-01 — Session: DN polling, DN-DN links, discovery link visibility, AP coloring
+
+### Branch / commit
+- Branch: `claude/add-claude-documentation-Wax1r`
+- Commit: `063d1b2` — "Fix pinned discovery links flashing on every render cycle"
+- All commits pushed to origin
+
+### What was built this session
+
+**Pydantic schema fixes**
+- Added `rtt_state` and `latency_ms` to `TopologyDiscoveryDiscoveredNode` in `app/schemas.py` — fixed 500 errors on main map `/api/topology/discovery`
+- Added default `row_type`, `pin_key`, `detail_url` in `_normalize_discovered_row` in `app/node_dashboard_backend.py` — fixed all DN probes silently failing with `NodeDashboardDiscoveredRow` validation errors
+
+**DN Seeker API polling**
+- AN + DN poll intervals set to 5s (`SEEKER_POLL_INTERVAL_SECONDS`, `DN_SEEKER_POLL_INTERVAL_SECONDS`)
+- DN probe TTL lowered from 300s to 5s (`discovered_probe_ttl_seconds`)
+- `dn_seeker_polling_loop` now also iterates `discovered_node_cache` (in-memory), not just DB rows, so DNs get probed before the submap discovery endpoint persists them
+
+**AN inventory exclusion improvements**
+- `seeker_polling_loop` backfills `Node.node_id` from `config_summary.site_id` for ANs with NULL `node_id` — eliminates transient 4-5s window where ANs appear as DNs on cold starts
+- Discovery filter does host-based reverse matching: scans AN tunnel `mate_ip` against registered AN hosts to catch ANs without credentials or cache entries
+
+**Discovery link lifecycle — down tunnels**
+- New `_tunnel_row_exists()` in `app/node_discovery_service.py` — checks tunnel exists in S&T regardless of ping status
+- AN→DN and DN→DN loops use `_tunnel_row_exists` for link creation, `_tunnel_row_is_eligible` only for NEW peer discovery
+- Pre-seeds `seen_site_ids` from `discovered_nodes` DB so known-but-down peers still get links
+- Links only disappear when Seeker removes the tunnel from S&T entirely
+
+**Discovery link visibility system**
+- `visibility: hidden` (not just opacity) for hidden discovery links — prevents CSS animation override
+- `revealAllDiscoveryLinks()` shows all links in edit mode
+- `revealDownDiscoveryLinks()` removed (reverted approach)
+- Pinned/edit links pre-revealed at SVG creation time (`is-link-revealed` in class attr) to prevent flicker on render cycles
+- Mouseleave guarded in edit mode so links don't accidentally hide
+
+**AP (anchor point) coloring for down links**
+- `getDiscoveryWorstAnchorMap()` — worst-wins scoring for discovery links (down > degraded > healthy)
+- AP dots turn red if any connected discovery link is down, even if other links are healthy
+- Separate from `getTopologyConnectedAnchorMap` which uses best-wins for authored links
+
+**Edit mode discovery links**
+- All discovery links revealed when entering Edit Map mode
+- Hidden again (respecting pins) when leaving edit mode
+
+### Files touched
+- `app/main.py` — DN polling, AN backfill, discovery endpoint link logic
+- `app/node_dashboard_backend.py` — probe TTL, _normalize_discovered_row defaults
+- `app/node_discovery_service.py` — `_tunnel_row_exists()` function
+- `app/schemas.py` — TopologyDiscoveryDiscoveredNode fields
+- `app/topology.py` — (unchanged, referenced for context)
+- `static/js/app.js` — discovery link visibility, AP coloring, pre-reveal, edit mode
+- `static/css/style.css` — visibility:hidden approach, down-pulse animation scoping
+
+### Known gaps / next steps
+- **P5.2.6**: 24hr Timeout & Reappear Logic — stale DNs disappear, re-discovered come back
+- **Cleanup**: Site 42 (HubASC-698042-ISKR) not showing on submap despite being in tunnel list
+- **Cleanup**: DN debug logging still at debug level (appropriate)
+- **NSL**: Removed from topology/submaps (HTML commented out) — planned for main dashboard later
+- **Main map discovery**: Fixed Pydantic error but main map `/api/topology/discovery` still uses `TopologyDiscoveryPayload` model (submap returns plain dict)
+
+---
+
 ## 2026-03-30 — Session handoff (Claudius v0.1.1)
 
 ### Branch / commit
