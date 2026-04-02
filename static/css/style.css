@@ -1973,10 +1973,14 @@ a {
 }
 
 .topology-submap .topology-node-name {
-    order: -1;
     font-size: 0.78rem;
     font-weight: 600;
     letter-spacing: 0.02em;
+    color: rgba(180, 220, 255, 0.92);
+}
+
+.topology-submap .topology-node-icon {
+    margin-top: auto;
 }
 
 .topology-submap .topology-node-icon svg {
