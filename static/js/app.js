@@ -4404,19 +4404,18 @@ function renderTopologyStage() {
                 `;
             }).join("");
 
-            // Apply cached DN counts if this submap entity hasn't been verified yet
-            if (isSubmap && !entity._dnCountsVerified) {
+            // Apply cached DN counts from last discovery fetch if available
+            if (isSubmap && entity.map_view_id) {
                 const cached = _submapDnCountCache.get(entity.map_view_id);
                 if (cached) {
                     entity.dn_up = cached.dn_up;
                     entity.dn_down = cached.dn_down;
                     entity.dn_up_names = cached.dn_up_names;
                     entity.dn_down_names = cached.dn_down_names;
-                    entity._dnCountsVerified = true;
                 }
             }
 
-            const submapDnCounters = isSubmap && entity._dnCountsVerified
+            const submapDnCounters = isSubmap
                 ? `<span class="topology-submap-dn-counts">${
                     (entity.dn_up || 0) > 0 ? `<span class="topology-submap-dn-up" data-dn-names="${escapeHtml((entity.dn_up_names || []).join(','))}">${entity.dn_up}</span>` : ""
                 }${
@@ -7017,7 +7016,6 @@ async function refreshTopologyPage() {
                         sm.dn_down = downNames.length;
                         sm.dn_up_names = upNames;
                         sm.dn_down_names = downNames;
-                        sm._dnCountsVerified = true;
                         _submapDnCountCache.set(sm.map_view_id, {
                             dn_up: sm.dn_up, dn_down: sm.dn_down,
                             dn_up_names: upNames, dn_down_names: downNames,
