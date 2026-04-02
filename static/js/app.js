@@ -6978,6 +6978,36 @@ async function refreshTopologyPage() {
         if (topologyPayload) {
             renderTopologyControls();
             renderTopologyStage();
+
+            // Fetch accurate DN counts from discovery endpoints for each submap
+            const submaps = topologyPayload.submaps ?? [];
+            if (submaps.length > 0) {
+                const countPromises = submaps.map(async (sm) => {
+                    try {
+                        const disc = await apiRequest(`/api/topology/maps/${encodeURIComponent(sm.map_view_id)}/discovery`);
+                        const peers = disc?.discovered_peers ?? [];
+                        const placedSiteIds = new Set(
+                            (topologyPayload.lvl0_nodes ?? []).map((e) => e.site_id).filter(Boolean)
+                        );
+                        const upNames = [];
+                        const downNames = [];
+                        for (const p of peers) {
+                            if (placedSiteIds.has(p.site_id)) continue;
+                            if ((p.ping || "").toLowerCase() === "up") {
+                                upNames.push(p.site_id);
+                            } else {
+                                downNames.push(p.site_id);
+                            }
+                        }
+                        sm.dn_up = upNames.length;
+                        sm.dn_down = downNames.length;
+                        sm.dn_up_names = upNames;
+                        sm.dn_down_names = downNames;
+                    } catch (_e) { /* keep backend counts as fallback */ }
+                });
+                await Promise.allSettled(countPromises);
+                renderTopologyStage();
+            }
         }
         markTopologyLastUpdated();
     } catch (error) {
