@@ -5144,8 +5144,8 @@ function getTopologySubmapIconMarkup(entity) {
             <svg viewBox="0 0 96 58" focusable="false" preserveAspectRatio="xMidYMid meet">
                 <defs>
                     <radialGradient id="submap-node-glow">
-                        <stop offset="0%" stop-color="currentColor" stop-opacity="0.9"></stop>
-                        <stop offset="50%" stop-color="currentColor" stop-opacity="0.4"></stop>
+                        <stop offset="0%" stop-color="currentColor" stop-opacity="0.4"></stop>
+                        <stop offset="50%" stop-color="currentColor" stop-opacity="0.15"></stop>
                         <stop offset="100%" stop-color="currentColor" stop-opacity="0"></stop>
                     </radialGradient>
                 </defs>

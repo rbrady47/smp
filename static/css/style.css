@@ -1944,7 +1944,7 @@ a {
 }
 
 .topology-submap {
-    min-width: 160px;
+    min-width: 192px;
     padding: 0.4rem 0.6rem 0.5rem;
     border-radius: 16px;
     border: 1.5px solid transparent !important;
@@ -2001,12 +2001,12 @@ a {
 
 .topology-submap-mesh-node {
     fill: #fff;
-    filter: drop-shadow(0 0 3px rgba(120, 220, 255, 0.9));
+    filter: drop-shadow(0 0 2px rgba(120, 220, 255, 0.4));
 }
 
 .topology-submap .topology-node-icon-submap {
-    color: rgba(60, 210, 255, 0.8);
-    filter: drop-shadow(0 0 8px rgba(40, 180, 240, 0.3));
+    color: rgba(60, 210, 255, 0.5);
+    filter: drop-shadow(0 0 4px rgba(40, 180, 240, 0.12));
 }
 
 .topology-submap:hover .topology-submap-mesh-line {
@@ -2029,6 +2029,9 @@ a {
     padding: 0 0.15rem;
     box-sizing: border-box;
     line-height: 1;
+    margin-top: -0.5rem;
+    position: relative;
+    z-index: 1;
 }
 
 .topology-submap-dn-up,
