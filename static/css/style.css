@@ -1945,56 +1945,71 @@ a {
 
 .topology-submap {
     min-width: 160px;
-    border-radius: 16px;
+    border-radius: 20px;
     border-style: solid;
-    border-color: rgba(120, 180, 255, 0.45);
+    border-width: 1.5px;
+    border-color: rgba(40, 180, 220, 0.35);
     background:
-        radial-gradient(circle at 50% 0%, rgba(100, 160, 255, 0.14), transparent 42%),
-        linear-gradient(180deg, rgba(22, 40, 68, 0.98) 0%, rgba(16, 30, 52, 0.98) 100%);
+        radial-gradient(circle at 50% 50%, rgba(20, 140, 200, 0.12) 0%, transparent 70%),
+        radial-gradient(circle at 50% 0%, rgba(40, 180, 240, 0.08), transparent 50%),
+        linear-gradient(180deg, rgba(8, 18, 36, 0.98) 0%, rgba(4, 12, 28, 0.98) 100%);
+    box-shadow:
+        inset 0 0 30px rgba(30, 160, 220, 0.06),
+        0 0 20px rgba(30, 160, 220, 0.08),
+        0 16px 36px rgba(0, 0, 0, 0.4);
     cursor: pointer;
+    transition: border-color 300ms ease, box-shadow 300ms ease, transform 160ms ease;
+}
+
+.topology-submap:hover {
+    border-color: rgba(60, 200, 240, 0.6);
+    box-shadow:
+        inset 0 0 40px rgba(40, 180, 240, 0.10),
+        0 0 32px rgba(40, 200, 255, 0.18),
+        0 0 60px rgba(30, 170, 230, 0.10),
+        0 16px 36px rgba(0, 0, 0, 0.4);
 }
 
 .topology-submap .topology-node-subtitle {
-    color: var(--accent);
+    color: rgba(100, 210, 255, 0.85);
     font-size: 0.68rem;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.06em;
 }
 
 .topology-submap .topology-node-icon svg {
-    width: 38px;
-    height: 38px;
+    width: 42px;
+    height: 42px;
 }
 
-/* --- Per-unit submap icon accent colors --- */
-.topology-submap-icon-div-hq {
-    color: #c084fc;
-    filter: drop-shadow(0 0 10px rgba(192, 132, 252, 0.25));
+/* --- Submap mesh icon styling --- */
+.topology-submap-mesh-line {
+    stroke: rgba(60, 200, 255, 0.45);
+    stroke-width: 1.2;
+    stroke-linecap: round;
+    fill: none;
 }
 
-.topology-submap-icon-1bct {
-    color: #60a5fa;
-    filter: drop-shadow(0 0 10px rgba(96, 165, 250, 0.25));
+.topology-submap-mesh-node {
+    fill: #fff;
+    filter: drop-shadow(0 0 3px rgba(120, 220, 255, 0.9));
 }
 
-.topology-submap-icon-2bct {
-    color: #34d399;
-    filter: drop-shadow(0 0 10px rgba(52, 211, 153, 0.25));
+.topology-submap .topology-node-icon-submap {
+    color: rgba(60, 210, 255, 0.8);
+    filter: drop-shadow(0 0 8px rgba(40, 180, 240, 0.3));
 }
 
-.topology-submap-icon-3bct {
-    color: #fb923c;
-    filter: drop-shadow(0 0 10px rgba(251, 146, 60, 0.25));
+.topology-submap:hover .topology-submap-mesh-line {
+    stroke: rgba(80, 220, 255, 0.65);
 }
 
-.topology-submap-icon-cab {
-    color: #f87171;
-    filter: drop-shadow(0 0 10px rgba(248, 113, 113, 0.25));
+.topology-submap:hover .topology-submap-mesh-node {
+    filter: drop-shadow(0 0 5px rgba(140, 230, 255, 1));
 }
 
-.topology-submap-icon-sustainment {
-    color: #a3e635;
-    filter: drop-shadow(0 0 10px rgba(163, 230, 53, 0.25));
+.topology-submap:hover .topology-node-icon-submap {
+    filter: drop-shadow(0 0 12px rgba(60, 200, 255, 0.5));
 }
 
 .submap-add-node-panel {
