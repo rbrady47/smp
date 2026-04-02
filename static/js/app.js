@@ -5046,117 +5046,153 @@ function getTopologySubmapIconMarkup(entity) {
     const name = (entity.name || entity.slug || "").toLowerCase().trim();
     const slug = (entity.slug || "").toLowerCase().trim();
 
-    // --- DIV HQ: Command star inside a shield outline ---
+    // Shared: rounded-rect bubble outline used by all submap icons
+    const bubble = '<rect x="4" y="4" width="56" height="56" rx="12" class="topology-node-icon-ring"></rect>';
+
+    // --- DIV HQ: Hub-and-spoke star mesh — central command node with 6 spokes ---
     if (name.includes("div") && name.includes("hq") || slug.includes("div") && slug.includes("hq")) {
         return `
             <span class="topology-node-icon topology-node-icon-submap topology-submap-icon-div-hq" aria-hidden="true">
                 <svg viewBox="0 0 64 64" focusable="false">
-                    <path d="M32 4L6 22v22l26 16 26-16V22Z" class="topology-node-icon-ring"></path>
-                    <polygon points="32,16 35,26 46,26 37,32 40,42 32,36 24,42 27,32 18,26 29,26" class="topology-node-icon-node"></polygon>
+                    ${bubble}
+                    <line x1="32" y1="32" x2="32" y2="12" class="topology-node-icon-stroke"></line>
+                    <line x1="32" y1="32" x2="49" y2="19" class="topology-node-icon-stroke"></line>
+                    <line x1="32" y1="32" x2="49" y2="45" class="topology-node-icon-stroke"></line>
+                    <line x1="32" y1="32" x2="32" y2="52" class="topology-node-icon-stroke"></line>
+                    <line x1="32" y1="32" x2="15" y2="45" class="topology-node-icon-stroke"></line>
+                    <line x1="32" y1="32" x2="15" y2="19" class="topology-node-icon-stroke"></line>
+                    <circle cx="32" cy="12" r="3.2" class="topology-node-icon-node"></circle>
+                    <circle cx="49" cy="19" r="3.2" class="topology-node-icon-node"></circle>
+                    <circle cx="49" cy="45" r="3.2" class="topology-node-icon-node"></circle>
+                    <circle cx="32" cy="52" r="3.2" class="topology-node-icon-node"></circle>
+                    <circle cx="15" cy="45" r="3.2" class="topology-node-icon-node"></circle>
+                    <circle cx="15" cy="19" r="3.2" class="topology-node-icon-node"></circle>
+                    <circle cx="32" cy="32" r="4.5" class="topology-node-icon-node"></circle>
                 </svg>
             </span>
         `;
     }
 
-    // --- 1BCT: Single chevron with 3 nodes ---
+    // --- 1BCT: Triangle mesh — 3 nodes fully connected ---
     if (/\b1\s*bct\b/.test(name) || slug === "1bct") {
         return `
             <span class="topology-node-icon topology-node-icon-submap topology-submap-icon-1bct" aria-hidden="true">
                 <svg viewBox="0 0 64 64" focusable="false">
-                    <rect x="6" y="6" width="52" height="52" rx="8" class="topology-node-icon-ring"></rect>
-                    <polyline points="20,22 32,34 44,22" class="topology-node-icon-stroke"></polyline>
-                    <circle cx="20" cy="46" r="3.5" class="topology-node-icon-node"></circle>
-                    <circle cx="32" cy="46" r="3.5" class="topology-node-icon-node"></circle>
-                    <circle cx="44" cy="46" r="3.5" class="topology-node-icon-node"></circle>
+                    ${bubble}
+                    <line x1="32" y1="14" x2="14" y2="46" class="topology-node-icon-stroke"></line>
+                    <line x1="32" y1="14" x2="50" y2="46" class="topology-node-icon-stroke"></line>
+                    <line x1="14" y1="46" x2="50" y2="46" class="topology-node-icon-stroke"></line>
+                    <circle cx="32" cy="14" r="3.8" class="topology-node-icon-node"></circle>
+                    <circle cx="14" cy="46" r="3.8" class="topology-node-icon-node"></circle>
+                    <circle cx="50" cy="46" r="3.8" class="topology-node-icon-node"></circle>
                 </svg>
             </span>
         `;
     }
 
-    // --- 2BCT: Double chevron with 3 nodes ---
+    // --- 2BCT: Diamond mesh — 4 nodes fully connected ---
     if (/\b2\s*bct\b/.test(name) || slug === "2bct") {
         return `
             <span class="topology-node-icon topology-node-icon-submap topology-submap-icon-2bct" aria-hidden="true">
                 <svg viewBox="0 0 64 64" focusable="false">
-                    <rect x="6" y="6" width="52" height="52" rx="8" class="topology-node-icon-ring"></rect>
-                    <polyline points="20,18 32,28 44,18" class="topology-node-icon-stroke"></polyline>
-                    <polyline points="20,28 32,38 44,28" class="topology-node-icon-stroke"></polyline>
-                    <circle cx="20" cy="50" r="3.5" class="topology-node-icon-node"></circle>
-                    <circle cx="32" cy="50" r="3.5" class="topology-node-icon-node"></circle>
-                    <circle cx="44" cy="50" r="3.5" class="topology-node-icon-node"></circle>
+                    ${bubble}
+                    <line x1="32" y1="12" x2="52" y2="32" class="topology-node-icon-stroke"></line>
+                    <line x1="52" y1="32" x2="32" y2="52" class="topology-node-icon-stroke"></line>
+                    <line x1="32" y1="52" x2="12" y2="32" class="topology-node-icon-stroke"></line>
+                    <line x1="12" y1="32" x2="32" y2="12" class="topology-node-icon-stroke"></line>
+                    <line x1="32" y1="12" x2="32" y2="52" class="topology-node-icon-stroke"></line>
+                    <line x1="12" y1="32" x2="52" y2="32" class="topology-node-icon-stroke"></line>
+                    <circle cx="32" cy="12" r="3.8" class="topology-node-icon-node"></circle>
+                    <circle cx="52" cy="32" r="3.8" class="topology-node-icon-node"></circle>
+                    <circle cx="32" cy="52" r="3.8" class="topology-node-icon-node"></circle>
+                    <circle cx="12" cy="32" r="3.8" class="topology-node-icon-node"></circle>
                 </svg>
             </span>
         `;
     }
 
-    // --- 3BCT: Triple chevron with 3 nodes ---
+    // --- 3BCT: Pentagon mesh — 5 nodes fully connected ---
     if (/\b3\s*bct\b/.test(name) || slug === "3bct") {
         return `
             <span class="topology-node-icon topology-node-icon-submap topology-submap-icon-3bct" aria-hidden="true">
                 <svg viewBox="0 0 64 64" focusable="false">
-                    <rect x="6" y="6" width="52" height="52" rx="8" class="topology-node-icon-ring"></rect>
-                    <polyline points="20,14 32,22 44,14" class="topology-node-icon-stroke"></polyline>
-                    <polyline points="20,23 32,31 44,23" class="topology-node-icon-stroke"></polyline>
-                    <polyline points="20,32 32,40 44,32" class="topology-node-icon-stroke"></polyline>
-                    <circle cx="20" cy="52" r="3.5" class="topology-node-icon-node"></circle>
-                    <circle cx="32" cy="52" r="3.5" class="topology-node-icon-node"></circle>
-                    <circle cx="44" cy="52" r="3.5" class="topology-node-icon-node"></circle>
+                    ${bubble}
+                    <line x1="32" y1="11" x2="51" y2="25" class="topology-node-icon-stroke"></line>
+                    <line x1="51" y1="25" x2="44" y2="48" class="topology-node-icon-stroke"></line>
+                    <line x1="44" y1="48" x2="20" y2="48" class="topology-node-icon-stroke"></line>
+                    <line x1="20" y1="48" x2="13" y2="25" class="topology-node-icon-stroke"></line>
+                    <line x1="13" y1="25" x2="32" y2="11" class="topology-node-icon-stroke"></line>
+                    <line x1="32" y1="11" x2="44" y2="48" class="topology-node-icon-stroke"></line>
+                    <line x1="32" y1="11" x2="20" y2="48" class="topology-node-icon-stroke"></line>
+                    <line x1="51" y1="25" x2="20" y2="48" class="topology-node-icon-stroke"></line>
+                    <line x1="13" y1="25" x2="44" y2="48" class="topology-node-icon-stroke"></line>
+                    <line x1="13" y1="25" x2="51" y2="25" class="topology-node-icon-stroke"></line>
+                    <circle cx="32" cy="11" r="3.5" class="topology-node-icon-node"></circle>
+                    <circle cx="51" cy="25" r="3.5" class="topology-node-icon-node"></circle>
+                    <circle cx="44" cy="48" r="3.5" class="topology-node-icon-node"></circle>
+                    <circle cx="20" cy="48" r="3.5" class="topology-node-icon-node"></circle>
+                    <circle cx="13" cy="25" r="3.5" class="topology-node-icon-node"></circle>
                 </svg>
             </span>
         `;
     }
 
-    // --- CAB/DIVARTY: Crosshair reticle (fires/aviation) ---
+    // --- CAB/DIVARTY: Cross mesh — 5 nodes, center hub with 4 cardinal nodes ---
     if (name.includes("cab") || name.includes("divarty") || slug.includes("cab") || slug.includes("divarty")) {
         return `
             <span class="topology-node-icon topology-node-icon-submap topology-submap-icon-cab" aria-hidden="true">
                 <svg viewBox="0 0 64 64" focusable="false">
-                    <circle cx="32" cy="32" r="26" class="topology-node-icon-ring"></circle>
-                    <circle cx="32" cy="32" r="14" class="topology-node-icon-stroke"></circle>
-                    <line x1="32" y1="4" x2="32" y2="18" class="topology-node-icon-stroke"></line>
-                    <line x1="32" y1="46" x2="32" y2="60" class="topology-node-icon-stroke"></line>
-                    <line x1="4" y1="32" x2="18" y2="32" class="topology-node-icon-stroke"></line>
-                    <line x1="46" y1="32" x2="60" y2="32" class="topology-node-icon-stroke"></line>
-                    <circle cx="32" cy="32" r="3" class="topology-node-icon-node"></circle>
+                    ${bubble}
+                    <line x1="32" y1="32" x2="32" y2="12" class="topology-node-icon-stroke"></line>
+                    <line x1="32" y1="32" x2="52" y2="32" class="topology-node-icon-stroke"></line>
+                    <line x1="32" y1="32" x2="32" y2="52" class="topology-node-icon-stroke"></line>
+                    <line x1="32" y1="32" x2="12" y2="32" class="topology-node-icon-stroke"></line>
+                    <line x1="32" y1="12" x2="52" y2="32" class="topology-node-icon-stroke"></line>
+                    <line x1="52" y1="32" x2="32" y2="52" class="topology-node-icon-stroke"></line>
+                    <line x1="32" y1="52" x2="12" y2="32" class="topology-node-icon-stroke"></line>
+                    <line x1="12" y1="32" x2="32" y2="12" class="topology-node-icon-stroke"></line>
+                    <circle cx="32" cy="12" r="3.5" class="topology-node-icon-node"></circle>
+                    <circle cx="52" cy="32" r="3.5" class="topology-node-icon-node"></circle>
+                    <circle cx="32" cy="52" r="3.5" class="topology-node-icon-node"></circle>
+                    <circle cx="12" cy="32" r="3.5" class="topology-node-icon-node"></circle>
+                    <circle cx="32" cy="32" r="4.5" class="topology-node-icon-node"></circle>
                 </svg>
             </span>
         `;
     }
 
-    // --- Sustainment: Gear with supply flow arrows ---
+    // --- Sustainment: Chain mesh — 4 nodes in a horizontal chain with cross-links ---
     if (name.includes("sustainment") || name.includes("sust") || slug.includes("sustainment") || slug.includes("sust")) {
         return `
             <span class="topology-node-icon topology-node-icon-submap topology-submap-icon-sustainment" aria-hidden="true">
                 <svg viewBox="0 0 64 64" focusable="false">
-                    <rect x="6" y="6" width="52" height="52" rx="8" class="topology-node-icon-ring"></rect>
-                    <circle cx="32" cy="28" r="10" class="topology-node-icon-stroke"></circle>
-                    <line x1="32" y1="18" x2="32" y2="14" class="topology-node-icon-stroke"></line>
-                    <line x1="32" y1="38" x2="32" y2="42" class="topology-node-icon-stroke"></line>
-                    <line x1="22" y1="28" x2="18" y2="28" class="topology-node-icon-stroke"></line>
-                    <line x1="42" y1="28" x2="46" y2="28" class="topology-node-icon-stroke"></line>
-                    <line x1="25" y1="21" x2="22" y2="18" class="topology-node-icon-stroke"></line>
-                    <line x1="39" y1="21" x2="42" y2="18" class="topology-node-icon-stroke"></line>
-                    <line x1="25" y1="35" x2="22" y2="38" class="topology-node-icon-stroke"></line>
-                    <line x1="39" y1="35" x2="42" y2="38" class="topology-node-icon-stroke"></line>
-                    <polyline points="16,50 24,50 20,46" class="topology-node-icon-stroke"></polyline>
-                    <polyline points="48,50 40,50 44,46" class="topology-node-icon-stroke"></polyline>
-                    <line x1="24" y1="50" x2="40" y2="50" class="topology-node-icon-stroke"></line>
+                    ${bubble}
+                    <line x1="12" y1="24" x2="28" y2="24" class="topology-node-icon-stroke"></line>
+                    <line x1="28" y1="24" x2="36" y2="40" class="topology-node-icon-stroke"></line>
+                    <line x1="36" y1="40" x2="52" y2="40" class="topology-node-icon-stroke"></line>
+                    <line x1="12" y1="24" x2="36" y2="40" class="topology-node-icon-stroke"></line>
+                    <line x1="28" y1="24" x2="52" y2="40" class="topology-node-icon-stroke"></line>
+                    <line x1="12" y1="24" x2="52" y2="40" class="topology-node-icon-stroke"></line>
+                    <circle cx="12" cy="24" r="3.8" class="topology-node-icon-node"></circle>
+                    <circle cx="28" cy="24" r="3.8" class="topology-node-icon-node"></circle>
+                    <circle cx="36" cy="40" r="3.8" class="topology-node-icon-node"></circle>
+                    <circle cx="52" cy="40" r="3.8" class="topology-node-icon-node"></circle>
                 </svg>
             </span>
         `;
     }
 
-    // --- Default fallback: original folder-with-nodes icon ---
+    // --- Default fallback: simple 3-node mesh in bubble ---
     return `
         <span class="topology-node-icon topology-node-icon-submap" aria-hidden="true">
             <svg viewBox="0 0 64 64" focusable="false">
-                <rect x="8" y="14" width="48" height="36" rx="4" class="topology-node-icon-ring"></rect>
-                <rect x="8" y="8" width="22" height="10" rx="3" class="topology-node-icon-stroke"></rect>
-                <circle cx="24" cy="36" r="4" class="topology-node-icon-node"></circle>
-                <circle cx="40" cy="28" r="4" class="topology-node-icon-node"></circle>
-                <circle cx="40" cy="42" r="4" class="topology-node-icon-node"></circle>
-                <line x1="28" y1="35" x2="36" y2="29" class="topology-node-icon-stroke"></line>
-                <line x1="28" y1="37" x2="36" y2="41" class="topology-node-icon-stroke"></line>
+                ${bubble}
+                <line x1="22" y1="42" x2="42" y2="22" class="topology-node-icon-stroke"></line>
+                <line x1="22" y1="42" x2="42" y2="42" class="topology-node-icon-stroke"></line>
+                <line x1="42" y1="22" x2="42" y2="42" class="topology-node-icon-stroke"></line>
+                <circle cx="22" cy="42" r="3.8" class="topology-node-icon-node"></circle>
+                <circle cx="42" cy="22" r="3.8" class="topology-node-icon-node"></circle>
+                <circle cx="42" cy="42" r="3.8" class="topology-node-icon-node"></circle>
             </svg>
         </span>
     `;
