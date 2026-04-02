@@ -4402,7 +4402,7 @@ function renderTopologyStage() {
                 `;
             }).join("");
 
-            const submapDnCounters = isSubmap
+            const submapDnCounters = isSubmap && entity._dnCountsVerified
                 ? `<span class="topology-submap-dn-counts">${
                     (entity.dn_up || 0) > 0 ? `<span class="topology-submap-dn-up" data-dn-names="${escapeHtml((entity.dn_up_names || []).join(','))}">${entity.dn_up}</span>` : ""
                 }${
@@ -7003,6 +7003,7 @@ async function refreshTopologyPage() {
                         sm.dn_down = downNames.length;
                         sm.dn_up_names = upNames;
                         sm.dn_down_names = downNames;
+                        sm._dnCountsVerified = true;
                     } catch (_e) { /* keep backend counts as fallback */ }
                 });
                 await Promise.allSettled(countPromises);
