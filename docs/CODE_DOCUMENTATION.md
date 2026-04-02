@@ -244,17 +244,17 @@ When SVG links are created in `drawTopologyLinks()`, links for pinned nodes or e
 - AP dots use discovery worst status when it's "down" or "degraded"
 
 **Submap rendering:**
-- `getTopologySubmapIconMarkup(entity)` — returns inline SVG of the glowing mesh network icon (6 nodes, 10 connection lines, radialGradient glow halos)
-- Submap entity HTML: label on top → mesh icon → DN count bubbles at bottom
-- DN counts read from `_submapDnCountCache` (localStorage) at render time, falling back to backend payload values
-- Per-refresh cycle: `refreshTopologyPage()` fetches `/api/topology/maps/{id}/discovery` for each submap in parallel, counts peers by ping status, updates the localStorage cache, then re-renders
+- `getTopologySubmapIconMarkup(entity, dnUp, dnDown, dnUpNames, dnDownNames)` — generates data-driven mesh SVG where each dot = one DN (green/red/white), with nearest-neighbor lines and convex hull perimeter
+- Cluster scales via `scaleFactor = min(1, 0.35 + (total / 20) * 0.65)` — small counts cluster tight, large counts fill the viewBox
+- Radial SVG glow behind mesh scales with cluster dimensions
+- DN data read from `_submapDnCountCache` (localStorage), falling back to backend payload
+- Per-refresh cycle: `refreshTopologyPage()` fetches `/api/topology/maps/{id}/discovery` per submap in parallel, counts peers by ping status, updates localStorage cache
 - `renameTopologySubmap(entity)` — right-click rename handler (edit mode only), calls `PUT /api/topology/maps/{id}` with new name
 
-**DN count tooltips:**
-- `.topology-submap-dn-up` and `.topology-submap-dn-down` bubbles store site IDs in `data-dn-names` attribute
-- `mouseenter` creates a `.topology-submap-dn-tooltip` element positioned above the bubble
-- `mouseleave` removes the tooltip; stale tooltips also cleaned up at start of each render cycle
-- Tooltip classes: `.dn-tooltip-up` (green text, green border), `.dn-tooltip-down` (red text, red border)
+**DN hover tooltip:**
+- `data-submap-dn-all` attribute on `.topology-node-icon-submap` stores all DN names with `up:`/`down:` prefixes
+- `mouseenter` on submap card creates `.topology-submap-dn-tooltip` with inline green/red coloring per entry
+- `mouseleave` removes tooltip; stale tooltips cleaned up at start of each render cycle
 
 **Entity interactions:**
 - **Hover**: reveals discovery links for that entity
@@ -290,9 +290,9 @@ Three themes: light, dark, vader. All CSS variables.
 **Submap portal card CSS:**
 - `.topology-submap` — rounded-rectangle card with dark background, cyan glow border, hover effects
 - `.topology-submap-mesh-line` / `.topology-submap-mesh-node` — mesh icon SVG styling (cyan strokes, white nodes with drop-shadow)
-- `.topology-submap-dn-counts` — flex container for up/down count bubbles
-- `.topology-submap-dn-up` / `.topology-submap-dn-down` — circled green/red numbers (1.6rem diameter)
-- `.topology-submap-dn-tooltip` — vader-themed hover tooltip (near-black bg, red/green border glow per variant)
+- `.topology-submap-dn-tooltip` — vader-themed hover tooltip (near-black bg, inline green/red text per entry)
+- `.topology-submap .topology-node-icon::before` — disabled (prevents inherited blurred circle glow)
+- `.topology-submap .topology-node-icon` — `filter: none` (prevents inherited drop-shadow)
 - 6 instances of `.topology-node:not(.topology-cluster)` have `:not(.topology-submap)` added to prevent circle styling from overriding submap card shape
 
 ---

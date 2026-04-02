@@ -120,14 +120,14 @@ Current behavior:
 Submaps appear as portal-style cards on the main topology map. Each submap represents a drill-in view (e.g., 1BCT, 2BCT, 3BCT) containing its own set of anchor and discovered nodes.
 
 **Visual design:**
-- Submaps are rounded-rectangle cards with a dark background and cyan glow border, visually distinct from the circular anchor node cards.
-- Each card shows the submap name at the top, a glowing mesh network icon in the center, and DN up/down count bubbles at the bottom.
+- Submaps have no visible border or background at rest — just a label, a mesh network icon, and a subtle glow. The mesh becomes the primary visual element.
+- Each dot in the mesh represents one discovered node: green = up, red = down, white = no data (placeholder).
+- The mesh cluster grows and shrinks with the number of discovered nodes (minimum 3 nodes). Lines connect nearby nodes with a closed perimeter.
+- A soft radial glow behind the mesh scales with the cluster size.
+- Hovering a submap slightly increases the glow.
 
-**DN count bubbles:**
-- Green circled number = count of discovered nodes currently up in that submap.
-- Red circled number = count of discovered nodes currently down in that submap.
-- Counts reflect only actively-displayed DNs (matching what you see when you drill into the submap).
-- Hover a bubble to see a tooltip listing the site IDs of the relevant nodes. Green text for up nodes, red text for down nodes.
+**Hover tooltip:**
+- Hover any submap to see a tooltip listing all discovered node site IDs, color-coded green (up) or red (down).
 
 **Interactions:**
 - Click a submap card to drill into that submap view.

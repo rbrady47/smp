@@ -12,7 +12,7 @@ This file is the shared handoff log for agents working on SMP.
 
 ### Branch / commit
 - Branch: `claude/update-smp-topology-tOXUn`
-- Latest commit: `13a56f1` — "fix: persist DN count cache in localStorage to survive page refreshes"
+- Latest commit: `57e6479` — "fix: increase mesh glow intensity, widen radius slightly"
 - All commits pushed to origin
 
 ### What was built this session
@@ -33,16 +33,19 @@ This file is the shared handoff log for agents working on SMP.
 - "Submap" subtitle removed
 - Right-click rename in edit mode via `renameTopologySubmap()` function
 
-**DN up/down count bubbles**
-- Green/red circled numbers at bottom of submap cards showing active DN counts
+**Data-driven mesh icon**
+- Each dot in the mesh = one DN, colored green (up), red (down), or white/neutral (no data)
+- Minimum 3 nodes so the mesh never looks empty; white nodes indicate no data, not "3 up"
+- Mesh lines: nearest-neighbor connections (2-3 per node) plus convex hull closing the perimeter
+- Cluster scales with node count: small counts cluster tight in center, larger counts expand
+- Radial SVG glow behind mesh scales proportionally with cluster size
+- Invisible placemat at rest (no border/background); hover only increases mesh glow
 - Backend `/api/topology` returns `dn_up`, `dn_down`, `dn_up_names`, `dn_down_names` per submap
-- Counts derived from actual discovery endpoint results (not simplified DB query) to match displayed DNs
-- Frontend fetches `/api/topology/maps/{id}/discovery` per submap in parallel on each refresh cycle
+- Counts derived from actual discovery endpoint results via frontend fetching `/api/topology/maps/{id}/discovery` per submap in parallel
 - Counts cached in `localStorage` (`smp-submap-dn-counts` key) so they persist across page refreshes
 
-**DN count hover tooltips**
-- Hovering up/down bubbles shows vader-themed tooltip listing site IDs
-- Green text for up-list, red text for down-list
+**DN hover tooltips**
+- Hovering the submap card shows vader-themed tooltip listing all DNs with green/red coloring per status
 - Tooltip cleanup on re-render to prevent sticking
 
 ### Files touched
