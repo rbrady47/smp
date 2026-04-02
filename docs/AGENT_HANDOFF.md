@@ -8,6 +8,62 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-02 — Session: Submap icon/card redesign, DN count bubbles, hover tooltips
+
+### Branch / commit
+- Branch: `claude/update-smp-topology-tOXUn`
+- Latest commit: `13a56f1` — "fix: persist DN count cache in localStorage to survive page refreshes"
+- All commits pushed to origin
+
+### What was built this session
+
+**Submap icon redesign**
+- Replaced the generic folder-with-nodes icon with a single glowing mesh network SVG icon for all submaps
+- 6 mesh nodes connected by cyan lines with radialGradient glow halos
+- Icon rendered inline via `getTopologySubmapIconMarkup()` in `app.js`
+
+**Submap portal card (placemat)**
+- Changed submap card shape from circle to rounded-rectangle "portal" card
+- Dark background with cyan glow border, hover effects with brightened border
+- Added `:not(.topology-submap)` to 6 CSS selectors to prevent `.topology-node` circle styling from overriding submap card
+- Reduced submap default size from 160×96 to 120×72 (25% smaller)
+
+**Card layout changes**
+- Label moved to top of card, mesh icon centered below
+- "Submap" subtitle removed
+- Right-click rename in edit mode via `renameTopologySubmap()` function
+
+**DN up/down count bubbles**
+- Green/red circled numbers at bottom of submap cards showing active DN counts
+- Backend `/api/topology` returns `dn_up`, `dn_down`, `dn_up_names`, `dn_down_names` per submap
+- Counts derived from actual discovery endpoint results (not simplified DB query) to match displayed DNs
+- Frontend fetches `/api/topology/maps/{id}/discovery` per submap in parallel on each refresh cycle
+- Counts cached in `localStorage` (`smp-submap-dn-counts` key) so they persist across page refreshes
+
+**DN count hover tooltips**
+- Hovering up/down bubbles shows vader-themed tooltip listing site IDs
+- Green text for up-list, red text for down-list
+- Tooltip cleanup on re-render to prevent sticking
+
+### Files touched
+- `app/main.py` — per-submap DN count queries, `dn_up_names`/`dn_down_names` in submap payload, `source_anchor_node_id` filter
+- `static/js/app.js` — `getTopologySubmapIconMarkup()`, `renameTopologySubmap()`, submap entity rendering, DN counter HTML, tooltip hover handlers, localStorage-backed `_submapDnCountCache`, discovery-derived count fetching
+- `static/css/style.css` — `.topology-submap` portal card, mesh icon styling, DN counter circles, vader-themed tooltip, `:not(.topology-submap)` specificity fixes
+- `templates/topology.html` — cache-bust version bumps
+
+### Verification
+- DN counts match actual displayed nodes in each submap
+- Counts persist across page refreshes (hard refresh included) via localStorage
+- Tooltips show correct site IDs with green/red coloring
+- Right-click rename works in edit mode
+- Submap portal cards visually distinct from circular anchor node cards
+
+### Known gaps / next steps
+- Backend `/api/topology` still returns approximate `dn_up`/`dn_down` counts from a DB query — these serve as fallback until the frontend discovery fetch completes. Long-term, the backend count logic could be refactored to reuse the discovery endpoint's filtering.
+- Documentation requirements added to `CLAUDE.md` this session — all future changes must update USER_GUIDE, CHANGELOG, AGENT_HANDOFF, and CODE_DOCUMENTATION.
+
+---
+
 ## 2026-04-01 — Session: DN polling, DN-DN links, discovery link visibility, AP coloring
 
 ### Branch / commit

@@ -115,6 +115,25 @@ Current behavior:
   - red with a pulse when all pinned services are down, unknown, or disabled
 - Includes a demo-mode selector in edit mode for previewing all-up, all-down, or mixed topology states, and remembers that choice in the saved topology editor state
 
+#### Submaps
+
+Submaps appear as portal-style cards on the main topology map. Each submap represents a drill-in view (e.g., 1BCT, 2BCT, 3BCT) containing its own set of anchor and discovered nodes.
+
+**Visual design:**
+- Submaps are rounded-rectangle cards with a dark background and cyan glow border, visually distinct from the circular anchor node cards.
+- Each card shows the submap name at the top, a glowing mesh network icon in the center, and DN up/down count bubbles at the bottom.
+
+**DN count bubbles:**
+- Green circled number = count of discovered nodes currently up in that submap.
+- Red circled number = count of discovered nodes currently down in that submap.
+- Counts reflect only actively-displayed DNs (matching what you see when you drill into the submap).
+- Hover a bubble to see a tooltip listing the site IDs of the relevant nodes. Green text for up nodes, red text for down nodes.
+
+**Interactions:**
+- Click a submap card to drill into that submap view.
+- Right-click a submap card in edit mode to rename it (opens a prompt dialog).
+- Submap cards can be moved and resized in edit mode like other topology entities.
+
 This page should be treated as the legacy or transitional topology surface while authored operational maps are built out.
 
 ### Operational Maps
