@@ -2398,7 +2398,10 @@ async def topology_payload(
     }
     if submap_view_ids:
         submap_dns = db.scalars(
-            select(DiscoveredNode).where(DiscoveredNode.map_view_id.in_(submap_view_ids))
+            select(DiscoveredNode).where(
+                DiscoveredNode.map_view_id.in_(submap_view_ids),
+                DiscoveredNode.source_anchor_node_id.isnot(None),
+            )
         ).all()
         for dn in submap_dns:
             vid = dn.map_view_id
