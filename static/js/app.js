@@ -4404,6 +4404,18 @@ function renderTopologyStage() {
                 `;
             }).join("");
 
+            // Apply cached DN counts if this submap entity hasn't been verified yet
+            if (isSubmap && !entity._dnCountsVerified) {
+                const cached = _submapDnCountCache.get(entity.map_view_id);
+                if (cached) {
+                    entity.dn_up = cached.dn_up;
+                    entity.dn_down = cached.dn_down;
+                    entity.dn_up_names = cached.dn_up_names;
+                    entity.dn_down_names = cached.dn_down_names;
+                    entity._dnCountsVerified = true;
+                }
+            }
+
             const submapDnCounters = isSubmap && entity._dnCountsVerified
                 ? `<span class="topology-submap-dn-counts">${
                     (entity.dn_up || 0) > 0 ? `<span class="topology-submap-dn-up" data-dn-names="${escapeHtml((entity.dn_up_names || []).join(','))}">${entity.dn_up}</span>` : ""
@@ -6978,18 +6990,6 @@ async function refreshTopologyPage() {
         }
 
         if (topologyPayload) {
-            // Restore cached DN counts immediately so they don't disappear between refreshes
-            for (const sm of (topologyPayload.submaps ?? [])) {
-                const cached = _submapDnCountCache.get(sm.map_view_id);
-                if (cached) {
-                    sm.dn_up = cached.dn_up;
-                    sm.dn_down = cached.dn_down;
-                    sm.dn_up_names = cached.dn_up_names;
-                    sm.dn_down_names = cached.dn_down_names;
-                    sm._dnCountsVerified = true;
-                }
-            }
-
             renderTopologyControls();
             renderTopologyStage();
 
