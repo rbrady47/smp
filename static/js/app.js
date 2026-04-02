@@ -87,8 +87,19 @@ const topologyNetworkStateLog = (() => {
 })();
 const topologyPreviousNodeStates = new Map();
 const topologyPreviousLinkStates = new Map();
-// Cache verified DN counts so they survive payload refreshes / navigation
-const _submapDnCountCache = new Map(); // map_view_id -> {dn_up, dn_down, dn_up_names, dn_down_names}
+// Cache verified DN counts in localStorage so they survive page refreshes
+const _submapDnCountCache = (() => {
+    const STORAGE_KEY = "smp-submap-dn-counts";
+    let _data = {};
+    try { _data = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"); } catch (_e) { /* ignore */ }
+    return {
+        get(mapViewId) { return _data[mapViewId] || null; },
+        set(mapViewId, value) {
+            _data[mapViewId] = value;
+            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(_data)); } catch (_e) { /* ignore */ }
+        },
+    };
+})();
 const topologyState = {
     activeLocations: new Set(TOPOLOGY_LOCATIONS),
     activeUnits: new Set(TOPOLOGY_UNITS),
