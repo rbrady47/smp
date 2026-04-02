@@ -5181,8 +5181,8 @@ function getTopologySubmapIconMarkup(entity, dnUp, dnDown, dnUpNames, dnDownName
         ...(dnDownNames || []).map((n) => `down:${n}`),
     ];
 
-    // Glow sized to the cluster — grows with the mesh
-    const glowR = Math.max(clusterW, clusterH) * 0.55;
+    // Glow sized to the cluster — grows and shrinks with the mesh
+    const glowR = Math.max(clusterW, clusterH) * 0.6;
     const cx = vw / 2, cy = vh / 2;
 
     return `
@@ -5190,8 +5190,8 @@ function getTopologySubmapIconMarkup(entity, dnUp, dnDown, dnUpNames, dnDownName
             <svg viewBox="0 0 ${vw} ${vh}" focusable="false" preserveAspectRatio="xMidYMid meet">
                 <defs>
                     <radialGradient id="submap-glow-${entity.map_view_id}">
-                        <stop offset="0%" stop-color="rgba(60, 210, 255, 0.12)"></stop>
-                        <stop offset="70%" stop-color="rgba(60, 210, 255, 0.04)"></stop>
+                        <stop offset="0%" stop-color="rgba(60, 210, 255, 0.22)"></stop>
+                        <stop offset="50%" stop-color="rgba(60, 210, 255, 0.10)"></stop>
                         <stop offset="100%" stop-color="rgba(60, 210, 255, 0)"></stop>
                     </radialGradient>
                 </defs>
