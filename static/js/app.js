@@ -5097,67 +5097,60 @@ function drawTopologyLinks(entityMap) {
 }
 
 function getTopologySubmapIconMarkup(entity, dnUp, dnDown, dnUpNames, dnDownNames) {
-    // Data-driven mesh: each node dot = one DN, colored green (up) or red (down)
-    // Minimum 3 nodes so the mesh never looks empty
+    // Data-driven mesh: each dot = one DN, green (up) / red (down) / white (placeholder)
     const totalReal = dnUp + dnDown;
     const total = Math.max(totalReal, 3);
-    // Pad with green placeholder nodes if under minimum
-    const upCount = totalReal < 3 ? dnUp + (3 - totalReal) : dnUp;
-    const downCount = dnDown;
+    const isPlaceholder = totalReal === 0; // all-white neutral nodes
 
-    // Generate node positions spread across the viewBox using a seeded layout
-    // Use a simple deterministic scatter based on entity id for consistency
     const seed = (entity.map_view_id || 0) * 7;
+    const vw = 92, vh = 54;
+
+    // Scale the cluster size based on node count — small counts cluster tight in center,
+    // larger counts expand to fill the viewBox
+    const scaleFactor = Math.min(1, 0.35 + (total / 20) * 0.65);
+    const clusterW = (vw - 12) * scaleFactor;
+    const clusterH = (vh - 12) * scaleFactor;
+    const offsetX = (vw - clusterW) / 2;
+    const offsetY = (vh - clusterH) / 2;
+    const pad = 4;
+
+    // Generate node positions within the scaled cluster area
     const positions = [];
-    const vw = 92, vh = 54, pad = 6;
+    const cols = Math.ceil(Math.sqrt(total * 1.6));
+    const rows = Math.ceil(total / cols);
+    const xStep = (clusterW - pad * 2) / Math.max(cols - 1, 1);
+    const yStep = (clusterH - pad * 2) / Math.max(rows - 1, 1);
     for (let i = 0; i < total; i++) {
-        // Distribute in rows with jitter
-        const cols = Math.ceil(Math.sqrt(total * 1.8));
         const row = Math.floor(i / cols);
         const col = i % cols;
-        const rows = Math.ceil(total / cols);
-        const xStep = (vw - pad * 2) / Math.max(cols - 1, 1);
-        const yStep = (vh - pad * 2) / Math.max(rows - 1, 1);
-        // Deterministic jitter from seed + index
-        const jx = ((seed + i * 31) % 17 - 8) * 1.2;
-        const jy = ((seed + i * 47) % 13 - 6) * 1.2;
-        const x = Math.max(pad, Math.min(vw - pad, pad + col * xStep + jx));
-        const y = Math.max(pad, Math.min(vh - pad, pad + row * yStep + jy));
+        const jx = ((seed + i * 31) % 17 - 8) * 1.0 * scaleFactor;
+        const jy = ((seed + i * 47) % 13 - 6) * 1.0 * scaleFactor;
+        const x = Math.max(offsetX + pad, Math.min(offsetX + clusterW - pad, offsetX + pad + col * xStep + jx));
+        const y = Math.max(offsetY + pad, Math.min(offsetY + clusterH - pad, offsetY + pad + row * yStep + jy));
         positions.push({ x, y });
     }
 
-    // Assign colors: first upCount are green, rest are red
-    const nodeColors = [];
+    // Full mesh — connect every node to every other node
+    const linesSvg = [];
     for (let i = 0; i < total; i++) {
-        nodeColors.push(i < upCount ? "up" : "down");
-    }
-
-    // Generate random-ish lines: connect each node to 2-3 nearest neighbors
-    const lineSet = new Set();
-    for (let i = 0; i < total; i++) {
-        const dists = positions.map((p, j) => ({
-            j,
-            d: j === i ? Infinity : Math.hypot(p.x - positions[i].x, p.y - positions[i].y),
-        })).sort((a, b) => a.d - b.d);
-        const connectCount = 2 + ((seed + i) % 2); // 2 or 3
-        for (let k = 0; k < Math.min(connectCount, dists.length); k++) {
-            const a = Math.min(i, dists[k].j);
-            const b = Math.max(i, dists[k].j);
-            lineSet.add(`${a}-${b}`);
+        for (let j = i + 1; j < total; j++) {
+            linesSvg.push(`<line x1="${positions[i].x}" y1="${positions[i].y}" x2="${positions[j].x}" y2="${positions[j].y}" class="topology-submap-mesh-line"></line>`);
         }
     }
 
-    const linesSvg = Array.from(lineSet).map((key) => {
-        const [a, b] = key.split("-").map(Number);
-        return `<line x1="${positions[a].x}" y1="${positions[a].y}" x2="${positions[b].x}" y2="${positions[b].y}" class="topology-submap-mesh-line"></line>`;
-    }).join("");
-
+    // Assign colors: placeholder=white, first dnUp=green, rest=red
     const dotsSvg = positions.map((p, i) => {
-        const color = nodeColors[i] === "up" ? "#4ade80" : "#ff4040";
+        let color;
+        if (isPlaceholder) {
+            color = "rgba(180, 200, 220, 0.6)";
+        } else if (i < dnUp) {
+            color = "#4ade80";
+        } else {
+            color = "#ff4040";
+        }
         return `<circle cx="${p.x}" cy="${p.y}" r="2.2" fill="${color}" class="topology-submap-mesh-node"></circle>`;
     }).join("");
 
-    // Store DN names on the icon span for the hover tooltip
     const allNames = [
         ...(dnUpNames || []).map((n) => `up:${n}`),
         ...(dnDownNames || []).map((n) => `down:${n}`),
@@ -5166,7 +5159,7 @@ function getTopologySubmapIconMarkup(entity, dnUp, dnDown, dnUpNames, dnDownName
     return `
         <span class="topology-node-icon topology-node-icon-submap" data-submap-dn-all="${escapeHtml(allNames.join(','))}" aria-hidden="true">
             <svg viewBox="0 0 ${vw} ${vh}" focusable="false" preserveAspectRatio="xMidYMid meet">
-                ${linesSvg}
+                ${linesSvg.join("")}
                 ${dotsSvg}
             </svg>
         </span>
