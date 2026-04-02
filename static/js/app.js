@@ -4402,8 +4402,15 @@ function renderTopologyStage() {
                 `;
             }).join("");
 
+            const submapDnCounters = isSubmap
+                ? `<span class="topology-submap-dn-counts">${
+                    (entity.dn_up || 0) > 0 ? `<span class="topology-submap-dn-up">${entity.dn_up}</span>` : ""
+                }${
+                    (entity.dn_down || 0) > 0 ? `<span class="topology-submap-dn-down">${entity.dn_down}</span>` : ""
+                }</span>`
+                : "";
             const entityBody = isSubmap
-                ? `<span class="topology-node-name">${displayName}</span>${nodeIcon}`
+                ? `<span class="topology-node-name">${displayName}</span>${nodeIcon}${submapDnCounters}`
                 : `${nodeIcon}<span class="topology-node-name">${displayName}</span>${(isServiceCloud || isDiscovered) ? "" : `<span class="topology-node-meta">${subtitle}</span>`}`;
             return `
                 <button

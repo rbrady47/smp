@@ -2389,9 +2389,28 @@ async def topology_payload(
         ).order_by(OperationalMapObject.id)
     ).all()
     submap_object_by_child_id = {obj.child_map_view_id: obj for obj in submap_objects}
+
+    # Build per-submap DN up/down counts from DB + live ping snapshots
+    submap_view_ids = [view.id for view in submap_views]
+    submap_dn_counts: dict[int, dict[str, int]] = {vid: {"up": 0, "down": 0} for vid in submap_view_ids}
+    if submap_view_ids:
+        submap_dns = db.scalars(
+            select(DiscoveredNode).where(DiscoveredNode.map_view_id.in_(submap_view_ids))
+        ).all()
+        for dn in submap_dns:
+            vid = dn.map_view_id
+            if vid not in submap_dn_counts:
+                continue
+            snap = dn_ping_snapshots.get(dn.site_id)
+            if snap and snap.get("ping_ok"):
+                submap_dn_counts[vid]["up"] += 1
+            else:
+                submap_dn_counts[vid]["down"] += 1
+
     submaps = []
     for view in submap_views:
         obj = submap_object_by_child_id.get(view.id)
+        counts = submap_dn_counts.get(view.id, {"up": 0, "down": 0})
         submaps.append({
             "id": f"submap-{view.id}",
             "map_view_id": view.id,
@@ -2403,6 +2422,8 @@ async def topology_payload(
             "y": obj.y if obj else 100,
             "width": obj.width if obj else 120,
             "height": obj.height if obj else 72,
+            "dn_up": counts["up"],
+            "dn_down": counts["down"],
         })
     db.commit()
     result = build_mock_topology_payload(inventory_nodes)
