@@ -116,7 +116,33 @@ alembic upgrade head
 - **Add a handoff entry** when you stop or complete a meaningful slice
 - Do not revert other agents' edits unless explicitly instructed
 - Inspect current file state before editing — other agents may be working nearby
-- Update `docs/USER_GUIDE.md` and `CHANGELOG.md` when user-facing behavior changes
+
+## Documentation Requirements
+
+Every change must be fully documented for follow-on development and end users. This is not optional.
+
+### Always update these files when behavior changes:
+
+| File | When to update | What to include |
+|------|---------------|-----------------|
+| `docs/USER_GUIDE.md` | Any operator-visible change | What the feature does, how to use it, current behavior |
+| `CHANGELOG.md` | Any notable change | Concise entry describing what changed and why |
+| `docs/AGENT_HANDOFF.md` | Completing a meaningful slice or ending a session | Scope, branch, files touched, verification, assumptions, gaps, next steps |
+| `docs/CODE_DOCUMENTATION.md` | Any backend/frontend architecture change | Updated architecture details, new endpoints, new state, new data flow |
+
+### Documentation standards:
+
+- **User Guide (`docs/USER_GUIDE.md`):** Write for operators, not developers. Describe what the feature does and how to use it. Keep language clear and practical. Update existing sections rather than appending duplicates.
+- **Code Documentation (`docs/CODE_DOCUMENTATION.md`):** Write for follow-on developers. Document new API endpoints, backend functions, frontend state changes, data flow changes, and schema additions. Keep it current with the actual codebase.
+- **Changelog (`CHANGELOG.md`):** One-line summaries grouped by type (feat, fix, refactor). Include the date.
+- **Handoff (`docs/AGENT_HANDOFF.md`):** Use the standard handoff template. Be specific about what was built, what works, what doesn't, and what to do next.
+
+### Rules:
+
+- Do not skip documentation because the code change feels small — if it changes behavior, document it
+- Do not leave documentation updates for a later commit — include them in the same commit as the code change
+- Do not duplicate content across docs — each file has a distinct audience and purpose
+- Review existing doc sections before adding new ones to avoid drift or contradiction
 
 ## Key Domain Terms
 
