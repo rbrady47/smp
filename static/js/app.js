@@ -4441,13 +4441,19 @@ function renderTopologyStage() {
         Array.from(topologyState.selectedEntityIds).filter((entityId) => visibleIds.has(entityId)),
     );
 
+      // Clean up any stale DN tooltips from previous render
+      document.querySelectorAll(".topology-submap-dn-tooltip").forEach((t) => t.remove());
+
       // DN count bubble hover tooltips
       layer.querySelectorAll(".topology-submap-dn-up, .topology-submap-dn-down").forEach((bubble) => {
-          bubble.addEventListener("mouseenter", (event) => {
+          const isUp = bubble.classList.contains("topology-submap-dn-up");
+          bubble.addEventListener("mouseenter", () => {
               const names = (bubble.getAttribute("data-dn-names") || "").split(",").filter(Boolean);
               if (!names.length) return;
+              // Remove any existing tooltip first
+              document.querySelectorAll(".topology-submap-dn-tooltip").forEach((t) => t.remove());
               const tip = document.createElement("div");
-              tip.className = "topology-submap-dn-tooltip";
+              tip.className = "topology-submap-dn-tooltip" + (isUp ? " dn-tooltip-up" : " dn-tooltip-down");
               tip.innerHTML = names.map((n) => `<div>${escapeHtml(n)}</div>`).join("");
               document.body.appendChild(tip);
               const rect = bubble.getBoundingClientRect();

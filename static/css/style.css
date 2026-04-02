@@ -2058,21 +2058,40 @@ a {
     cursor: default;
 }
 
-/* DN count hover tooltip */
+/* DN count hover tooltip — vader theme */
 .topology-submap-dn-tooltip {
     position: fixed;
     transform: translate(-50%, -100%);
-    background: rgba(8, 18, 36, 0.96);
-    border: 1px solid rgba(40, 180, 220, 0.35);
-    border-radius: 8px;
-    padding: 0.4rem 0.6rem;
+    background: rgba(10, 10, 14, 0.96);
+    border: 1px solid rgba(160, 20, 20, 0.5);
+    border-radius: 6px;
+    padding: 0.35rem 0.55rem;
     font-size: 0.7rem;
-    color: rgba(200, 230, 255, 0.9);
-    line-height: 1.5;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.6;
     white-space: nowrap;
     z-index: 9999;
     pointer-events: none;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 12px rgba(30, 160, 220, 0.1);
+    box-shadow:
+        0 0 12px rgba(180, 0, 0, 0.15),
+        0 4px 20px rgba(0, 0, 0, 0.6);
+}
+
+.topology-submap-dn-tooltip.dn-tooltip-up {
+    color: #4ade80;
+    border-color: rgba(74, 222, 128, 0.35);
+    box-shadow:
+        0 0 10px rgba(74, 222, 128, 0.1),
+        0 4px 20px rgba(0, 0, 0, 0.6);
+}
+
+.topology-submap-dn-tooltip.dn-tooltip-down {
+    color: #ff4040;
+    border-color: rgba(160, 20, 20, 0.5);
+    box-shadow:
+        0 0 12px rgba(180, 0, 0, 0.15),
+        0 4px 20px rgba(0, 0, 0, 0.6);
 }
 
 .submap-add-node-panel {
