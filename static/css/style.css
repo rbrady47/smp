@@ -1498,7 +1498,7 @@ a {
     overflow: visible;
 }
 
-.topology-node:not(.topology-cluster) {
+.topology-node:not(.topology-cluster):not(.topology-submap) {
     align-items: center;
     justify-content: center;
     gap: 0.28rem;
@@ -1523,7 +1523,7 @@ a {
         0 18px 40px rgba(0, 0, 0, 0.32);
 }
 
-:root[data-theme="vader"] .topology-node:not(.topology-cluster) {
+:root[data-theme="vader"] .topology-node:not(.topology-cluster):not(.topology-submap) {
     background: transparent;
     border: none;
     box-shadow: none;
@@ -1551,15 +1551,15 @@ a {
         0 0 24px rgba(98, 214, 255, 0.24);
 }
 
-.topology-node:not(.topology-cluster):hover,
-.topology-node:not(.topology-cluster):focus-visible {
+.topology-node:not(.topology-cluster):not(.topology-submap):hover,
+.topology-node:not(.topology-cluster):not(.topology-submap):focus-visible {
     border-color: transparent;
     background: transparent;
     box-shadow: none;
 }
 
-.topology-node:not(.topology-cluster).is-selected,
-.topology-stage.is-editing .topology-node:not(.topology-cluster).is-multi-selected {
+.topology-node:not(.topology-cluster):not(.topology-submap).is-selected,
+.topology-stage.is-editing .topology-node:not(.topology-cluster):not(.topology-submap).is-multi-selected {
     border-color: transparent;
     background: transparent;
     box-shadow: none;
@@ -2246,8 +2246,8 @@ a {
     line-height: 1.05;
 }
 
-.topology-node:not(.topology-cluster).is-selected .topology-node-icon,
-.topology-stage.is-editing .topology-node:not(.topology-cluster).is-multi-selected .topology-node-icon {
+.topology-node:not(.topology-cluster):not(.topology-submap).is-selected .topology-node-icon,
+.topology-stage.is-editing .topology-node:not(.topology-cluster):not(.topology-submap).is-multi-selected .topology-node-icon {
     filter:
         drop-shadow(0 0 0.18rem rgba(255, 255, 255, 0.22))
         drop-shadow(0 0 1rem rgba(98, 214, 255, 0.42));
