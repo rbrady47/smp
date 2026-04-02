@@ -4402,6 +4402,9 @@ function renderTopologyStage() {
                 `;
             }).join("");
 
+            const entityBody = isSubmap
+                ? `<span class="topology-node-name">${displayName}</span>${nodeIcon}`
+                : `${nodeIcon}<span class="topology-node-name">${displayName}</span>${(isServiceCloud || isDiscovered) ? "" : `<span class="topology-node-meta">${subtitle}</span>`}`;
             return `
                 <button
                     type="button"
@@ -4409,11 +4412,10 @@ function renderTopologyStage() {
                     data-topology-id="${entity.id}"
                     aria-label="${escapeHtml(titleText)}"
                     data-topology-editable="${topologyState.editMode ? "true" : "false"}"
+                    ${isSubmap && entity.map_view_id ? `data-map-view-id="${entity.map_view_id}"` : ""}
                     style="${bubbleStyle}"
                 >
-                    ${nodeIcon}
-                    <span class="topology-node-name">${displayName}</span>
-                    ${(isServiceCloud || isDiscovered) ? "" : `<span class="topology-node-meta">${subtitle}</span>`}
+                    ${entityBody}
                     ${clusterFooter}
                     ${hoverPanel}
                     ${anchorPoints}
@@ -4668,6 +4670,12 @@ function renderTopologyStage() {
                 if (confirmed) {
                     deleteSubmapObject(nextEntity.map_object_id, nextEntity.id);
                 }
+                return;
+            }
+            if (nextEntity?.kind === "submap" && nextEntity?.map_view_id) {
+                event.preventDefault();
+                event.stopPropagation();
+                renameTopologySubmap(nextEntity);
                 return;
             }
             if (nextEntity?.inventory_node_id) {
@@ -5564,6 +5572,36 @@ async function deleteSubmapObject(mapObjectId, entityId) {
     }
 }
 
+async function renameTopologySubmap(entity) {
+    const currentName = entity.name || "";
+    const newName = window.prompt("Rename submap:", currentName);
+    if (!newName || !newName.trim() || newName.trim() === currentName) {
+        return;
+    }
+    const trimmedName = newName.trim();
+    try {
+        const response = await fetch(`/api/topology/maps/${encodeURIComponent(entity.map_view_id)}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: trimmedName }),
+        });
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => null);
+            window.alert("Failed to rename submap: " + (errorData?.detail || response.statusText));
+            return;
+        }
+        const submapList = topologyPayload?.submaps ?? [];
+        const submapEntry = submapList.find((s) => s.id === entity.id);
+        if (submapEntry) {
+            submapEntry.name = trimmedName;
+        }
+        renderTopologyStage();
+    } catch (error) {
+        console.error("Failed to rename submap:", error);
+        window.alert("Failed to rename submap.");
+    }
+}
+
 async function createTopologyLink(sourceEntityId, sourceAnchor, targetEntityId, targetAnchor) {
     try {
         const response = await fetch("/api/topology/links", {
@@ -6381,7 +6419,7 @@ function wireTopologyLayoutControls() {
                     topologyPayload.submaps = [];
                 }
                 topologyPayload.submaps.push(submapEntity);
-                setTopologyEntityLayout(submapEntityId, { x: centerX, y: centerY, size: 96 });
+                setTopologyEntityLayout(submapEntityId, { x: centerX, y: centerY, size: 72 });
                 renderTopologyStage();
             } catch (error) {
                 console.error("Failed to create submap:", error);

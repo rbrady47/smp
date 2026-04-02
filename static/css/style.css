@@ -1944,8 +1944,9 @@ a {
 }
 
 .topology-submap {
-    min-width: 160px;
-    border-radius: 20px;
+    min-width: 120px;
+    padding: 0.4rem 0.6rem 0.5rem;
+    border-radius: 16px;
     border-style: solid;
     border-width: 1.5px;
     border-color: rgba(40, 180, 220, 0.35);
@@ -1959,6 +1960,7 @@ a {
         0 16px 36px rgba(0, 0, 0, 0.4);
     cursor: pointer;
     transition: border-color 300ms ease, box-shadow 300ms ease, transform 160ms ease;
+    gap: 0.2rem;
 }
 
 .topology-submap:hover {
@@ -1970,16 +1972,16 @@ a {
         0 16px 36px rgba(0, 0, 0, 0.4);
 }
 
-.topology-submap .topology-node-subtitle {
-    color: rgba(100, 210, 255, 0.85);
-    font-size: 0.68rem;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+.topology-submap .topology-node-name {
+    order: -1;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
 }
 
 .topology-submap .topology-node-icon svg {
-    width: 42px;
-    height: 42px;
+    width: 32px;
+    height: 32px;
 }
 
 /* --- Submap mesh icon styling --- */

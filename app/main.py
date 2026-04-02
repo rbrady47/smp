@@ -2401,8 +2401,8 @@ async def topology_payload(
             "level": 0,
             "x": obj.x if obj else 100,
             "y": obj.y if obj else 100,
-            "width": obj.width if obj else 160,
-            "height": obj.height if obj else 96,
+            "width": obj.width if obj else 120,
+            "height": obj.height if obj else 72,
         })
     db.commit()
     result = build_mock_topology_payload(inventory_nodes)
