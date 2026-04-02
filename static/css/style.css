@@ -2005,6 +2005,14 @@ a {
     transition: filter 300ms ease;
 }
 
+.topology-submap .topology-node-icon::before {
+    display: none;
+}
+
+.topology-submap .topology-node-icon {
+    filter: none;
+}
+
 .topology-submap:hover .topology-submap-mesh-line {
     stroke: rgba(80, 220, 255, 0.55);
 }
