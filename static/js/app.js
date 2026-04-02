@@ -87,6 +87,8 @@ const topologyNetworkStateLog = (() => {
 })();
 const topologyPreviousNodeStates = new Map();
 const topologyPreviousLinkStates = new Map();
+// Cache verified DN counts so they survive payload refreshes / navigation
+const _submapDnCountCache = new Map(); // map_view_id -> {dn_up, dn_down, dn_up_names, dn_down_names}
 const topologyState = {
     activeLocations: new Set(TOPOLOGY_LOCATIONS),
     activeUnits: new Set(TOPOLOGY_UNITS),
@@ -6976,6 +6978,18 @@ async function refreshTopologyPage() {
         }
 
         if (topologyPayload) {
+            // Restore cached DN counts immediately so they don't disappear between refreshes
+            for (const sm of (topologyPayload.submaps ?? [])) {
+                const cached = _submapDnCountCache.get(sm.map_view_id);
+                if (cached) {
+                    sm.dn_up = cached.dn_up;
+                    sm.dn_down = cached.dn_down;
+                    sm.dn_up_names = cached.dn_up_names;
+                    sm.dn_down_names = cached.dn_down_names;
+                    sm._dnCountsVerified = true;
+                }
+            }
+
             renderTopologyControls();
             renderTopologyStage();
 
@@ -7004,6 +7018,10 @@ async function refreshTopologyPage() {
                         sm.dn_up_names = upNames;
                         sm.dn_down_names = downNames;
                         sm._dnCountsVerified = true;
+                        _submapDnCountCache.set(sm.map_view_id, {
+                            dn_up: sm.dn_up, dn_down: sm.dn_down,
+                            dn_up_names: upNames, dn_down_names: downNames,
+                        });
                     } catch (_e) { /* keep backend counts as fallback */ }
                 });
                 await Promise.allSettled(countPromises);
