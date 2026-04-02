@@ -1947,24 +1947,20 @@ a {
     min-width: 120px;
     padding: 0.4rem 0.6rem 0.5rem;
     border-radius: 16px;
-    border-style: solid;
-    border-width: 1.5px;
-    border-color: rgba(40, 180, 220, 0.35);
-    background:
-        radial-gradient(circle at 50% 50%, rgba(20, 140, 200, 0.12) 0%, transparent 70%),
-        radial-gradient(circle at 50% 0%, rgba(40, 180, 240, 0.08), transparent 50%),
-        linear-gradient(180deg, rgba(8, 18, 36, 0.98) 0%, rgba(4, 12, 28, 0.98) 100%);
-    box-shadow:
-        inset 0 0 30px rgba(30, 160, 220, 0.06),
-        0 0 20px rgba(30, 160, 220, 0.08),
-        0 16px 36px rgba(0, 0, 0, 0.4);
+    border: 1.5px solid transparent;
+    background: transparent;
+    box-shadow: none;
     cursor: pointer;
-    transition: border-color 300ms ease, box-shadow 300ms ease, transform 160ms ease;
+    transition: border-color 300ms ease, box-shadow 300ms ease, background 300ms ease, transform 160ms ease;
     gap: 0.2rem;
 }
 
 .topology-submap:hover {
     border-color: rgba(60, 200, 240, 0.6);
+    background:
+        radial-gradient(circle at 50% 50%, rgba(20, 140, 200, 0.12) 0%, transparent 70%),
+        radial-gradient(circle at 50% 0%, rgba(40, 180, 240, 0.08), transparent 50%),
+        linear-gradient(180deg, rgba(8, 18, 36, 0.98) 0%, rgba(4, 12, 28, 0.98) 100%);
     box-shadow:
         inset 0 0 40px rgba(40, 180, 240, 0.10),
         0 0 32px rgba(40, 200, 255, 0.18),
@@ -1981,11 +1977,16 @@ a {
 
 .topology-submap .topology-node-icon {
     margin-top: 0;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
 }
 
 .topology-submap .topology-node-icon svg {
-    width: 52px;
-    height: 52px;
+    width: 100%;
+    height: 100%;
 }
 
 /* --- Submap mesh icon styling --- */

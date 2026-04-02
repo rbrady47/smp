@@ -5105,11 +5105,43 @@ function drawTopologyLinks(entityMap) {
 }
 
 function getTopologySubmapIconMarkup(entity) {
-    // Glowing mesh network icon — nodes with bright centers connected by luminous lines
-    // Inspired by deep-blue network visualizations with cyan/teal glow
+    // Dense glowing mesh network — 12 nodes, ~30 connection lines
+    // Nodes spread across a 96×64 viewBox for a wide, dense network feel
+    const nodes = [
+        // top row
+        {x:16,y:8}, {x:38,y:6}, {x:60,y:10}, {x:82,y:7},
+        // middle row
+        {x:8,y:28}, {x:28,y:32}, {x:50,y:26}, {x:72,y:30}, {x:90,y:24},
+        // bottom row
+        {x:18,y:50}, {x:48,y:52}, {x:78,y:48},
+    ];
+    // Build dense connections — each node connects to its 3-4 nearest neighbors
+    const lines = [
+        // top row interconnections
+        [0,1],[1,2],[2,3],
+        // top to middle
+        [0,4],[0,5],[1,5],[1,6],[2,6],[2,7],[3,7],[3,8],
+        // middle row interconnections
+        [4,5],[5,6],[6,7],[7,8],
+        // middle to bottom
+        [4,9],[5,9],[5,10],[6,10],[7,10],[7,11],[8,11],
+        // bottom row interconnections
+        [9,10],[10,11],
+        // cross-links for density
+        [0,6],[1,7],[2,8],[4,10],[6,11],[9,5],[3,6],
+    ];
+    const linesSvg = lines.map(([a,b]) =>
+        `<line x1="${nodes[a].x}" y1="${nodes[a].y}" x2="${nodes[b].x}" y2="${nodes[b].y}" class="topology-submap-mesh-line"></line>`
+    ).join("");
+    const glowsSvg = nodes.map((n,i) =>
+        `<circle cx="${n.x}" cy="${n.y}" r="${i===5||i===6? 6 : 5}" fill="url(#submap-node-glow)"></circle>`
+    ).join("");
+    const dotsSvg = nodes.map((n,i) =>
+        `<circle cx="${n.x}" cy="${n.y}" r="${i===5||i===6? 2.2 : 1.8}" class="topology-submap-mesh-node"></circle>`
+    ).join("");
     return `
         <span class="topology-node-icon topology-node-icon-submap" aria-hidden="true">
-            <svg viewBox="0 0 64 64" focusable="false">
+            <svg viewBox="0 0 96 58" focusable="false" preserveAspectRatio="xMidYMid meet">
                 <defs>
                     <radialGradient id="submap-node-glow">
                         <stop offset="0%" stop-color="currentColor" stop-opacity="0.9"></stop>
@@ -5117,31 +5149,9 @@ function getTopologySubmapIconMarkup(entity) {
                         <stop offset="100%" stop-color="currentColor" stop-opacity="0"></stop>
                     </radialGradient>
                 </defs>
-                <!-- mesh lines -->
-                <line x1="18" y1="16" x2="46" y2="20" class="topology-submap-mesh-line"></line>
-                <line x1="18" y1="16" x2="32" y2="34" class="topology-submap-mesh-line"></line>
-                <line x1="18" y1="16" x2="12" y2="42" class="topology-submap-mesh-line"></line>
-                <line x1="46" y1="20" x2="32" y2="34" class="topology-submap-mesh-line"></line>
-                <line x1="46" y1="20" x2="52" y2="44" class="topology-submap-mesh-line"></line>
-                <line x1="32" y1="34" x2="12" y2="42" class="topology-submap-mesh-line"></line>
-                <line x1="32" y1="34" x2="52" y2="44" class="topology-submap-mesh-line"></line>
-                <line x1="32" y1="34" x2="32" y2="54" class="topology-submap-mesh-line"></line>
-                <line x1="12" y1="42" x2="32" y2="54" class="topology-submap-mesh-line"></line>
-                <line x1="52" y1="44" x2="32" y2="54" class="topology-submap-mesh-line"></line>
-                <!-- node glows -->
-                <circle cx="18" cy="16" r="7" fill="url(#submap-node-glow)"></circle>
-                <circle cx="46" cy="20" r="7" fill="url(#submap-node-glow)"></circle>
-                <circle cx="32" cy="34" r="8" fill="url(#submap-node-glow)"></circle>
-                <circle cx="12" cy="42" r="6" fill="url(#submap-node-glow)"></circle>
-                <circle cx="52" cy="44" r="6" fill="url(#submap-node-glow)"></circle>
-                <circle cx="32" cy="54" r="6" fill="url(#submap-node-glow)"></circle>
-                <!-- node centers -->
-                <circle cx="18" cy="16" r="2.4" class="topology-submap-mesh-node"></circle>
-                <circle cx="46" cy="20" r="2.4" class="topology-submap-mesh-node"></circle>
-                <circle cx="32" cy="34" r="3.0" class="topology-submap-mesh-node"></circle>
-                <circle cx="12" cy="42" r="2.0" class="topology-submap-mesh-node"></circle>
-                <circle cx="52" cy="44" r="2.0" class="topology-submap-mesh-node"></circle>
-                <circle cx="32" cy="54" r="2.0" class="topology-submap-mesh-node"></circle>
+                ${linesSvg}
+                ${glowsSvg}
+                ${dotsSvg}
             </svg>
         </span>
     `;
