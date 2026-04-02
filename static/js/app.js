@@ -4404,13 +4404,17 @@ function renderTopologyStage() {
                 `;
             }).join("");
 
-            // DN counts come exclusively from the discovery-derived cache — never from backend payload
+            // DN counts: prefer discovery cache, fall back to backend payload
             const dnCache = isSubmap ? _submapDnCountCache.get(entity.map_view_id) : null;
-            const submapDnCounters = dnCache
+            const dnUp = dnCache ? dnCache.dn_up : (entity.dn_up || 0);
+            const dnDown = dnCache ? dnCache.dn_down : (entity.dn_down || 0);
+            const dnUpNames = dnCache ? dnCache.dn_up_names : (entity.dn_up_names || []);
+            const dnDownNames = dnCache ? dnCache.dn_down_names : (entity.dn_down_names || []);
+            const submapDnCounters = isSubmap
                 ? `<span class="topology-submap-dn-counts">${
-                    dnCache.dn_up > 0 ? `<span class="topology-submap-dn-up" data-dn-names="${escapeHtml(dnCache.dn_up_names.join(','))}">${dnCache.dn_up}</span>` : ""
+                    dnUp > 0 ? `<span class="topology-submap-dn-up" data-dn-names="${escapeHtml(dnUpNames.join(','))}">${dnUp}</span>` : ""
                 }${
-                    dnCache.dn_down > 0 ? `<span class="topology-submap-dn-down" data-dn-names="${escapeHtml(dnCache.dn_down_names.join(','))}">${dnCache.dn_down}</span>` : ""
+                    dnDown > 0 ? `<span class="topology-submap-dn-down" data-dn-names="${escapeHtml(dnDownNames.join(','))}">${dnDown}</span>` : ""
                 }</span>`
                 : "";
             const entityBody = isSubmap
