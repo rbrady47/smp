@@ -4404,22 +4404,13 @@ function renderTopologyStage() {
                 `;
             }).join("");
 
-            // Apply cached DN counts from last discovery fetch if available
-            if (isSubmap && entity.map_view_id) {
-                const cached = _submapDnCountCache.get(entity.map_view_id);
-                if (cached) {
-                    entity.dn_up = cached.dn_up;
-                    entity.dn_down = cached.dn_down;
-                    entity.dn_up_names = cached.dn_up_names;
-                    entity.dn_down_names = cached.dn_down_names;
-                }
-            }
-
-            const submapDnCounters = isSubmap
+            // DN counts come exclusively from the discovery-derived cache — never from backend payload
+            const dnCache = isSubmap ? _submapDnCountCache.get(entity.map_view_id) : null;
+            const submapDnCounters = dnCache
                 ? `<span class="topology-submap-dn-counts">${
-                    (entity.dn_up || 0) > 0 ? `<span class="topology-submap-dn-up" data-dn-names="${escapeHtml((entity.dn_up_names || []).join(','))}">${entity.dn_up}</span>` : ""
+                    dnCache.dn_up > 0 ? `<span class="topology-submap-dn-up" data-dn-names="${escapeHtml(dnCache.dn_up_names.join(','))}">${dnCache.dn_up}</span>` : ""
                 }${
-                    (entity.dn_down || 0) > 0 ? `<span class="topology-submap-dn-down" data-dn-names="${escapeHtml((entity.dn_down_names || []).join(','))}">${entity.dn_down}</span>` : ""
+                    dnCache.dn_down > 0 ? `<span class="topology-submap-dn-down" data-dn-names="${escapeHtml(dnCache.dn_down_names.join(','))}">${dnCache.dn_down}</span>` : ""
                 }</span>`
                 : "";
             const entityBody = isSubmap
