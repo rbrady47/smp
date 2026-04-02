@@ -5130,13 +5130,38 @@ function getTopologySubmapIconMarkup(entity, dnUp, dnDown, dnUpNames, dnDownName
         positions.push({ x, y });
     }
 
-    // Full mesh — connect every node to every other node
-    const linesSvg = [];
+    // Mesh lines: each node connects to 2-3 nearest neighbors, plus close the outer hull
+    const lineSet = new Set();
+    // Nearest-neighbor connections
     for (let i = 0; i < total; i++) {
-        for (let j = i + 1; j < total; j++) {
-            linesSvg.push(`<line x1="${positions[i].x}" y1="${positions[i].y}" x2="${positions[j].x}" y2="${positions[j].y}" class="topology-submap-mesh-line"></line>`);
+        const dists = positions.map((p, j) => ({
+            j,
+            d: j === i ? Infinity : Math.hypot(p.x - positions[i].x, p.y - positions[i].y),
+        })).sort((a, b) => a.d - b.d);
+        const connectCount = 2 + ((seed + i) % 2); // 2 or 3
+        for (let k = 0; k < Math.min(connectCount, dists.length); k++) {
+            const a = Math.min(i, dists[k].j);
+            const b = Math.max(i, dists[k].j);
+            lineSet.add(`${a}-${b}`);
         }
     }
+    // Close the convex hull so the outer perimeter is connected
+    if (total >= 3) {
+        // Simple angular sort from centroid to find perimeter order
+        const cx = positions.reduce((s, p) => s + p.x, 0) / total;
+        const cy = positions.reduce((s, p) => s + p.y, 0) / total;
+        const indexed = positions.map((p, i) => ({ i, angle: Math.atan2(p.y - cy, p.x - cx) }));
+        indexed.sort((a, b) => a.angle - b.angle);
+        for (let k = 0; k < indexed.length; k++) {
+            const a = Math.min(indexed[k].i, indexed[(k + 1) % indexed.length].i);
+            const b = Math.max(indexed[k].i, indexed[(k + 1) % indexed.length].i);
+            lineSet.add(`${a}-${b}`);
+        }
+    }
+    const linesSvg = Array.from(lineSet).map((key) => {
+        const [a, b] = key.split("-").map(Number);
+        return `<line x1="${positions[a].x}" y1="${positions[a].y}" x2="${positions[b].x}" y2="${positions[b].y}" class="topology-submap-mesh-line"></line>`;
+    });
 
     // Assign colors: placeholder=white, first dnUp=green, rest=red
     const dotsSvg = positions.map((p, i) => {
