@@ -4415,21 +4415,8 @@ function renderTopologyStage() {
                 `;
             }).join("");
 
-            // DN counts: prefer discovery cache, fall back to backend payload
-            const dnCache = isSubmap ? _submapDnCountCache.get(entity.map_view_id) : null;
-            const dnUp = dnCache ? dnCache.dn_up : (entity.dn_up || 0);
-            const dnDown = dnCache ? dnCache.dn_down : (entity.dn_down || 0);
-            const dnUpNames = dnCache ? dnCache.dn_up_names : (entity.dn_up_names || []);
-            const dnDownNames = dnCache ? dnCache.dn_down_names : (entity.dn_down_names || []);
-            const submapDnCounters = isSubmap
-                ? `<span class="topology-submap-dn-counts">${
-                    dnUp > 0 ? `<span class="topology-submap-dn-up" data-dn-names="${escapeHtml(dnUpNames.join(','))}">${dnUp}</span>` : ""
-                }${
-                    dnDown > 0 ? `<span class="topology-submap-dn-down" data-dn-names="${escapeHtml(dnDownNames.join(','))}">${dnDown}</span>` : ""
-                }</span>`
-                : "";
             const entityBody = isSubmap
-                ? `<span class="topology-node-name">${displayName}</span>${nodeIcon}${submapDnCounters}`
+                ? `<span class="topology-node-name">${displayName}</span>${nodeIcon}`
                 : `${nodeIcon}<span class="topology-node-name">${displayName}</span>${(isServiceCloud || isDiscovered) ? "" : `<span class="topology-node-meta">${subtitle}</span>`}`;
             return `
                 <button
@@ -4463,27 +4450,32 @@ function renderTopologyStage() {
       // Clean up any stale DN tooltips from previous render
       document.querySelectorAll(".topology-submap-dn-tooltip").forEach((t) => t.remove());
 
-      // DN count bubble hover tooltips
-      layer.querySelectorAll(".topology-submap-dn-up, .topology-submap-dn-down").forEach((bubble) => {
-          const isUp = bubble.classList.contains("topology-submap-dn-up");
-          bubble.addEventListener("mouseenter", () => {
-              const names = (bubble.getAttribute("data-dn-names") || "").split(",").filter(Boolean);
-              if (!names.length) return;
-              // Remove any existing tooltip first
+      // Submap hover tooltip — combined list of up (green) and down (red) DNs
+      layer.querySelectorAll(".topology-node-icon-submap[data-submap-dn-all]").forEach((icon) => {
+          const submapBtn = icon.closest(".topology-submap");
+          if (!submapBtn) return;
+          submapBtn.addEventListener("mouseenter", () => {
+              const raw = (icon.getAttribute("data-submap-dn-all") || "").split(",").filter(Boolean);
+              if (!raw.length) return;
               document.querySelectorAll(".topology-submap-dn-tooltip").forEach((t) => t.remove());
               const tip = document.createElement("div");
-              tip.className = "topology-submap-dn-tooltip" + (isUp ? " dn-tooltip-up" : " dn-tooltip-down");
-              tip.innerHTML = names.map((n) => `<div>${escapeHtml(n)}</div>`).join("");
+              tip.className = "topology-submap-dn-tooltip";
+              tip.innerHTML = raw.map((entry) => {
+                  const isUp = entry.startsWith("up:");
+                  const name = entry.replace(/^(up|down):/, "");
+                  const color = isUp ? "#4ade80" : "#ff4040";
+                  return `<div style="color:${color}">${escapeHtml(name)}</div>`;
+              }).join("");
               document.body.appendChild(tip);
-              const rect = bubble.getBoundingClientRect();
+              const rect = submapBtn.getBoundingClientRect();
               tip.style.left = `${rect.left + rect.width / 2}px`;
               tip.style.top = `${rect.top - 6}px`;
-              bubble._dnTooltip = tip;
+              submapBtn._dnTooltip = tip;
           });
-          bubble.addEventListener("mouseleave", () => {
-              if (bubble._dnTooltip) {
-                  bubble._dnTooltip.remove();
-                  bubble._dnTooltip = null;
+          submapBtn.addEventListener("mouseleave", () => {
+              if (submapBtn._dnTooltip) {
+                  submapBtn._dnTooltip.remove();
+                  submapBtn._dnTooltip = null;
               }
           });
       });
@@ -5104,53 +5096,77 @@ function drawTopologyLinks(entityMap) {
     });
 }
 
-function getTopologySubmapIconMarkup(entity) {
-    // Dense glowing mesh network — 12 nodes, ~30 connection lines
-    // Nodes spread across a 96×64 viewBox for a wide, dense network feel
-    const nodes = [
-        // top row
-        {x:16,y:8}, {x:38,y:6}, {x:60,y:10}, {x:82,y:7},
-        // middle row
-        {x:8,y:28}, {x:28,y:32}, {x:50,y:26}, {x:72,y:30}, {x:90,y:24},
-        // bottom row
-        {x:18,y:50}, {x:48,y:52}, {x:78,y:48},
+function getTopologySubmapIconMarkup(entity, dnUp, dnDown, dnUpNames, dnDownNames) {
+    // Data-driven mesh: each node dot = one DN, colored green (up) or red (down)
+    // Minimum 3 nodes so the mesh never looks empty
+    const totalReal = dnUp + dnDown;
+    const total = Math.max(totalReal, 3);
+    // Pad with green placeholder nodes if under minimum
+    const upCount = totalReal < 3 ? dnUp + (3 - totalReal) : dnUp;
+    const downCount = dnDown;
+
+    // Generate node positions spread across the viewBox using a seeded layout
+    // Use a simple deterministic scatter based on entity id for consistency
+    const seed = (entity.map_view_id || 0) * 7;
+    const positions = [];
+    const vw = 92, vh = 54, pad = 6;
+    for (let i = 0; i < total; i++) {
+        // Distribute in rows with jitter
+        const cols = Math.ceil(Math.sqrt(total * 1.8));
+        const row = Math.floor(i / cols);
+        const col = i % cols;
+        const rows = Math.ceil(total / cols);
+        const xStep = (vw - pad * 2) / Math.max(cols - 1, 1);
+        const yStep = (vh - pad * 2) / Math.max(rows - 1, 1);
+        // Deterministic jitter from seed + index
+        const jx = ((seed + i * 31) % 17 - 8) * 1.2;
+        const jy = ((seed + i * 47) % 13 - 6) * 1.2;
+        const x = Math.max(pad, Math.min(vw - pad, pad + col * xStep + jx));
+        const y = Math.max(pad, Math.min(vh - pad, pad + row * yStep + jy));
+        positions.push({ x, y });
+    }
+
+    // Assign colors: first upCount are green, rest are red
+    const nodeColors = [];
+    for (let i = 0; i < total; i++) {
+        nodeColors.push(i < upCount ? "up" : "down");
+    }
+
+    // Generate random-ish lines: connect each node to 2-3 nearest neighbors
+    const lineSet = new Set();
+    for (let i = 0; i < total; i++) {
+        const dists = positions.map((p, j) => ({
+            j,
+            d: j === i ? Infinity : Math.hypot(p.x - positions[i].x, p.y - positions[i].y),
+        })).sort((a, b) => a.d - b.d);
+        const connectCount = 2 + ((seed + i) % 2); // 2 or 3
+        for (let k = 0; k < Math.min(connectCount, dists.length); k++) {
+            const a = Math.min(i, dists[k].j);
+            const b = Math.max(i, dists[k].j);
+            lineSet.add(`${a}-${b}`);
+        }
+    }
+
+    const linesSvg = Array.from(lineSet).map((key) => {
+        const [a, b] = key.split("-").map(Number);
+        return `<line x1="${positions[a].x}" y1="${positions[a].y}" x2="${positions[b].x}" y2="${positions[b].y}" class="topology-submap-mesh-line"></line>`;
+    }).join("");
+
+    const dotsSvg = positions.map((p, i) => {
+        const color = nodeColors[i] === "up" ? "#4ade80" : "#ff4040";
+        return `<circle cx="${p.x}" cy="${p.y}" r="2.2" fill="${color}" class="topology-submap-mesh-node"></circle>`;
+    }).join("");
+
+    // Store DN names on the icon span for the hover tooltip
+    const allNames = [
+        ...(dnUpNames || []).map((n) => `up:${n}`),
+        ...(dnDownNames || []).map((n) => `down:${n}`),
     ];
-    // Build dense connections — each node connects to its 3-4 nearest neighbors
-    const lines = [
-        // top row interconnections
-        [0,1],[1,2],[2,3],
-        // top to middle
-        [0,4],[0,5],[1,5],[1,6],[2,6],[2,7],[3,7],[3,8],
-        // middle row interconnections
-        [4,5],[5,6],[6,7],[7,8],
-        // middle to bottom
-        [4,9],[5,9],[5,10],[6,10],[7,10],[7,11],[8,11],
-        // bottom row interconnections
-        [9,10],[10,11],
-        // cross-links for density
-        [0,6],[1,7],[2,8],[4,10],[6,11],[9,5],[3,6],
-    ];
-    const linesSvg = lines.map(([a,b]) =>
-        `<line x1="${nodes[a].x}" y1="${nodes[a].y}" x2="${nodes[b].x}" y2="${nodes[b].y}" class="topology-submap-mesh-line"></line>`
-    ).join("");
-    const glowsSvg = nodes.map((n,i) =>
-        `<circle cx="${n.x}" cy="${n.y}" r="${i===5||i===6? 6 : 5}" fill="url(#submap-node-glow)"></circle>`
-    ).join("");
-    const dotsSvg = nodes.map((n,i) =>
-        `<circle cx="${n.x}" cy="${n.y}" r="${i===5||i===6? 2.2 : 1.8}" class="topology-submap-mesh-node"></circle>`
-    ).join("");
+
     return `
-        <span class="topology-node-icon topology-node-icon-submap" aria-hidden="true">
-            <svg viewBox="0 0 96 58" focusable="false" preserveAspectRatio="xMidYMid meet">
-                <defs>
-                    <radialGradient id="submap-node-glow">
-                        <stop offset="0%" stop-color="currentColor" stop-opacity="0.2"></stop>
-                        <stop offset="60%" stop-color="currentColor" stop-opacity="0.06"></stop>
-                        <stop offset="100%" stop-color="currentColor" stop-opacity="0"></stop>
-                    </radialGradient>
-                </defs>
+        <span class="topology-node-icon topology-node-icon-submap" data-submap-dn-all="${escapeHtml(allNames.join(','))}" aria-hidden="true">
+            <svg viewBox="0 0 ${vw} ${vh}" focusable="false" preserveAspectRatio="xMidYMid meet">
                 ${linesSvg}
-                ${glowsSvg}
                 ${dotsSvg}
             </svg>
         </span>
@@ -5163,7 +5179,12 @@ function getTopologyAnchorIconMarkup(entity) {
     }
 
     if (entity.kind === "submap") {
-        return getTopologySubmapIconMarkup(entity);
+        const dnCache = _submapDnCountCache.get(entity.map_view_id);
+        const dnUp = dnCache ? dnCache.dn_up : (entity.dn_up || 0);
+        const dnDown = dnCache ? dnCache.dn_down : (entity.dn_down || 0);
+        const dnUpNames = dnCache ? dnCache.dn_up_names : (entity.dn_up_names || []);
+        const dnDownNames = dnCache ? dnCache.dn_down_names : (entity.dn_down_names || []);
+        return getTopologySubmapIconMarkup(entity, dnUp, dnDown, dnUpNames, dnDownNames);
     }
 
     if (entity.kind === "services-cloud") {

@@ -1995,7 +1995,6 @@ a {
 }
 
 .topology-submap-mesh-node {
-    fill: rgba(255, 255, 255, 0.85);
     filter: none;
     transition: filter 300ms ease;
 }
@@ -2018,50 +2017,7 @@ a {
     filter: drop-shadow(0 0 6px rgba(60, 200, 255, 0.25));
 }
 
-/* --- Submap DN up/down counters --- */
-.topology-submap-dn-counts {
-    display: flex;
-    justify-content: center;
-    gap: 0.3rem;
-    width: 100%;
-    box-sizing: border-box;
-    line-height: 1;
-    margin-top: -1rem;
-    position: relative;
-    z-index: 1;
-}
-
-.topology-submap-dn-up,
-.topology-submap-dn-down {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.6rem;
-    height: 1.6rem;
-    border-radius: 50%;
-    font-size: 0.72rem;
-    font-weight: 700;
-    font-variant-numeric: tabular-nums;
-}
-
-.topology-submap-dn-up {
-    color: #4ade80;
-    border: 1.5px solid rgba(74, 222, 128, 0.5);
-    text-shadow: 0 0 6px rgba(74, 222, 128, 0.4);
-}
-
-.topology-submap-dn-down {
-    color: #ff4040;
-    border: 1.5px solid rgba(255, 64, 64, 0.5);
-    text-shadow: 0 0 6px rgba(255, 64, 64, 0.4);
-}
-
-.topology-submap-dn-up:hover,
-.topology-submap-dn-down:hover {
-    cursor: default;
-}
-
-/* DN count hover tooltip — vader theme */
+/* DN hover tooltip — vader theme */
 .topology-submap-dn-tooltip {
     position: fixed;
     transform: translate(-50%, -100%);
@@ -2077,24 +2033,9 @@ a {
     z-index: 9999;
     pointer-events: none;
     box-shadow:
-        0 0 12px rgba(180, 0, 0, 0.15),
+        0 0 8px rgba(80, 80, 80, 0.15),
         0 4px 20px rgba(0, 0, 0, 0.6);
-}
-
-.topology-submap-dn-tooltip.dn-tooltip-up {
-    color: #4ade80;
-    border-color: rgba(74, 222, 128, 0.35);
-    box-shadow:
-        0 0 10px rgba(74, 222, 128, 0.1),
-        0 4px 20px rgba(0, 0, 0, 0.6);
-}
-
-.topology-submap-dn-tooltip.dn-tooltip-down {
-    color: #ff4040;
-    border-color: rgba(160, 20, 20, 0.5);
-    box-shadow:
-        0 0 12px rgba(180, 0, 0, 0.15),
-        0 4px 20px rgba(0, 0, 0, 0.6);
+    border-color: rgba(80, 100, 120, 0.4);
 }
 
 .submap-add-node-panel {
