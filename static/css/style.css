@@ -1980,7 +1980,7 @@ a {
 }
 
 .topology-submap .topology-node-icon {
-    margin-top: auto;
+    margin-top: 0;
 }
 
 .topology-submap .topology-node-icon svg {
