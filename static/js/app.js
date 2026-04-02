@@ -813,7 +813,7 @@ function getTopologyIconStatus(status) {
     if (normalized === "down") {
         return "down";
     }
-    return "degraded";
+    return "neutral";
 }
 
 function getTopologyClusterIconStatus(discoveredCount, upCount) {
