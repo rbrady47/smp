@@ -2392,7 +2392,10 @@ async def topology_payload(
 
     # Build per-submap DN up/down counts from DB + live ping snapshots
     submap_view_ids = [view.id for view in submap_views]
-    submap_dn_counts: dict[int, dict[str, int]] = {vid: {"up": 0, "down": 0} for vid in submap_view_ids}
+    submap_dn_counts: dict[int, dict] = {
+        vid: {"up": 0, "down": 0, "up_names": [], "down_names": []}
+        for vid in submap_view_ids
+    }
     if submap_view_ids:
         submap_dns = db.scalars(
             select(DiscoveredNode).where(DiscoveredNode.map_view_id.in_(submap_view_ids))
@@ -2404,8 +2407,10 @@ async def topology_payload(
             snap = dn_ping_snapshots.get(dn.site_id)
             if snap and snap.get("ping_ok"):
                 submap_dn_counts[vid]["up"] += 1
+                submap_dn_counts[vid]["up_names"].append(dn.site_id)
             else:
                 submap_dn_counts[vid]["down"] += 1
+                submap_dn_counts[vid]["down_names"].append(dn.site_id)
 
     submaps = []
     for view in submap_views:
@@ -2424,6 +2429,8 @@ async def topology_payload(
             "height": obj.height if obj else 72,
             "dn_up": counts["up"],
             "dn_down": counts["down"],
+            "dn_up_names": counts["up_names"],
+            "dn_down_names": counts["down_names"],
         })
     db.commit()
     result = build_mock_topology_payload(inventory_nodes)

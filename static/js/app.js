@@ -4404,9 +4404,9 @@ function renderTopologyStage() {
 
             const submapDnCounters = isSubmap
                 ? `<span class="topology-submap-dn-counts">${
-                    (entity.dn_up || 0) > 0 ? `<span class="topology-submap-dn-up">${entity.dn_up}</span>` : ""
+                    (entity.dn_up || 0) > 0 ? `<span class="topology-submap-dn-up" data-dn-names="${escapeHtml((entity.dn_up_names || []).join(','))}">${entity.dn_up}</span>` : ""
                 }${
-                    (entity.dn_down || 0) > 0 ? `<span class="topology-submap-dn-down">${entity.dn_down}</span>` : ""
+                    (entity.dn_down || 0) > 0 ? `<span class="topology-submap-dn-down" data-dn-names="${escapeHtml((entity.dn_down_names || []).join(','))}">${entity.dn_down}</span>` : ""
                 }</span>`
                 : "";
             const entityBody = isSubmap
@@ -4440,6 +4440,28 @@ function renderTopologyStage() {
     topologyState.selectedEntityIds = new Set(
         Array.from(topologyState.selectedEntityIds).filter((entityId) => visibleIds.has(entityId)),
     );
+
+      // DN count bubble hover tooltips
+      layer.querySelectorAll(".topology-submap-dn-up, .topology-submap-dn-down").forEach((bubble) => {
+          bubble.addEventListener("mouseenter", (event) => {
+              const names = (bubble.getAttribute("data-dn-names") || "").split(",").filter(Boolean);
+              if (!names.length) return;
+              const tip = document.createElement("div");
+              tip.className = "topology-submap-dn-tooltip";
+              tip.innerHTML = names.map((n) => `<div>${escapeHtml(n)}</div>`).join("");
+              document.body.appendChild(tip);
+              const rect = bubble.getBoundingClientRect();
+              tip.style.left = `${rect.left + rect.width / 2}px`;
+              tip.style.top = `${rect.top - 6}px`;
+              bubble._dnTooltip = tip;
+          });
+          bubble.addEventListener("mouseleave", () => {
+              if (bubble._dnTooltip) {
+                  bubble._dnTooltip.remove();
+                  bubble._dnTooltip = null;
+              }
+          });
+      });
 
       layer.querySelectorAll("[data-topology-id]").forEach((button) => {
           button.querySelectorAll("[data-topology-anchor-point]").forEach((anchorPoint) => {
