@@ -1362,7 +1362,6 @@ function getTopologyDiscoveredTooltipMarkup(entity) {
 
     const siteId = entity.site_id || entity.node_id || "--";
     const hostIp = entity.host || "--";
-    const rttState = String(entity.rtt_state || "unknown").toLowerCase();
     const rttText = typeof entity.latency_ms === "number" && Number.isFinite(entity.latency_ms)
         ? `${Math.round(entity.latency_ms)} ms`
         : "--";
@@ -1373,25 +1372,18 @@ function getTopologyDiscoveredTooltipMarkup(entity) {
     const rxText = entity.rx_display || "--";
     const sourceName = entity.source_name || "--";
 
-    let statusReason;
-    if (rttState === "good") {
-        statusReason = rttText !== "--"
-            ? `Green: Ping is healthy (${rttText}).`
-            : "Green: Ping is healthy.";
-    } else if (rttState === "warn") {
-        statusReason = rttText !== "--"
-            ? `Yellow: Ping is degraded (${rttText}).`
-            : "Yellow: Ping is degraded.";
-    } else if (rttState === "down") {
-        statusReason = "Red: Ping is down.";
-    } else {
-        statusReason = "Ping state not available yet.";
-    }
+    const effectiveStatus = getEffectiveTopologyEntityStatus(entity);
+    const statusClass = effectiveStatus === "down" || effectiveStatus === "offline" || effectiveStatus === "failed"
+        ? "tooltip-border-red"
+        : effectiveStatus === "degraded"
+            ? "tooltip-border-yellow"
+            : effectiveStatus === "healthy" || effectiveStatus === "up" || effectiveStatus === "online"
+                ? "tooltip-border-green"
+                : "tooltip-border-blue";
 
     return `
-        <span class="topology-node-tooltip" role="tooltip">
+        <span class="topology-node-tooltip ${statusClass}" role="tooltip">
             <strong class="topology-node-tooltip-title">${escapeHtml(entity.name || siteId)}</strong>
-            <span class="topology-node-tooltip-reason">${escapeHtml(statusReason)}</span>
             <span class="topology-node-tooltip-grid">
                 <span class="topology-node-tooltip-label">Site ID</span>
                 <span class="topology-node-tooltip-value">${escapeHtml(String(siteId))}</span>
