@@ -1019,18 +1019,25 @@ function getTopologyAnchorPointDefinitions() {
  * Pick the best anchor point key given the angle from source center to target center.
  * Returns one of: "n", "ne", "e", "se", "s", "sw", "w", "nw".
  */
-function pickAnchorPointByAngle(fromX, fromY, toX, toY) {
-    const angle = Math.atan2(toY - fromY, toX - fromX); // radians, 0=east
+/**
+ * Pick the best anchor point from a constrained set based on angle.
+ * Each allowed AP has a canonical angle; pick the one closest to the actual angle.
+ */
+function pickAnchorPointFromSet(fromX, fromY, toX, toY, allowedKeys) {
+    const apAngles = { e: 0, se: 45, s: 90, sw: 135, w: 180, nw: 225, n: 270, ne: 315 };
+    const angle = Math.atan2(toY - fromY, toX - fromX);
     const deg = ((angle * 180 / Math.PI) + 360) % 360;
-    // Map degrees to 8 compass points (each spans 45°, centered)
-    if (deg >= 337.5 || deg < 22.5) return "e";
-    if (deg >= 22.5 && deg < 67.5) return "se";
-    if (deg >= 67.5 && deg < 112.5) return "s";
-    if (deg >= 112.5 && deg < 157.5) return "sw";
-    if (deg >= 157.5 && deg < 202.5) return "w";
-    if (deg >= 202.5 && deg < 247.5) return "nw";
-    if (deg >= 247.5 && deg < 292.5) return "n";
-    return "ne"; // 292.5..337.5
+    let best = allowedKeys[0];
+    let bestDiff = 360;
+    for (const key of allowedKeys) {
+        const apDeg = apAngles[key] ?? 0;
+        const diff = Math.min(Math.abs(deg - apDeg), 360 - Math.abs(deg - apDeg));
+        if (diff < bestDiff) {
+            bestDiff = diff;
+            best = key;
+        }
+    }
+    return best;
 }
 
 function getTopologyConnectedAnchorMap() {
@@ -4689,7 +4696,10 @@ function renderTopologyStage() {
                     }
                     topologyState.pinnedLinkNodeId = nextId;
                     revealDiscoveryLinksForEntity(nextId);
-                    applyTopologyHoverFocus(nextId);
+                    const root = document.getElementById("topology-root");
+                    if (root?.getAttribute("data-map-view-id")) {
+                        applyTopologyHoverFocus(nextId);
+                    }
                 }
                 renderTopologyStage();
                 return;
@@ -4794,7 +4804,10 @@ function renderTopologyStage() {
             if (!entityId || topologyState.editMode) return;
             if (topologyState.pinnedLinkNodeId && topologyState.pinnedLinkNodeId !== entityId) return;
             revealDiscoveryLinksForEntity(entityId);
-            applyTopologyHoverFocus(entityId);
+            const root = document.getElementById("topology-root");
+            if (root?.getAttribute("data-map-view-id")) {
+                applyTopologyHoverFocus(entityId);
+            }
         });
         button.addEventListener("mouseleave", () => {
             const entityId = button.getAttribute("data-topology-id");
@@ -5681,20 +5694,21 @@ async function refreshSubmapDiscovery(submapViewId) {
         };
 
         const dnEntityIds = new Set(discoveredEntities.map((dn) => dn.id));
+        const dnDnAllowedAPs = ["e", "se", "s", "sw", "w"];
         const discoveryLinks = rawLinks
             .map((link, i) => {
                 const toEntityId = `dn-${link.target_site_id}`;
                 if (!dnEntityIds.has(toEntityId)) return null;
 
-                // DN↔DN link: from is a DN entity
+                // DN↔DN link: use E/SE/S/SW/W based on geometry
                 if (link.kind === "dn-dn" && link.source_dn_site_id) {
                     const fromEntityId = `dn-${link.source_dn_site_id}`;
                     if (!dnEntityIds.has(fromEntityId)) return null;
                     if (fromEntityId === toEntityId) return null; // self-link guard
                     const fromC = entityCenter(fromEntityId);
                     const toC = entityCenter(toEntityId);
-                    const srcAP = fromC && toC ? pickAnchorPointByAngle(fromC.x, fromC.y, toC.x, toC.y) : "s";
-                    const tgtAP = fromC && toC ? pickAnchorPointByAngle(toC.x, toC.y, fromC.x, fromC.y) : "n";
+                    const srcAP = fromC && toC ? pickAnchorPointFromSet(fromC.x, fromC.y, toC.x, toC.y, dnDnAllowedAPs) : "s";
+                    const tgtAP = fromC && toC ? pickAnchorPointFromSet(toC.x, toC.y, fromC.x, fromC.y, dnDnAllowedAPs) : "s";
                     return {
                         id: `discovery-link-${i}`,
                         from: fromEntityId,
@@ -5709,19 +5723,15 @@ async function refreshSubmapDiscovery(submapViewId) {
                     };
                 }
 
-                // AN↔DN link: from is an anchor entity
+                // AN↔DN link: always south (AN) → north (DN)
                 const fromEntityId = anchorEntityMap.get(String(link.source_anchor_id));
                 if (!fromEntityId) return null;
-                const fromC = entityCenter(fromEntityId);
-                const toC = entityCenter(toEntityId);
-                const srcAP = fromC && toC ? pickAnchorPointByAngle(fromC.x, fromC.y, toC.x, toC.y) : "s";
-                const tgtAP = fromC && toC ? pickAnchorPointByAngle(toC.x, toC.y, fromC.x, fromC.y) : "n";
                 return {
                     id: `discovery-link-${i}`,
                     from: fromEntityId,
                     to: toEntityId,
-                    source_anchor: srcAP,
-                    target_anchor: tgtAP,
+                    source_anchor: "s",
+                    target_anchor: "n",
                     link_type: "dotted",
                     kind: "discovery",
                     status: link.status || "neutral",
