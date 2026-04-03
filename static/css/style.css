@@ -1372,16 +1372,14 @@ a {
 
 /* Hover focus: fade unconnected nodes */
 [data-topology-id].is-topology-faded {
-    opacity: 0.15;
-    transition: opacity 0.25s ease;
+    opacity: 0.12;
     pointer-events: none;
+    filter: saturate(0) brightness(0.4) !important;
     animation: none !important;
 }
 [data-topology-id].is-topology-faded * {
     animation: none !important;
-}
-[data-topology-id]:not(.is-topology-faded) {
-    transition: opacity 0.25s ease;
+    filter: saturate(0) brightness(0.4) !important;
 }
 .topology-link-discovery.is-link-flashing {
     opacity: 0.85;
