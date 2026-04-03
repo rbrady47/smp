@@ -1015,6 +1015,24 @@ function getTopologyAnchorPointDefinitions() {
     ];
 }
 
+/**
+ * Pick the best anchor point key given the angle from source center to target center.
+ * Returns one of: "n", "ne", "e", "se", "s", "sw", "w", "nw".
+ */
+function pickAnchorPointByAngle(fromX, fromY, toX, toY) {
+    const angle = Math.atan2(toY - fromY, toX - fromX); // radians, 0=east
+    const deg = ((angle * 180 / Math.PI) + 360) % 360;
+    // Map degrees to 8 compass points (each spans 45°, centered)
+    if (deg >= 337.5 || deg < 22.5) return "e";
+    if (deg >= 22.5 && deg < 67.5) return "se";
+    if (deg >= 67.5 && deg < 112.5) return "s";
+    if (deg >= 112.5 && deg < 157.5) return "sw";
+    if (deg >= 157.5 && deg < 202.5) return "w";
+    if (deg >= 202.5 && deg < 247.5) return "nw";
+    if (deg >= 247.5 && deg < 292.5) return "n";
+    return "ne"; // 292.5..337.5
+}
+
 function getTopologyConnectedAnchorMap() {
     const connected = new Map();
     (topologyPayload?.links ?? []).forEach((link, index) => {
@@ -4664,12 +4682,14 @@ function renderTopologyStage() {
                 if (topologyState.pinnedLinkNodeId === nextId) {
                     topologyState.pinnedLinkNodeId = null;
                     hideAllDiscoveryLinks();
+                    clearTopologyHoverFocus();
                 } else {
                     if (topologyState.pinnedLinkNodeId) {
                         hideDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
                     }
                     topologyState.pinnedLinkNodeId = nextId;
                     revealDiscoveryLinksForEntity(nextId);
+                    applyTopologyHoverFocus(nextId);
                 }
                 renderTopologyStage();
                 return;
@@ -4774,12 +4794,14 @@ function renderTopologyStage() {
             if (!entityId || topologyState.editMode) return;
             if (topologyState.pinnedLinkNodeId && topologyState.pinnedLinkNodeId !== entityId) return;
             revealDiscoveryLinksForEntity(entityId);
+            applyTopologyHoverFocus(entityId);
         });
         button.addEventListener("mouseleave", () => {
             const entityId = button.getAttribute("data-topology-id");
             if (!entityId || topologyState.editMode) return;
             if (topologyState.pinnedLinkNodeId === entityId) return;
             hideDiscoveryLinksForEntity(entityId);
+            clearTopologyHoverFocus();
         });
     });
 
@@ -4812,6 +4834,7 @@ function renderTopologyStage() {
         if (topologyState.pinnedLinkNodeId) {
             hideDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
             topologyState.pinnedLinkNodeId = null;
+            clearTopologyHoverFocus();
         }
         if (topologyState.pinnedLinkTooltipId) {
             topologyState.pinnedLinkTooltipId = null;
@@ -5521,7 +5544,7 @@ async function refreshSubmapDiscovery(submapViewId) {
             });
         topologyPayload.lvl1_nodes = discoveredEntities;
 
-        // Apply saved positions from DB first, then grid-place truly new DNs
+        // Apply saved positions from DB first, then cluster-place truly new DNs near their source AN
         const savedPositions = result?.saved_positions ?? {};
         const stage = document.getElementById("topology-stage");
         const stageW = stage ? stage.clientWidth : 1200;
@@ -5550,34 +5573,95 @@ async function refreshSubmapDiscovery(submapViewId) {
             }
         });
 
-        // Grid-place only DNs with no layout override (no DB position and no local override)
+        // Cluster-place DNs near their source anchor node instead of a blind grid
         const needsLayout = discoveredEntities.filter((dn) => !topologyState.layoutOverrides?.[dn.id]);
         if (needsLayout.length) {
-            const availW = stageW - margin * 2;
-            const availH = stageH - topBound - margin;
-            const cols = Math.max(1, Math.floor(availW / (dnSize + 30)));
-            const rows = Math.ceil(needsLayout.length / cols);
-            const cellW = availW / cols;
-            const cellH = Math.max(dnSize + 20, availH / Math.max(rows, 1));
-
-            needsLayout.forEach((dn, i) => {
-                const col = i % cols;
-                const row = Math.floor(i / cols);
-                let x = Math.round(margin + col * cellW + cellW / 2 - dnSize / 2);
-                let y = Math.round(topBound + row * cellH + cellH / 2 - dnSize / 2);
-
-                // Nudge if overlapping an occupied node
-                for (const occ of occupied) {
-                    const dx = Math.abs(x - occ.x);
-                    const dy = Math.abs(y - occ.y);
-                    if (dx < (dnSize + occ.size) / 2 + 20 && dy < (dnSize + occ.size) / 2 + 20) {
-                        y = occ.y + occ.size + 30;
+            // Build a map of source_anchor_id → AN center position
+            const placedEntities = topologyPayload.lvl0_nodes ?? [];
+            const anchorPositions = new Map();
+            placedEntities.forEach((e) => {
+                if (e.inventory_node_id) {
+                    const lo = topologyState.layoutOverrides?.[e.id];
+                    if (lo) {
+                        anchorPositions.set(String(e.inventory_node_id), {
+                            x: lo.x + (lo.size || 96) / 2,
+                            y: lo.y + (lo.size || 96) / 2,
+                            size: lo.size || 96,
+                        });
                     }
                 }
-
-                occupied.push({ x, y, size: dnSize });
-                setTopologyEntityLayout(dn.id, { x: Math.max(margin, x), y: Math.max(topBound, y), size: dnSize });
             });
+
+            // Group DNs by source anchor
+            const groups = new Map();
+            const ungrouped = [];
+            needsLayout.forEach((dn) => {
+                const anchorId = String(dn.source_anchor_id || "");
+                if (anchorId && anchorPositions.has(anchorId)) {
+                    if (!groups.has(anchorId)) groups.set(anchorId, []);
+                    groups.get(anchorId).push(dn);
+                } else {
+                    ungrouped.push(dn);
+                }
+            });
+
+            const spacing = dnSize + 20;
+
+            // Place each group in a fan below its source AN
+            for (const [anchorId, dns] of groups) {
+                const anPos = anchorPositions.get(anchorId);
+                const count = dns.length;
+                const fanWidth = (count - 1) * spacing;
+                const startX = anPos.x - fanWidth / 2 - dnSize / 2;
+                const baseY = anPos.y + anPos.size / 2 + 60;
+
+                dns.forEach((dn, i) => {
+                    let x = Math.round(startX + i * spacing);
+                    let y = Math.round(baseY);
+
+                    // Clamp to stage bounds
+                    x = Math.max(margin, Math.min(stageW - margin - dnSize, x));
+                    y = Math.max(topBound, Math.min(stageH - margin - dnSize, y));
+
+                    // Nudge if overlapping an occupied node
+                    for (const occ of occupied) {
+                        const dx = Math.abs(x - occ.x);
+                        const dy = Math.abs(y - occ.y);
+                        if (dx < (dnSize + occ.size) / 2 + 20 && dy < (dnSize + occ.size) / 2 + 20) {
+                            y = occ.y + occ.size + 30;
+                        }
+                    }
+
+                    occupied.push({ x, y, size: dnSize });
+                    setTopologyEntityLayout(dn.id, { x, y, size: dnSize });
+                });
+            }
+
+            // Grid-place any DNs without a known source anchor
+            if (ungrouped.length) {
+                const availW = stageW - margin * 2;
+                const cols = Math.max(1, Math.floor(availW / spacing));
+                const cellW = availW / cols;
+                const cellH = Math.max(dnSize + 20, (stageH - topBound - margin) / Math.max(Math.ceil(ungrouped.length / cols), 1));
+
+                ungrouped.forEach((dn, i) => {
+                    const col = i % cols;
+                    const row = Math.floor(i / cols);
+                    let x = Math.round(margin + col * cellW + cellW / 2 - dnSize / 2);
+                    let y = Math.round(topBound + row * cellH + cellH / 2 - dnSize / 2);
+
+                    for (const occ of occupied) {
+                        const dx = Math.abs(x - occ.x);
+                        const dy = Math.abs(y - occ.y);
+                        if (dx < (dnSize + occ.size) / 2 + 20 && dy < (dnSize + occ.size) / 2 + 20) {
+                            y = occ.y + occ.size + 30;
+                        }
+                    }
+
+                    occupied.push({ x, y, size: dnSize });
+                    setTopologyEntityLayout(dn.id, { x: Math.max(margin, x), y: Math.max(topBound, y), size: dnSize });
+                });
+            }
         }
         // Build discovery links (AN↔DN and DN↔DN tunnel connections)
         const placedEntities = topologyPayload.lvl0_nodes ?? [];
@@ -5588,6 +5672,14 @@ async function refreshSubmapDiscovery(submapViewId) {
                 anchorEntityMap.set(String(e.inventory_node_id), e.id);
             }
         });
+        // Helper: get entity center from layout overrides
+        const entityCenter = (entityId) => {
+            const lo = topologyState.layoutOverrides?.[entityId];
+            if (!lo) return null;
+            const sz = lo.size || 60;
+            return { x: lo.x + sz / 2, y: lo.y + sz / 2 };
+        };
+
         const dnEntityIds = new Set(discoveredEntities.map((dn) => dn.id));
         const discoveryLinks = rawLinks
             .map((link, i) => {
@@ -5599,12 +5691,16 @@ async function refreshSubmapDiscovery(submapViewId) {
                     const fromEntityId = `dn-${link.source_dn_site_id}`;
                     if (!dnEntityIds.has(fromEntityId)) return null;
                     if (fromEntityId === toEntityId) return null; // self-link guard
+                    const fromC = entityCenter(fromEntityId);
+                    const toC = entityCenter(toEntityId);
+                    const srcAP = fromC && toC ? pickAnchorPointByAngle(fromC.x, fromC.y, toC.x, toC.y) : "s";
+                    const tgtAP = fromC && toC ? pickAnchorPointByAngle(toC.x, toC.y, fromC.x, fromC.y) : "n";
                     return {
                         id: `discovery-link-${i}`,
                         from: fromEntityId,
                         to: toEntityId,
-                        source_anchor: "s",
-                        target_anchor: "n",
+                        source_anchor: srcAP,
+                        target_anchor: tgtAP,
                         link_type: "dotted",
                         kind: "discovery",
                         status: link.status || "neutral",
@@ -5616,12 +5712,16 @@ async function refreshSubmapDiscovery(submapViewId) {
                 // AN↔DN link: from is an anchor entity
                 const fromEntityId = anchorEntityMap.get(String(link.source_anchor_id));
                 if (!fromEntityId) return null;
+                const fromC = entityCenter(fromEntityId);
+                const toC = entityCenter(toEntityId);
+                const srcAP = fromC && toC ? pickAnchorPointByAngle(fromC.x, fromC.y, toC.x, toC.y) : "s";
+                const tgtAP = fromC && toC ? pickAnchorPointByAngle(toC.x, toC.y, fromC.x, fromC.y) : "n";
                 return {
                     id: `discovery-link-${i}`,
                     from: fromEntityId,
                     to: toEntityId,
-                    source_anchor: "s",
-                    target_anchor: "n",
+                    source_anchor: srcAP,
+                    target_anchor: tgtAP,
                     link_type: "dotted",
                     kind: "discovery",
                     status: link.status || "neutral",
@@ -5825,6 +5925,37 @@ function flashDiscoveryLinksForEntity(entityId) {
         topologyState._flashTimers.push(fadeTimer);
     }, 3000);
     topologyState._flashTimers.push(timer);
+}
+
+// --- Hover focus: fade unconnected nodes ---
+
+function applyTopologyHoverFocus(entityId) {
+    // Build set of connected entity IDs from topology links
+    const connectedIds = new Set();
+    connectedIds.add(entityId);
+    (topologyPayload?.links ?? []).forEach((link) => {
+        if (link.from === entityId) connectedIds.add(link.to);
+        if (link.to === entityId) connectedIds.add(link.from);
+    });
+
+    const stage = document.getElementById("topology-stage");
+    if (!stage) return;
+    stage.querySelectorAll("[data-topology-id]").forEach((el) => {
+        const id = el.getAttribute("data-topology-id");
+        if (!connectedIds.has(id)) {
+            el.classList.add("is-topology-faded");
+        } else {
+            el.classList.remove("is-topology-faded");
+        }
+    });
+}
+
+function clearTopologyHoverFocus() {
+    const stage = document.getElementById("topology-stage");
+    if (!stage) return;
+    stage.querySelectorAll(".is-topology-faded").forEach((el) => {
+        el.classList.remove("is-topology-faded");
+    });
 }
 
 // --- End discovery link visibility helpers ---

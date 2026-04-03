@@ -1369,6 +1369,16 @@ a {
 .topology-link-discovery.is-link-revealed.topology-link-down {
     animation: topology-link-down-pulse 2.2s ease-in-out infinite;
 }
+
+/* Hover focus: fade unconnected nodes */
+[data-topology-id].is-topology-faded {
+    opacity: 0.15;
+    transition: opacity 0.25s ease;
+    pointer-events: none;
+}
+[data-topology-id]:not(.is-topology-faded) {
+    transition: opacity 0.25s ease;
+}
 .topology-link-discovery.is-link-flashing {
     opacity: 0.85;
     pointer-events: none;
