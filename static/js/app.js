@@ -4227,12 +4227,13 @@ function getTopologyEntities() {
     };
 
     const authoredEntities = [
+        buildTopologyServiceCloudEntity(),
         ...((topologyPayload.lvl0_nodes ?? []).map(mergeDashboardAnchorState)),
         ...((topologyPayload.lvl1_nodes ?? []).map(mergeDashboardAnchorState)),
         ...(topologyPayload.lvl2_clusters ?? []),
         ...(topologyPayload.submaps ?? []),
     ];
-    return authoredEntities.filter((entity) => Boolean(topologyState.layoutOverrides?.[entity.id]));
+    return authoredEntities.filter((entity) => entity.kind === "services-cloud" || Boolean(topologyState.layoutOverrides?.[entity.id]));
 }
 
 function getTopologyLinkId(link, index) {
