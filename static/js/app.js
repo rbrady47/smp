@@ -8210,15 +8210,29 @@ async function handleNodeActionClick(event) {
 
 // ==================== DISCOVERY PAGE ====================
 
-const DISCOVERY_REPULSION = 600;
-const DISCOVERY_SPRING = 0.05;
-const DISCOVERY_SPRING_REST = 50;
-const DISCOVERY_DRAG_REPULSION = 800;
 const DISCOVERY_DRAG_FOLLOW = 0.08;
 const DISCOVERY_DAMPING = 0.82;
-const DISCOVERY_CENTER_GRAVITY = 0.008;
 const DISCOVERY_OVERLAP_PUSH = 2.0;  // hard separation force multiplier
 const DISCOVERY_REFRESH_MS = 30000;
+
+// Dynamic physics/sizing based on node count — lerps between "few" and "many"
+function discoveryScale() {
+    const n = discoveryState.nodes.length || 1;
+    // t=0 at <=20 nodes, t=1 at >=350 nodes
+    const t = Math.max(0, Math.min(1, (n - 20) / 330));
+    return {
+        repulsion:      600 + (1 - t) * 600,       // 1200 → 600
+        spring:         0.04 + t * 0.02,            // 0.04 → 0.06
+        springRest:     120 - t * 70,               // 120  → 50
+        dragRepulsion:  800 + (1 - t) * 600,        // 1400 → 800
+        centerGravity:  0.005 + t * 0.005,          // 0.005 → 0.01
+        radiusMin:      12 - t * 7,                 // 12   → 5
+        radiusMax:      40 - t * 26,                // 40   → 14
+        radiusBase:     8 - t * 4,                  // 8    → 4
+        radiusPerConn:  4 - t * 2.5,               // 4    → 1.5
+        rootRadius:     40 - t * 26,                // 40   → 14
+    };
+}
 
 let discoveryState = {
     nodes: [],
@@ -8241,9 +8255,10 @@ let discoveryState = {
 };
 
 function discoveryNodeRadius(node) {
-    if (node.id === discoveryState.rootSiteId) return 14;
+    const s = discoveryScale();
+    if (node.id === discoveryState.rootSiteId) return s.rootRadius;
     const cc = node.connection_count || 0;
-    return Math.max(5, Math.min(14, 4 + cc * 1.5));
+    return Math.max(s.radiusMin, Math.min(s.radiusMax, s.radiusBase + cc * s.radiusPerConn));
 }
 
 function discoveryStatusColor(status) {
@@ -8275,6 +8290,7 @@ function discoveryTick() {
     const stageH = stage.clientHeight;
     const cx = stageW / 2;
     const cy = stageH / 2;
+    const sc = discoveryScale();
 
     // Build set of neighbors for the dragged node (for follow/scatter logic)
     const dragNode = discoveryState.dragNode;
@@ -8307,7 +8323,7 @@ function discoveryTick() {
 
             // Normal Coulomb repulsion
             const effectiveDist = Math.max(dist, minSep);
-            const force = DISCOVERY_REPULSION / (effectiveDist * effectiveDist);
+            const force = sc.repulsion / (effectiveDist * effectiveDist);
             const fx = (dx / dist) * force;
             const fy = (dy / dist) * force;
             if (!a._pinned && !a._dragging) { a.vx += fx; a.vy += fy; }
@@ -8323,8 +8339,8 @@ function discoveryTick() {
         let dx = b.x - a.x;
         let dy = b.y - a.y;
         let dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const displacement = dist - DISCOVERY_SPRING_REST;
-        const force = DISCOVERY_SPRING * displacement;
+        const displacement = dist - sc.springRest;
+        const force = sc.spring * displacement;
         const fx = (dx / dist) * force;
         const fy = (dy / dist) * force;
         if (!a._pinned && !a._dragging) { a.vx += fx; a.vy += fy; }
@@ -8341,14 +8357,14 @@ function discoveryTick() {
 
             if (dragNeighborIds.has(node.id)) {
                 // Connected nodes: spring pull toward dragged node (follow)
-                const pull = DISCOVERY_DRAG_FOLLOW * (dist - DISCOVERY_SPRING_REST);
+                const pull = DISCOVERY_DRAG_FOLLOW * (dist - sc.springRest);
                 node.vx -= (dx / dist) * pull;
                 node.vy -= (dy / dist) * pull;
             } else {
                 // Unconnected nodes: strong repulsion from dragged node
                 const minD = dragNode.radius + node.radius + 8;
                 const effectiveDist = Math.max(dist, minD);
-                const force = DISCOVERY_DRAG_REPULSION / (effectiveDist * effectiveDist);
+                const force = sc.dragRepulsion / (effectiveDist * effectiveDist);
                 node.vx += (dx / dist) * force;
                 node.vy += (dy / dist) * force;
             }
@@ -8372,8 +8388,8 @@ function discoveryTick() {
     // 5. Center gravity (skip pinned and dragging)
     for (const node of nodes) {
         if (node._dragging || node._pinned) continue;
-        node.vx += (cx - node.x) * DISCOVERY_CENTER_GRAVITY;
-        node.vy += (cy - node.y) * DISCOVERY_CENTER_GRAVITY;
+        node.vx += (cx - node.x) * sc.centerGravity;
+        node.vy += (cy - node.y) * sc.centerGravity;
     }
 
     // 6. Damping + position update + boundary (skip pinned and dragging)
