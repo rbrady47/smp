@@ -533,7 +533,7 @@ function getTopologyBubbleSize(entity, discoveredCount) {
     const layoutScale = getTopologyLayoutScale();
     if (entity.kind === "services-cloud") {
         const total = Number(entity.service_summary?.total || 0);
-        return Math.round(Math.max(164, Math.min(228, (168 + total * 6) * layoutScale)));
+        return Math.round(Math.max(246, Math.min(342, (252 + total * 9) * layoutScale)));
     }
 
     const scale = Math.sqrt(Math.max(discoveredCount, 0));
