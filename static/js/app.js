@@ -823,7 +823,7 @@ function getTopologyIconStatus(status) {
     if (normalized === "degraded") {
         return "degraded";
     }
-    if (normalized === "down") {
+    if (normalized === "down" || normalized === "offline" || normalized === "failed") {
         return "down";
     }
     return "neutral";

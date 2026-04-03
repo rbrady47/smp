@@ -571,9 +571,12 @@ def apply_health_to_node(node: Node, health: dict[str, object]) -> None:
     node.last_checked = health["last_checked"]
 
 
-def build_dashboard_status(node_status: str, normalized: dict[str, object] | None) -> str:
+def build_dashboard_status(node_status: str, normalized: dict[str, object] | None, has_seeker_data: bool = True) -> str:
     if node_status in {"offline", "disabled"}:
         return "offline"
+
+    if not has_seeker_data:
+        return "unknown"
 
     if normalized and normalized.get("is_active"):
         return "healthy" if node_status == "online" else "degraded"
@@ -1214,7 +1217,7 @@ async def summarize_dashboard_node(node: Node) -> dict[str, object]:
         "web_scheme": "https" if node.api_use_https else "http",
         "ssh_username": node.api_username,
         "site": node.location,
-        "status": build_dashboard_status(node_status, normalized),
+        "status": build_dashboard_status(node_status, normalized, has_seeker_data=bool(cached_detail)),
         "web_ok": web_ok,
         "ssh_ok": ssh_ok,
         "ping_enabled": node.ping_enabled,
