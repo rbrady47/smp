@@ -22,6 +22,15 @@ The format is intentionally simple so diffs stay readable in version control.
 - Right-click rename for submap cards when in edit mode (prompts for new name, persists via API).
 - DN count cache backed by `localStorage` so accurate counts persist across page refreshes and navigation.
 - Submap mesh icon is now data-driven: each dot represents one DN, colored green (up), red (down), or white (no data). Mesh grows/shrinks with discovered node count (minimum 3 nodes). Hover shows combined tooltip listing all DNs with color-coded status.
+- Services cloud object re-enabled on the main topology map (main map only, hidden inside submaps). Displays pinned service check status.
+- Submap DN auto-placement uses center-out radial spiral with golden-angle spacing, keeping clear of AN positions (120px exclusion zone).
+- Discovery link anchor points: AN→DN connections use fixed south→north; DN→DN connections use geometry-based E/SE/S/SW/W selection.
+- Hover focus effect in submaps: hovering or click-pinning a node fades all unconnected nodes to ~12% opacity with desaturation. Animations suppressed on faded nodes.
+- AN tooltips hidden inside submap views (only DN tooltips shown).
+
+### Fixed
+
+- Submap mesh icon padding dots (used to reach the 3-dot minimum) no longer colored red — now white/neutral.
 
 ### Changed
 
