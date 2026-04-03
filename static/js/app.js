@@ -4864,6 +4864,10 @@ function renderTopologyStage() {
         revealAllDiscoveryLinks();
     } else if (topologyState.pinnedLinkNodeId) {
         revealDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
+        const root = document.getElementById("topology-root");
+        if (root?.getAttribute("data-map-view-id")) {
+            applyTopologyHoverFocus(topologyState.pinnedLinkNodeId);
+        }
     }
     refreshPinnedLinkTooltip();
     renderTopologyDrawer();
