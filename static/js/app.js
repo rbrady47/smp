@@ -5163,15 +5163,17 @@ function getTopologySubmapIconMarkup(entity, dnUp, dnDown, dnUpNames, dnDownName
         return `<line x1="${positions[a].x}" y1="${positions[a].y}" x2="${positions[b].x}" y2="${positions[b].y}" class="topology-submap-mesh-line"></line>`;
     });
 
-    // Assign colors: placeholder=white, first dnUp=green, rest=red
+    // Assign colors: first dnUp=green, next dnDown=red, padding=white/neutral
     const dotsSvg = positions.map((p, i) => {
         let color;
         if (isPlaceholder) {
             color = "rgba(180, 200, 220, 0.6)";
         } else if (i < dnUp) {
             color = "#4ade80";
-        } else {
+        } else if (i < dnUp + dnDown) {
             color = "#ff4040";
+        } else {
+            color = "rgba(180, 200, 220, 0.6)";
         }
         return `<circle cx="${p.x}" cy="${p.y}" r="2.2" fill="${color}" class="topology-submap-mesh-node"></circle>`;
     }).join("");
