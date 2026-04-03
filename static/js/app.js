@@ -5992,12 +5992,18 @@ async function fetchTopologyLinkStats(inventoryNodeId) {
     return null;
 }
 
-function findTunnelRowForPeer(statsData, peerSiteId) {
-    if (!statsData?.tunnels || !peerSiteId) {
+function findTunnelRowForPeer(statsData, peerSiteId, peerNodeId) {
+    if (!statsData?.tunnels || (!peerSiteId && !peerNodeId)) {
         return null;
     }
-    const peerId = String(peerSiteId).trim();
-    return statsData.tunnels.find((t) => String(t.mate_site_id || "").trim() === peerId) || null;
+    const siteId = peerSiteId ? String(peerSiteId).trim() : null;
+    const nodeId = peerNodeId ? String(peerNodeId).trim() : null;
+    return statsData.tunnels.find((t) => {
+        const mateSite = String(t.mate_site_id || "").trim();
+        if (siteId && mateSite === siteId) return true;
+        if (nodeId && mateSite === nodeId) return true;
+        return false;
+    }) || null;
 }
 
 function getTopologyLinkPeerSiteId(link) {
@@ -6014,17 +6020,19 @@ function buildTopologyLinkTooltipMarkup(link, tunnelRow) {
     if (!link || (link.kind !== "authored" && link.kind !== "discovery")) {
         return "";
     }
+    const entities = getTopologyEntities();
+    const sourceEntity = entities.find((e) => e.id === link.from);
+    const targetEntity = entities.find((e) => e.id === link.to);
     let name;
     let entity;
     if (link.kind === "discovery") {
-        const entities = getTopologyEntities();
-        const dnEntity = entities.find((e) => e.id === link.to);
-        const anEntity = entities.find((e) => e.id === link.from);
-        name = `${anEntity?.name || "AN"} ↔ ${dnEntity?.site_id || "DN"}`;
-        entity = anEntity || dnEntity;
+        name = `${sourceEntity?.name || "AN"} ↔ ${targetEntity?.site_id || "DN"}`;
+        entity = sourceEntity || targetEntity;
     } else {
-        entity = getTopologyStatusNodeEntity(link.status_node_id);
-        name = entity?.inventory_name || entity?.name || "Node";
+        const sourceName = sourceEntity?.inventory_name || sourceEntity?.name || sourceEntity?.node_id || "?";
+        const targetName = targetEntity?.inventory_name || targetEntity?.name || targetEntity?.node_id || "?";
+        name = `${sourceName} ↔ ${targetName}`;
+        entity = getTopologyStatusNodeEntity(link.status_node_id) || sourceEntity || targetEntity;
     }
     if (!entity) {
         return "";
@@ -6032,7 +6040,6 @@ function buildTopologyLinkTooltipMarkup(link, tunnelRow) {
     const linkStatus = link.kind === "discovery"
         ? (link.status === "down" ? "down" : link.status === "degraded" ? "degraded" : "healthy")
         : computeTopologyLinkStatusFromNode(entity);
-    const statusLabel = linkStatus === "down" ? "Down" : linkStatus === "degraded" ? "Degraded" : "Healthy";
     const statusDot = linkStatus === "down" ? "down" : linkStatus === "degraded" ? "degraded" : "up";
 
     const hasTunnel = tunnelRow != null;
@@ -6041,11 +6048,6 @@ function buildTopologyLinkTooltipMarkup(link, tunnelRow) {
     const txText = hasTunnel ? (tunnelRow.tx_rate || "--") : "--";
     const rxText = hasTunnel ? (tunnelRow.rx_rate || "--") : "--";
     const tunnelHealth = hasTunnel && Array.isArray(tunnelRow.tunnel_health) ? tunnelRow.tunnel_health : [];
-    const reason = linkStatus === "down"
-        ? "Ping is down"
-        : linkStatus === "degraded"
-            ? "RTT elevated >50% above average"
-            : "Link healthy";
 
     const tunnelDots = tunnelHealth.length
         ? `<span class="topology-link-tooltip-label">Tunnels</span>
@@ -6057,9 +6059,8 @@ function buildTopologyLinkTooltipMarkup(link, tunnelRow) {
     return `
         <strong class="topology-link-tooltip-title">
             <span class="topology-link-tooltip-status-dot ${statusDot}"></span>
-            ${escapeHtml(name)} — ${escapeHtml(statusLabel)}
+            ${escapeHtml(name)}
         </strong>
-        <span class="topology-link-tooltip-reason">${escapeHtml(reason)}</span>
         <span class="topology-link-tooltip-grid">
             ${tunnelDots}
             <span class="topology-link-tooltip-label">Ping</span>
@@ -6092,9 +6093,17 @@ async function showTopologyLinkTooltip(link, midX, midY) {
     tooltip.style.left = `${midX}px`;
     tooltip.style.top = `${midY}px`;
 
-    const peerSiteId = link.kind === "discovery" ? String(link.target_site_id || "") : getTopologyLinkPeerSiteId(link);
+    const entities = getTopologyEntities();
+    const sourceEntity = entities.find((e) => e.id === link.from);
+    const targetEntity = entities.find((e) => e.id === link.to);
+    const statusEntity = link.status_node_id
+        ? ((sourceEntity?.inventory_node_id == link.status_node_id) ? sourceEntity : targetEntity)
+        : sourceEntity;
+    const peerEntity = (statusEntity === sourceEntity) ? targetEntity : sourceEntity;
+    const peerSiteId = link.kind === "discovery" ? String(link.target_site_id || "") : (peerEntity?.site_id || peerEntity?.node_id || null);
+    const peerNodeId = peerEntity?.node_id || peerEntity?.site_id || null;
     const stats = link.status_node_id ? await fetchTopologyLinkStats(link.status_node_id) : null;
-    const tunnelRow = findTunnelRowForPeer(stats, peerSiteId);
+    const tunnelRow = findTunnelRowForPeer(stats, peerSiteId, peerNodeId);
     const markup = buildTopologyLinkTooltipMarkup(link, tunnelRow);
     if (!markup) {
         hideTopologyLinkTooltip();
