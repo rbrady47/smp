@@ -8208,6 +8208,465 @@ async function handleNodeActionClick(event) {
     }
 }
 
+// ==================== DISCOVERY PAGE ====================
+
+const DISCOVERY_REPULSION = 800;
+const DISCOVERY_SPRING = 0.04;
+const DISCOVERY_SPRING_REST = 120;
+const DISCOVERY_CURSOR_REPULSION = 600;
+const DISCOVERY_CURSOR_RADIUS = 150;
+const DISCOVERY_DAMPING = 0.85;
+const DISCOVERY_CENTER_GRAVITY = 0.01;
+const DISCOVERY_REFRESH_MS = 30000;
+
+let discoveryState = {
+    nodes: [],
+    links: [],
+    nodeMap: new Map(),
+    showAllLabels: false,
+    pinnedLabels: new Set(),
+    rootNodeId: null,
+    rootSiteId: null,
+    mouseX: null,
+    mouseY: null,
+    dragNode: null,
+    dragOffsetX: 0,
+    dragOffsetY: 0,
+    scale: 1,
+    searchTerm: "",
+    running: false,
+    refreshTimer: null,
+    animFrameId: null,
+};
+
+function discoveryNodeRadius(node) {
+    if (node.id === discoveryState.rootSiteId) return 40;
+    const cc = node.connection_count || 0;
+    return Math.max(12, Math.min(40, 8 + cc * 4));
+}
+
+function discoveryStatusColor(status) {
+    const s = String(status || "").toLowerCase();
+    if (s === "healthy" || s === "up" || s === "online") return "#4ade80";
+    if (s === "degraded" || s === "warn") return "#fbbf24";
+    if (s === "down" || s === "offline" || s === "failed") return "#ff4040";
+    return "#7dd3fc";
+}
+
+function discoveryStatusClass(status) {
+    const s = String(status || "").toLowerCase();
+    if (s === "healthy" || s === "up" || s === "online") return "discovery-node-healthy";
+    if (s === "degraded" || s === "warn") return "discovery-node-degraded";
+    if (s === "down" || s === "offline" || s === "failed") return "discovery-node-down";
+    return "discovery-node-unknown";
+}
+
+function discoveryTick() {
+    if (!discoveryState.running) return;
+    const nodes = discoveryState.nodes;
+    const links = discoveryState.links;
+    const stage = document.getElementById("discovery-stage");
+    if (!stage || !nodes.length) {
+        discoveryState.animFrameId = requestAnimationFrame(discoveryTick);
+        return;
+    }
+    const stageW = stage.clientWidth;
+    const stageH = stage.clientHeight;
+    const cx = stageW / 2;
+    const cy = stageH / 2;
+
+    // 1. Repulsion (all pairs)
+    for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+            const a = nodes[i];
+            const b = nodes[j];
+            let dx = a.x - b.x;
+            let dy = a.y - b.y;
+            let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            const minDist = a.radius + b.radius + 10;
+            if (dist < minDist) dist = minDist;
+            const force = DISCOVERY_REPULSION / (dist * dist);
+            const fx = (dx / dist) * force;
+            const fy = (dy / dist) * force;
+            if (!a._dragging) { a.vx += fx; a.vy += fy; }
+            if (!b._dragging) { b.vx -= fx; b.vy -= fy; }
+        }
+    }
+
+    // 2. Spring (linked pairs)
+    for (const link of links) {
+        const a = discoveryState.nodeMap.get(link.source);
+        const b = discoveryState.nodeMap.get(link.target);
+        if (!a || !b) continue;
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const displacement = dist - DISCOVERY_SPRING_REST;
+        const force = DISCOVERY_SPRING * displacement;
+        const fx = (dx / dist) * force;
+        const fy = (dy / dist) * force;
+        if (!a._dragging) { a.vx += fx; a.vy += fy; }
+        if (!b._dragging) { b.vx -= fx; b.vy -= fy; }
+    }
+
+    // 3. Cursor repulsion
+    if (discoveryState.mouseX != null && discoveryState.mouseY != null) {
+        const mx = discoveryState.mouseX;
+        const my = discoveryState.mouseY;
+        for (const node of nodes) {
+            if (node._dragging) continue;
+            const dx = node.x - mx;
+            const dy = node.y - my;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            if (dist < DISCOVERY_CURSOR_RADIUS) {
+                const force = DISCOVERY_CURSOR_REPULSION / (dist * dist);
+                node.vx += (dx / dist) * force;
+                node.vy += (dy / dist) * force;
+            }
+        }
+    }
+
+    // 4. Center gravity
+    for (const node of nodes) {
+        if (node._dragging) continue;
+        node.vx += (cx - node.x) * DISCOVERY_CENTER_GRAVITY;
+        node.vy += (cy - node.y) * DISCOVERY_CENTER_GRAVITY;
+    }
+
+    // 5. Damping + position update + boundary
+    for (const node of nodes) {
+        if (node._dragging) continue;
+        node.vx *= DISCOVERY_DAMPING;
+        node.vy *= DISCOVERY_DAMPING;
+        node.x += node.vx;
+        node.y += node.vy;
+        node.x = Math.max(node.radius, Math.min(stageW - node.radius, node.x));
+        node.y = Math.max(node.radius, Math.min(stageH - node.radius, node.y));
+    }
+
+    // 6. Render
+    discoveryRender();
+
+    discoveryState.animFrameId = requestAnimationFrame(discoveryTick);
+}
+
+function discoveryRender() {
+    const nodeLayer = document.getElementById("discovery-node-layer");
+    const svgEl = document.getElementById("discovery-links");
+    if (!nodeLayer || !svgEl) return;
+
+    const nodes = discoveryState.nodes;
+    const links = discoveryState.links;
+    const stage = document.getElementById("discovery-stage");
+    if (!stage) return;
+
+    svgEl.setAttribute("viewBox", `0 0 ${stage.clientWidth} ${stage.clientHeight}`);
+    svgEl.style.width = stage.clientWidth + "px";
+    svgEl.style.height = stage.clientHeight + "px";
+
+    // Update or create link lines
+    const existingLines = svgEl.querySelectorAll(".discovery-link");
+    const lineMap = new Map();
+    existingLines.forEach((el) => lineMap.set(el.dataset.linkId, el));
+
+    links.forEach((link, i) => {
+        const a = discoveryState.nodeMap.get(link.source);
+        const b = discoveryState.nodeMap.get(link.target);
+        if (!a || !b) return;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const ux = dx / dist;
+        const uy = dy / dist;
+        const x1 = a.x + ux * a.radius;
+        const y1 = a.y + uy * a.radius;
+        const x2 = b.x - ux * b.radius;
+        const y2 = b.y - uy * b.radius;
+
+        const linkId = `${link.source}::${link.target}`;
+        let line = lineMap.get(linkId);
+        if (!line) {
+            line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            line.classList.add("discovery-link");
+            line.dataset.linkId = linkId;
+            svgEl.appendChild(line);
+        }
+        line.setAttribute("x1", x1);
+        line.setAttribute("y1", y1);
+        line.setAttribute("x2", x2);
+        line.setAttribute("y2", y2);
+        line.setAttribute("stroke", link.status === "down" ? "rgba(255,64,64,0.4)" : "rgba(74,222,128,0.35)");
+        lineMap.delete(linkId);
+    });
+    // Remove stale lines
+    lineMap.forEach((el) => el.remove());
+
+    // Update or create node elements
+    const existingNodes = nodeLayer.querySelectorAll(".discovery-node");
+    const domMap = new Map();
+    existingNodes.forEach((el) => domMap.set(el.dataset.nodeId, el));
+
+    nodes.forEach((node) => {
+        const size = node.radius * 2;
+        let el = domMap.get(node.id);
+        if (!el) {
+            el = document.createElement("div");
+            el.className = "discovery-node";
+            el.dataset.nodeId = node.id;
+            el.innerHTML = `<span class="discovery-label"></span>`;
+            el.classList.add("discovery-node-entering");
+            nodeLayer.appendChild(el);
+            // Remove entrance animation after it plays
+            el.addEventListener("animationend", () => el.classList.remove("discovery-node-entering"), { once: true });
+        }
+
+        const isRoot = node.id === discoveryState.rootSiteId;
+        const isHighlighted = discoveryState.searchTerm &&
+            node.id.toLowerCase().includes(discoveryState.searchTerm.toLowerCase());
+        const showLabel = discoveryState.showAllLabels ||
+            discoveryState.pinnedLabels.has(node.id) || isRoot;
+
+        el.style.left = `${node.x - node.radius}px`;
+        el.style.top = `${node.y - node.radius}px`;
+        el.style.width = `${size}px`;
+        el.style.height = `${size}px`;
+        el.style.backgroundColor = discoveryStatusColor(node.status);
+        el.classList.toggle("is-root", isRoot);
+        el.classList.toggle("is-highlighted", isHighlighted);
+        el.title = `${node.name} (${node.id})\n${node.host || ""}\nStatus: ${node.status}\nConnections: ${node.connection_count || 0}`;
+
+        const label = el.querySelector(".discovery-label");
+        if (label) {
+            label.textContent = node.id;
+            label.style.display = showLabel ? "" : "none";
+        }
+
+        domMap.delete(node.id);
+    });
+    // Remove stale nodes with fade
+    domMap.forEach((el) => {
+        el.classList.add("discovery-node-exiting");
+        el.addEventListener("animationend", () => el.remove(), { once: true });
+    });
+}
+
+function discoveryInitNodes(data) {
+    const stage = document.getElementById("discovery-stage");
+    const stageW = stage ? stage.clientWidth : 800;
+    const stageH = stage ? stage.clientHeight : 600;
+    const cx = stageW / 2;
+    const cy = stageH / 2;
+
+    const oldNodeMap = new Map(discoveryState.nodes.map((n) => [n.id, n]));
+
+    discoveryState.nodes = data.nodes.map((n) => {
+        const existing = oldNodeMap.get(n.id);
+        const radius = discoveryNodeRadius(n);
+        if (existing) {
+            // Preserve position for existing nodes, update status/count
+            existing.status = n.status;
+            existing.connection_count = n.connection_count;
+            existing.name = n.name;
+            existing.host = n.host;
+            existing.radius = radius;
+            return existing;
+        }
+        // New node: place near a linked peer or random near center
+        let startX = cx + (Math.random() - 0.5) * 100;
+        let startY = cy + (Math.random() - 0.5) * 100;
+        const linkedPeer = data.links.find((l) => l.source === n.id || l.target === n.id);
+        if (linkedPeer) {
+            const peerId = linkedPeer.source === n.id ? linkedPeer.target : linkedPeer.source;
+            const peer = oldNodeMap.get(peerId);
+            if (peer) {
+                startX = peer.x + (Math.random() - 0.5) * 60;
+                startY = peer.y + (Math.random() - 0.5) * 60;
+            }
+        }
+        return {
+            ...n,
+            x: startX,
+            y: startY,
+            vx: 0,
+            vy: 0,
+            radius,
+            _dragging: false,
+        };
+    });
+
+    discoveryState.links = data.links;
+    discoveryState.rootSiteId = data.root_site_id;
+    discoveryState.nodeMap = new Map(discoveryState.nodes.map((n) => [n.id, n]));
+}
+
+function discoveryWireInteractions() {
+    const stage = document.getElementById("discovery-stage");
+    const nodeLayer = document.getElementById("discovery-node-layer");
+    if (!stage || !nodeLayer) return;
+
+    // Cursor tracking
+    stage.addEventListener("mousemove", (e) => {
+        const rect = stage.getBoundingClientRect();
+        const scale = discoveryState.scale;
+        discoveryState.mouseX = (e.clientX - rect.left) / scale;
+        discoveryState.mouseY = (e.clientY - rect.top) / scale;
+
+        if (discoveryState.dragNode) {
+            const node = discoveryState.dragNode;
+            node.x = discoveryState.mouseX;
+            node.y = discoveryState.mouseY;
+            node.vx = 0;
+            node.vy = 0;
+        }
+    });
+
+    stage.addEventListener("mouseleave", () => {
+        discoveryState.mouseX = null;
+        discoveryState.mouseY = null;
+    });
+
+    // Drag: mousedown on a node
+    nodeLayer.addEventListener("mousedown", (e) => {
+        const nodeEl = e.target.closest(".discovery-node");
+        if (!nodeEl) return;
+        const nodeId = nodeEl.dataset.nodeId;
+        const node = discoveryState.nodeMap.get(nodeId);
+        if (!node) return;
+        node._dragging = true;
+        discoveryState.dragNode = node;
+        nodeEl.style.cursor = "grabbing";
+        e.preventDefault();
+    });
+
+    document.addEventListener("mouseup", () => {
+        if (discoveryState.dragNode) {
+            discoveryState.dragNode._dragging = false;
+            discoveryState.dragNode.vx = 0;
+            discoveryState.dragNode.vy = 0;
+            discoveryState.dragNode = null;
+        }
+        document.querySelectorAll(".discovery-node").forEach((el) => {
+            el.style.cursor = "";
+        });
+    });
+
+    // Double-click: pin label
+    nodeLayer.addEventListener("dblclick", (e) => {
+        const nodeEl = e.target.closest(".discovery-node");
+        if (!nodeEl) return;
+        const nodeId = nodeEl.dataset.nodeId;
+        if (discoveryState.pinnedLabels.has(nodeId)) {
+            discoveryState.pinnedLabels.delete(nodeId);
+        } else {
+            discoveryState.pinnedLabels.add(nodeId);
+        }
+    });
+
+    // Zoom: mouse wheel
+    stage.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -0.1 : 0.1;
+        discoveryState.scale = Math.max(0.3, Math.min(3.0, discoveryState.scale + delta));
+        const container = document.getElementById("discovery-zoom-container");
+        if (container) {
+            container.style.transform = `scale(${discoveryState.scale})`;
+            container.style.transformOrigin = "center center";
+        }
+    }, { passive: false });
+
+    // Show labels toggle
+    const labelToggle = document.getElementById("discovery-show-labels");
+    if (labelToggle) {
+        labelToggle.addEventListener("change", () => {
+            discoveryState.showAllLabels = labelToggle.checked;
+        });
+    }
+
+    // Search
+    const searchInput = document.getElementById("discovery-search");
+    if (searchInput) {
+        searchInput.addEventListener("input", () => {
+            discoveryState.searchTerm = searchInput.value.trim();
+            // Pan to highlighted node
+            if (discoveryState.searchTerm) {
+                const match = discoveryState.nodes.find((n) =>
+                    n.id.toLowerCase().includes(discoveryState.searchTerm.toLowerCase())
+                );
+                if (match) {
+                    const stage = document.getElementById("discovery-stage");
+                    if (stage) {
+                        const scale = discoveryState.scale;
+                        stage.scrollTo({
+                            left: match.x * scale - stage.clientWidth / 2,
+                            top: match.y * scale - stage.clientHeight / 2,
+                            behavior: "smooth",
+                        });
+                    }
+                }
+            }
+        });
+    }
+}
+
+async function loadDiscoveryPage() {
+    const root = document.getElementById("discovery-root");
+    if (!root) return;
+
+    // Populate root node selector from inventory
+    const select = document.getElementById("discovery-root-select");
+    if (select) {
+        try {
+            const nodes = await apiRequest("/api/nodes");
+            if (Array.isArray(nodes)) {
+                nodes.forEach((node) => {
+                    const opt = document.createElement("option");
+                    opt.value = String(node.id);
+                    opt.textContent = `${node.name || "Node"} (${node.node_id || node.id})`;
+                    select.appendChild(opt);
+                });
+            }
+        } catch (err) {
+            console.error("Failed to load nodes for discovery selector:", err);
+        }
+
+        select.addEventListener("change", async () => {
+            const nodeId = parseInt(select.value, 10);
+            if (!nodeId) return;
+            discoveryState.rootNodeId = nodeId;
+            await discoveryFetchAndInit(nodeId);
+        });
+    }
+
+    discoveryWireInteractions();
+}
+
+async function discoveryFetchAndInit(rootNodeId) {
+    try {
+        const data = await apiRequest(`/api/discovery/crawl?root_node_id=${rootNodeId}`);
+        discoveryInitNodes(data);
+        if (!discoveryState.running) {
+            discoveryState.running = true;
+            discoveryState.animFrameId = requestAnimationFrame(discoveryTick);
+        }
+        // Set up auto-refresh
+        if (discoveryState.refreshTimer) clearInterval(discoveryState.refreshTimer);
+        discoveryState.refreshTimer = setInterval(async () => {
+            if (!discoveryState.rootNodeId) return;
+            try {
+                const freshData = await apiRequest(`/api/discovery/crawl?root_node_id=${discoveryState.rootNodeId}`);
+                discoveryInitNodes(freshData);
+            } catch (err) {
+                console.error("Discovery auto-refresh failed:", err);
+            }
+        }, DISCOVERY_REFRESH_MS);
+    } catch (err) {
+        console.error("Discovery crawl failed:", err);
+    }
+}
+
+// ==================== END DISCOVERY PAGE ====================
+
+
 window.addEventListener("DOMContentLoaded", () => {
     applyThemeMode();
     mountThemeControl();
@@ -8218,6 +8677,7 @@ window.addEventListener("DOMContentLoaded", () => {
     safeStart(loadMainDashboard, "main-dashboard");
     safeStart(loadServices, "services");
     safeStart(loadTopologyPage, "topology");
+    safeStart(loadDiscoveryPage, "discovery");
     safeStart(loadNodeDetailPage, "node-detail");
 
     const nodeForm = document.getElementById("node-form");

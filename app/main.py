@@ -215,6 +215,15 @@ async def nodes_page(request: Request) -> HTMLResponse:
     )
 
 
+@app.get("/discovery", response_class=HTMLResponse)
+async def discovery_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request=request,
+        name="discovery.html",
+        context={"page_title": "Discovery | Seeker Management Platform"},
+    )
+
+
 @app.get("/services", response_class=HTMLResponse)
 async def services_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
@@ -2160,6 +2169,167 @@ async def get_submap_discovery(
         "discovered_peers": discovered_peers,
         "discovery_links": discovery_links,
         "saved_positions": saved_positions,
+    }
+
+
+@app.get("/api/discovery/crawl")
+async def discovery_crawl(
+    root_node_id: int = Query(...),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """BFS crawl from a root anchor node through tunnel data, unlimited depth."""
+    from app.node_discovery_service import _tunnel_row_exists, _tunnel_row_is_eligible
+
+    root_node = db.get(Node, root_node_id)
+    if not root_node:
+        raise HTTPException(status_code=404, detail="Root node not found")
+
+    # Build inventory exclusion set (all registered AN site_ids except root)
+    all_nodes = db.query(Node).all()
+    inventory_site_ids: set[str] = set()
+    root_site_id: str | None = None
+    for inv_node in all_nodes:
+        cfg = seeker_detail_cache.get(inv_node.id, {}).get("config_summary") or {}
+        site_id_val = str(cfg.get("site_id") or inv_node.node_id or "").strip()
+        if inv_node.id == root_node_id:
+            root_site_id = site_id_val or str(inv_node.id)
+        if inv_node.id != root_node_id:
+            if inv_node.node_id:
+                inventory_site_ids.add(inv_node.node_id)
+                inventory_site_ids.add(inv_node.node_id.lower())
+            inventory_site_ids.add(str(inv_node.id))
+            if site_id_val:
+                inventory_site_ids.add(site_id_val)
+                inventory_site_ids.add(site_id_val.lower())
+
+    if not root_site_id:
+        root_site_id = str(root_node.node_id or root_node.id)
+
+    # Get root node status from dashboard
+    root_detail = seeker_detail_cache.get(root_node_id) or {}
+    root_cfg = root_detail.get("config_summary") if isinstance(root_detail.get("config_summary"), dict) else {}
+    root_status = build_dashboard_status(
+        str((root_detail.get("node") or {}).get("status") or "unknown"),
+        normalize_bwv_stats(root_detail.get("raw", {}).get("bwv_stats", {}) or {}) if root_detail else None,
+        has_seeker_data=bool(root_detail),
+    )
+
+    # Result accumulators
+    graph_nodes: list[dict[str, object]] = []
+    graph_links: list[dict[str, object]] = []
+    visited: set[str] = set()
+    connection_count: dict[str, int] = {}
+
+    # Add root node
+    graph_nodes.append({
+        "id": root_site_id,
+        "type": "anchor",
+        "name": root_cfg.get("site_name") or root_node.name or root_site_id,
+        "host": root_node.host or "",
+        "status": root_status,
+    })
+    visited.add(root_site_id)
+    connection_count[root_site_id] = 0
+
+    # BFS queue: each entry is (site_id, source_type)
+    # source_type: "anchor" means use seeker_detail_cache[node.id],
+    #              "discovered" means use node_dashboard_backend DN cache
+    queue: list[tuple[str, str, int | None]] = [(root_site_id, "anchor", root_node_id)]
+
+    while queue:
+        current_site_id, current_type, current_node_db_id = queue.pop(0)
+
+        # Get tunnel data for current node
+        tunnels: list[dict[str, object]] = []
+        if current_type == "anchor" and current_node_db_id is not None:
+            detail = seeker_detail_cache.get(current_node_db_id) or {}
+            tunnels = [r for r in (detail.get("tunnels") or []) if isinstance(r, dict)]
+        else:
+            cached_dn = node_dashboard_backend.get_cached_discovered_node(current_site_id)
+            if cached_dn:
+                dn_detail = cached_dn.get("detail") if isinstance(cached_dn.get("detail"), dict) else {}
+                tunnels = [r for r in (dn_detail.get("tunnels") or []) if isinstance(r, dict)]
+
+        for row in tunnels:
+            if not _tunnel_row_exists(row):
+                continue
+            mate_site_id = str(row.get("mate_site_id") or "").strip()
+            if not mate_site_id:
+                continue
+            # Skip inventory ANs (except root which is already visited)
+            if mate_site_id in inventory_site_ids or mate_site_id.lower() in inventory_site_ids:
+                continue
+            mate_ip = str(row.get("mate_ip") or "").strip()
+            if not mate_ip or mate_ip == "--":
+                continue
+
+            mate_name = str(row.get("site_name") or row.get("mate_site_name") or "").strip() or mate_site_id
+            ping_status = str(row.get("ping") or "").strip()
+            is_up = _tunnel_row_is_eligible(row)
+
+            # Always create links between known nodes
+            if mate_site_id in visited:
+                # Link between two already-known nodes
+                pair_key = tuple(sorted([current_site_id, mate_site_id]))
+                if not any(
+                    tuple(sorted([lnk["source"], lnk["target"]])) == pair_key
+                    for lnk in graph_links
+                ):
+                    graph_links.append({
+                        "source": current_site_id,
+                        "target": mate_site_id,
+                        "status": "healthy" if ping_status.lower() == "up" else "down",
+                    })
+                    connection_count[current_site_id] = connection_count.get(current_site_id, 0) + 1
+                    connection_count[mate_site_id] = connection_count.get(mate_site_id, 0) + 1
+                continue
+
+            # Discover new peer only from active tunnels
+            if not is_up:
+                continue
+
+            visited.add(mate_site_id)
+            # Determine status for the new peer
+            dn_ping = dn_ping_snapshots.get(mate_site_id)
+            peer_status = "up" if ping_status.lower() == "up" else "down"
+            if dn_ping:
+                ps = str(dn_ping.get("state") or "").lower()
+                if ps == "good":
+                    peer_status = "healthy"
+                elif ps == "warn":
+                    peer_status = "degraded"
+                elif ps == "down":
+                    peer_status = "down"
+
+            graph_nodes.append({
+                "id": mate_site_id,
+                "type": "discovered",
+                "name": mate_name,
+                "host": mate_ip,
+                "status": peer_status,
+            })
+            connection_count[mate_site_id] = 0
+
+            graph_links.append({
+                "source": current_site_id,
+                "target": mate_site_id,
+                "status": "healthy" if ping_status.lower() == "up" else "down",
+            })
+            connection_count[current_site_id] = connection_count.get(current_site_id, 0) + 1
+            connection_count[mate_site_id] = connection_count.get(mate_site_id, 0) + 1
+
+            # Enqueue for further crawling
+            queue.append((mate_site_id, "discovered", None))
+
+    # Attach connection counts to nodes
+    for node in graph_nodes:
+        node["connection_count"] = connection_count.get(node["id"], 0)
+
+    return {
+        "root_node_id": root_node_id,
+        "root_site_id": root_site_id,
+        "nodes": graph_nodes,
+        "links": graph_links,
     }
 
 
