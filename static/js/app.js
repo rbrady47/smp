@@ -1321,11 +1321,14 @@ function getTopologyAnchorTooltipMarkup(entity) {
         ? `${Math.round(entity.cpu_avg)}%`
         : "--";
     const versionText = String(entity.version || "--").trim() || "--";
-    const statusClass = entity.status === "down" || entity.status === "offline"
+    const effectiveStatus = getEffectiveTopologyEntityStatus(entity);
+    const statusClass = effectiveStatus === "down" || effectiveStatus === "offline" || effectiveStatus === "failed"
         ? "tooltip-border-red"
-        : entity.status === "degraded"
+        : effectiveStatus === "degraded"
             ? "tooltip-border-yellow"
-            : "tooltip-border-green";
+            : effectiveStatus === "healthy" || effectiveStatus === "up" || effectiveStatus === "online"
+                ? "tooltip-border-green"
+                : "tooltip-border-yellow";
 
     return `
         <span class="topology-node-tooltip ${statusClass}" role="tooltip">
