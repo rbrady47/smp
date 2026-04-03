@@ -5053,6 +5053,46 @@ body.modal-open {
     white-space: nowrap;
 }
 
+.discovery-root-picker {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+}
+
+.discovery-root-pills {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    flex-wrap: wrap;
+}
+
+.discovery-root-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.15rem 0.45rem;
+    border-radius: 10px;
+    background: rgba(255, 194, 92, 0.15);
+    border: 1px solid rgba(255, 194, 92, 0.4);
+    color: rgba(255, 220, 140, 0.9);
+    font-size: 0.7rem;
+    font-family: monospace;
+    white-space: nowrap;
+}
+
+.discovery-root-pill-x {
+    cursor: pointer;
+    font-size: 0.8rem;
+    line-height: 1;
+    opacity: 0.6;
+    transition: opacity 0.15s;
+}
+
+.discovery-root-pill-x:hover {
+    opacity: 1;
+}
+
 .discovery-select {
     padding: 0.3rem 0.5rem;
     border-radius: 6px;

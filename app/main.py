@@ -2183,23 +2183,30 @@ async def get_submap_discovery(
 
 @app.get("/api/discovery/crawl")
 async def discovery_crawl(
-    root_node_id: int = Query(...),
+    root_node_ids: str = Query(..., alias="root_node_ids"),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    """BFS crawl from a root anchor node through tunnel data, unlimited depth.
-    Anchor nodes encountered as peers are included and traversed (not excluded)."""
+    """BFS crawl from one or more root anchor nodes through tunnel data, unlimited depth.
+    Accepts comma-separated DB node IDs. Anchor nodes encountered as peers are
+    included and traversed (not excluded)."""
     from app.node_discovery_service import _tunnel_row_exists, _tunnel_row_is_eligible
 
-    root_node = db.get(Node, root_node_id)
-    if not root_node:
-        raise HTTPException(status_code=404, detail="Root node not found")
+    # Parse comma-separated root IDs
+    raw_ids = [s.strip() for s in root_node_ids.split(",") if s.strip()]
+    parsed_root_ids: list[int] = []
+    for rid in raw_ids:
+        try:
+            parsed_root_ids.append(int(rid))
+        except ValueError:
+            continue
+    if not parsed_root_ids:
+        raise HTTPException(status_code=400, detail="No valid root_node_ids provided")
 
     # Build site_id → Node DB id lookup for ALL inventory ANs
-    # so we can use seeker_detail_cache when an AN is found as a peer
     all_nodes = db.query(Node).all()
     an_site_to_db_id: dict[str, int] = {}
     an_db_id_to_node: dict[int, Node] = {}
-    root_site_id: str | None = None
+    an_db_id_to_site: dict[int, str] = {}
     for inv_node in all_nodes:
         an_db_id_to_node[inv_node.id] = inv_node
         cfg = (seeker_detail_cache.get(inv_node.id) or {}).get("config_summary") or {}
@@ -2207,23 +2214,12 @@ async def discovery_crawl(
         if site_id_val:
             an_site_to_db_id[site_id_val] = inv_node.id
             an_site_to_db_id[site_id_val.lower()] = inv_node.id
+            an_db_id_to_site[inv_node.id] = site_id_val
         if inv_node.node_id:
             an_site_to_db_id[inv_node.node_id] = inv_node.id
             an_site_to_db_id[inv_node.node_id.lower()] = inv_node.id
-        if inv_node.id == root_node_id:
-            root_site_id = site_id_val or str(inv_node.node_id or inv_node.id)
-
-    if not root_site_id:
-        root_site_id = str(root_node.node_id or root_node.id)
-
-    # Get root node status
-    root_detail = seeker_detail_cache.get(root_node_id) or {}
-    root_cfg = root_detail.get("config_summary") if isinstance(root_detail.get("config_summary"), dict) else {}
-    root_status = build_dashboard_status(
-        str((root_detail.get("node") or {}).get("status") or "unknown"),
-        normalize_bwv_stats(root_detail.get("raw", {}).get("bwv_stats", {}) or {}) if root_detail else None,
-        has_seeker_data=bool(root_detail),
-    )
+            if inv_node.id not in an_db_id_to_site:
+                an_db_id_to_site[inv_node.id] = str(inv_node.node_id)
 
     # Result accumulators
     graph_nodes: list[dict[str, object]] = []
@@ -2231,20 +2227,40 @@ async def discovery_crawl(
     visited: set[str] = set()
     link_set: set[tuple[str, str]] = set()
     connection_count: dict[str, int] = {}
-
-    # Add root node
-    graph_nodes.append({
-        "id": root_site_id,
-        "type": "anchor",
-        "name": root_cfg.get("site_name") or root_node.name or root_site_id,
-        "host": root_node.host or "",
-        "status": root_status,
-    })
-    visited.add(root_site_id)
-    connection_count[root_site_id] = 0
+    root_site_ids: list[str] = []
 
     # BFS queue: (site_id, node_type, db_id_or_None)
-    queue: list[tuple[str, str, int | None]] = [(root_site_id, "anchor", root_node_id)]
+    queue: list[tuple[str, str, int | None]] = []
+
+    # Seed all root nodes
+    for root_node_id in parsed_root_ids:
+        root_node = db.get(Node, root_node_id)
+        if not root_node:
+            continue
+        root_site_id = an_db_id_to_site.get(root_node_id) or str(root_node.node_id or root_node.id)
+        if root_site_id in visited:
+            continue
+
+        root_detail = seeker_detail_cache.get(root_node_id) or {}
+        root_cfg = root_detail.get("config_summary") if isinstance(root_detail.get("config_summary"), dict) else {}
+        root_status = build_dashboard_status(
+            str((root_detail.get("node") or {}).get("status") or "unknown"),
+            normalize_bwv_stats(root_detail.get("raw", {}).get("bwv_stats", {}) or {}) if root_detail else None,
+            has_seeker_data=bool(root_detail),
+        )
+
+        graph_nodes.append({
+            "id": root_site_id,
+            "type": "anchor",
+            "name": root_cfg.get("site_name") or root_node.name or root_site_id,
+            "host": root_node.host or "",
+            "status": root_status,
+            "is_root": True,
+        })
+        visited.add(root_site_id)
+        connection_count[root_site_id] = 0
+        root_site_ids.append(root_site_id)
+        queue.append((root_site_id, "anchor", root_node_id))
 
     while queue:
         current_site_id, current_type, current_db_id = queue.pop(0)
@@ -2347,13 +2363,14 @@ async def discovery_crawl(
             connection_count[current_site_id] = connection_count.get(current_site_id, 0) + 1
             connection_count[mate_site_id] = connection_count.get(mate_site_id, 0) + 1
 
-    # Attach connection counts
+    # Attach connection counts and ensure is_root flag
     for node in graph_nodes:
         node["connection_count"] = connection_count.get(node["id"], 0)
+        if "is_root" not in node:
+            node["is_root"] = False
 
     return {
-        "root_node_id": root_node_id,
-        "root_site_id": root_site_id,
+        "root_site_ids": root_site_ids,
         "nodes": graph_nodes,
         "links": graph_links,
     }

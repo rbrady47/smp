@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ page_title }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260403-discovery4">
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260403-discovery5">
 </head>
 <body>
     <header class="topbar">
@@ -23,9 +23,12 @@
         <div class="discovery-header">
             <div class="discovery-header-left">
                 <h1 class="discovery-title">Network Discovery</h1>
-                <select id="discovery-root-select" class="discovery-select">
-                    <option value="">Select root node...</option>
-                </select>
+                <div class="discovery-root-picker" id="discovery-root-picker">
+                    <div class="discovery-root-pills" id="discovery-root-pills"></div>
+                    <select id="discovery-root-select" class="discovery-select">
+                        <option value="">+ Add root node...</option>
+                    </select>
+                </div>
             </div>
             <div class="discovery-header-right">
                 <div class="discovery-spread-controls">
@@ -48,6 +51,6 @@
         </div>
     </main>
 
-    <script src="{{ url_for('static', path='js/app.js') }}?v=20260403-discovery4"></script>
+    <script src="{{ url_for('static', path='js/app.js') }}?v=20260403-discovery5"></script>
 </body>
 </html>

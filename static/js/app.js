@@ -8243,8 +8243,8 @@ let discoveryState = {
     nodeMap: new Map(),
     showAllLabels: false,
     pinnedLabels: new Set(),
-    rootNodeId: null,
-    rootSiteId: null,
+    rootNodeIds: [],      // DB IDs of selected root nodes
+    rootSiteIds: new Set(), // site IDs returned from crawl
     mouseX: null,
     mouseY: null,
     dragNode: null,
@@ -8260,7 +8260,7 @@ let discoveryState = {
 
 function discoveryNodeRadius(node) {
     const s = discoveryScale();
-    if (node.id === discoveryState.rootSiteId) return s.rootRadius;
+    if (node.is_root || discoveryState.rootSiteIds.has(node.id)) return s.rootRadius;
     const cc = node.connection_count || 0;
     return Math.max(s.radiusMin, Math.min(s.radiusMax, s.radiusBase + cc * s.radiusPerConn));
 }
@@ -8483,7 +8483,7 @@ function discoveryRender() {
             el.addEventListener("animationend", () => el.classList.remove("discovery-node-entering"), { once: true });
         }
 
-        const isRoot = node.id === discoveryState.rootSiteId;
+        const isRoot = node.is_root || discoveryState.rootSiteIds.has(node.id);
         const isHighlighted = discoveryState.searchTerm &&
             node.id.toLowerCase().includes(discoveryState.searchTerm.toLowerCase());
         const showLabel = discoveryState.showAllLabels ||
@@ -8559,7 +8559,7 @@ function discoveryInitNodes(data) {
     });
 
     discoveryState.links = data.links;
-    discoveryState.rootSiteId = data.root_site_id;
+    discoveryState.rootSiteIds = new Set(data.root_site_ids || []);
     discoveryState.nodeMap = new Map(discoveryState.nodes.map((n) => [n.id, n]));
 }
 
@@ -8721,17 +8721,49 @@ function discoveryWireInteractions() {
     }
 }
 
+// Inventory nodes cache for root picker
+let discoveryInventoryNodes = [];
+
+function discoveryRenderPills() {
+    const container = document.getElementById("discovery-root-pills");
+    if (!container) return;
+    container.innerHTML = "";
+    for (const id of discoveryState.rootNodeIds) {
+        const inv = discoveryInventoryNodes.find((n) => n.id === id);
+        const label = inv ? `${inv.node_id || inv.name || id}` : String(id);
+        const pill = document.createElement("span");
+        pill.className = "discovery-root-pill";
+        pill.innerHTML = `${label} <span class="discovery-root-pill-x" data-id="${id}">&times;</span>`;
+        container.appendChild(pill);
+    }
+    // Wire remove buttons
+    container.querySelectorAll(".discovery-root-pill-x").forEach((el) => {
+        el.addEventListener("click", async () => {
+            const removeId = parseInt(el.dataset.id, 10);
+            discoveryState.rootNodeIds = discoveryState.rootNodeIds.filter((id) => id !== removeId);
+            discoveryPersistRoots();
+            discoveryRenderPills();
+            if (discoveryState.rootNodeIds.length) {
+                await discoveryFetchAndInit();
+            }
+        });
+    });
+}
+
+function discoveryPersistRoots() {
+    try { localStorage.setItem("smp-discovery-root-node-ids", JSON.stringify(discoveryState.rootNodeIds)); } catch (_) {}
+}
+
 async function loadDiscoveryPage() {
     const root = document.getElementById("discovery-root");
     if (!root) return;
 
-    // Populate root node selector from inventory
     const select = document.getElementById("discovery-root-select");
     if (select) {
         try {
-            const nodes = await apiRequest("/api/nodes");
-            if (Array.isArray(nodes)) {
-                nodes.forEach((node) => {
+            discoveryInventoryNodes = await apiRequest("/api/nodes");
+            if (Array.isArray(discoveryInventoryNodes)) {
+                discoveryInventoryNodes.forEach((node) => {
                     const opt = document.createElement("option");
                     opt.value = String(node.id);
                     opt.textContent = `${node.name || "Node"} (${node.node_id || node.id})`;
@@ -8745,20 +8777,25 @@ async function loadDiscoveryPage() {
         select.addEventListener("change", async () => {
             const nodeId = parseInt(select.value, 10);
             if (!nodeId) return;
-            discoveryState.rootNodeId = nodeId;
-            try { localStorage.setItem("smp-discovery-root-node-id", String(nodeId)); } catch (_) {}
-            await discoveryFetchAndInit(nodeId);
+            select.value = ""; // reset dropdown
+            if (discoveryState.rootNodeIds.includes(nodeId)) return; // already selected
+            discoveryState.rootNodeIds.push(nodeId);
+            discoveryPersistRoots();
+            discoveryRenderPills();
+            await discoveryFetchAndInit();
         });
 
-        // Restore saved root node selection
+        // Restore saved roots
         try {
-            const saved = localStorage.getItem("smp-discovery-root-node-id");
+            const saved = localStorage.getItem("smp-discovery-root-node-ids");
             if (saved) {
-                const savedId = parseInt(saved, 10);
-                if (savedId && select.querySelector(`option[value="${savedId}"]`)) {
-                    select.value = String(savedId);
-                    discoveryState.rootNodeId = savedId;
-                    await discoveryFetchAndInit(savedId);
+                const ids = JSON.parse(saved);
+                if (Array.isArray(ids) && ids.length) {
+                    discoveryState.rootNodeIds = ids.filter((id) => typeof id === "number");
+                    discoveryRenderPills();
+                    if (discoveryState.rootNodeIds.length) {
+                        await discoveryFetchAndInit();
+                    }
                 }
             }
         } catch (_) {}
@@ -8767,9 +8804,11 @@ async function loadDiscoveryPage() {
     discoveryWireInteractions();
 }
 
-async function discoveryFetchAndInit(rootNodeId) {
+async function discoveryFetchAndInit() {
+    if (!discoveryState.rootNodeIds.length) return;
+    const idsParam = discoveryState.rootNodeIds.join(",");
     try {
-        const data = await apiRequest(`/api/discovery/crawl?root_node_id=${rootNodeId}`);
+        const data = await apiRequest(`/api/discovery/crawl?root_node_ids=${idsParam}`);
         discoveryInitNodes(data);
         if (!discoveryState.running) {
             discoveryState.running = true;
@@ -8778,9 +8817,10 @@ async function discoveryFetchAndInit(rootNodeId) {
         // Set up auto-refresh
         if (discoveryState.refreshTimer) clearInterval(discoveryState.refreshTimer);
         discoveryState.refreshTimer = setInterval(async () => {
-            if (!discoveryState.rootNodeId) return;
+            if (!discoveryState.rootNodeIds.length) return;
             try {
-                const freshData = await apiRequest(`/api/discovery/crawl?root_node_id=${discoveryState.rootNodeId}`);
+                const ids = discoveryState.rootNodeIds.join(",");
+                const freshData = await apiRequest(`/api/discovery/crawl?root_node_ids=${ids}`);
                 discoveryInitNodes(freshData);
             } catch (err) {
                 console.error("Discovery auto-refresh failed:", err);
