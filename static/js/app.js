@@ -1321,12 +1321,15 @@ function getTopologyAnchorTooltipMarkup(entity) {
         ? `${Math.round(entity.cpu_avg)}%`
         : "--";
     const versionText = String(entity.version || "--").trim() || "--";
-    const statusReason = getTopologyAnchorStatusReason(entity);
+    const statusClass = entity.status === "down" || entity.status === "offline"
+        ? "tooltip-border-red"
+        : entity.status === "degraded"
+            ? "tooltip-border-yellow"
+            : "tooltip-border-green";
 
     return `
-        <span class="topology-node-tooltip" role="tooltip">
+        <span class="topology-node-tooltip ${statusClass}" role="tooltip">
             <strong class="topology-node-tooltip-title">${escapeHtml(entity.inventory_name || entity.name || "Node")}</strong>
-            <span class="topology-node-tooltip-reason">${escapeHtml(statusReason)}</span>
             <span class="topology-node-tooltip-grid">
                 <span class="topology-node-tooltip-label">Node ID</span>
                 <span class="topology-node-tooltip-value">${escapeHtml(String(nodeId))}</span>
