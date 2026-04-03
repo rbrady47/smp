@@ -8216,21 +8216,23 @@ const DISCOVERY_OVERLAP_PUSH = 2.0;  // hard separation force multiplier
 const DISCOVERY_REFRESH_MS = 30000;
 
 // Dynamic physics/sizing based on node count — lerps between "few" and "many"
+// spreadFactor (0.5–2.0) scales spacing: >1 expands, <1 contracts
 function discoveryScale() {
     const n = discoveryState.nodes.length || 1;
+    const sf = discoveryState.spreadFactor;
     // t=0 at <=20 nodes, t=1 at >=350 nodes
     const t = Math.max(0, Math.min(1, (n - 20) / 330));
     return {
-        repulsion:      600 + (1 - t) * 600,       // 1200 → 600
-        spring:         0.04 + t * 0.02,            // 0.04 → 0.06
-        springRest:     120 - t * 70,               // 120  → 50
-        dragRepulsion:  800 + (1 - t) * 600,        // 1400 → 800
-        centerGravity:  0.005 + t * 0.005,          // 0.005 → 0.01
-        radiusMin:      12 - t * 7,                 // 12   → 5
-        radiusMax:      40 - t * 26,                // 40   → 14
-        radiusBase:     8 - t * 4,                  // 8    → 4
-        radiusPerConn:  4 - t * 2.5,               // 4    → 1.5
-        rootRadius:     40 - t * 26,                // 40   → 14
+        repulsion:      (600 + (1 - t) * 600) * sf,        // 1200 → 600, scaled
+        spring:         0.04 + t * 0.02,                    // 0.04 → 0.06 (unscaled)
+        springRest:     (120 - t * 70) * sf,                // 120  → 50, scaled
+        dragRepulsion:  (800 + (1 - t) * 600) * sf,        // 1400 → 800, scaled
+        centerGravity:  (0.005 + t * 0.005) / sf,          // 0.005 → 0.01, inverse
+        radiusMin:      12 - t * 7,                         // 12   → 5
+        radiusMax:      40 - t * 26,                        // 40   → 14
+        radiusBase:     8 - t * 4,                          // 8    → 4
+        radiusPerConn:  4 - t * 2.5,                        // 4    → 1.5
+        rootRadius:     40 - t * 26,                        // 40   → 14
     };
 }
 
@@ -8252,6 +8254,7 @@ let discoveryState = {
     running: false,
     refreshTimer: null,
     animFrameId: null,
+    spreadFactor: 1.0,  // 0.5 – 2.0, adjusted by +/- buttons
 };
 
 function discoveryNodeRadius(node) {
@@ -8693,6 +8696,26 @@ function discoveryWireInteractions() {
                     }
                 }
             }
+        });
+    }
+
+    // Expand / Contract buttons
+    function updateSpreadLabel() {
+        const lbl = document.getElementById("discovery-spread-label");
+        if (lbl) lbl.textContent = Math.round(discoveryState.spreadFactor * 100) + "%";
+    }
+    const expandBtn = document.getElementById("discovery-expand");
+    const contractBtn = document.getElementById("discovery-contract");
+    if (expandBtn) {
+        expandBtn.addEventListener("click", () => {
+            discoveryState.spreadFactor = Math.min(2.0, discoveryState.spreadFactor + 0.15);
+            updateSpreadLabel();
+        });
+    }
+    if (contractBtn) {
+        contractBtn.addEventListener("click", () => {
+            discoveryState.spreadFactor = Math.max(0.4, discoveryState.spreadFactor - 0.15);
+            updateSpreadLabel();
         });
     }
 }
