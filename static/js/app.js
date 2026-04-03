@@ -533,7 +533,7 @@ function getTopologyBubbleSize(entity, discoveredCount) {
     const layoutScale = getTopologyLayoutScale();
     if (entity.kind === "services-cloud") {
         const total = Number(entity.service_summary?.total || 0);
-        return Math.round(Math.max(246, Math.min(342, (252 + total * 9) * layoutScale)));
+        return Math.round(Math.max(164, Math.min(228, (168 + total * 6) * layoutScale)));
     }
 
     const scale = Math.sqrt(Math.max(discoveredCount, 0));
@@ -4245,13 +4245,17 @@ function isTopologyEntityVisible(entity) {
         return true;
     }
 
+    if (entity.kind === "services-cloud") {
+        const root = document.getElementById("topology-root");
+        if (root?.getAttribute("data-map-view-id")) {
+            return false;
+        }
+        return topologyState.activeLocations.has("Cloud");
+    }
+
     const root = document.getElementById("topology-root");
     if (root?.getAttribute("data-map-view-id")) {
         return true;
-    }
-
-    if (entity.kind === "services-cloud") {
-        return topologyState.activeLocations.has("Cloud");
     }
 
     if (entity.level === 0) {
