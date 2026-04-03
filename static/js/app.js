@@ -8210,13 +8210,14 @@ async function handleNodeActionClick(event) {
 
 // ==================== DISCOVERY PAGE ====================
 
-const DISCOVERY_REPULSION = 800;
-const DISCOVERY_SPRING = 0.04;
-const DISCOVERY_SPRING_REST = 120;
-const DISCOVERY_DRAG_REPULSION = 1200;
+const DISCOVERY_REPULSION = 600;
+const DISCOVERY_SPRING = 0.05;
+const DISCOVERY_SPRING_REST = 50;
+const DISCOVERY_DRAG_REPULSION = 800;
 const DISCOVERY_DRAG_FOLLOW = 0.08;
-const DISCOVERY_DAMPING = 0.85;
-const DISCOVERY_CENTER_GRAVITY = 0.01;
+const DISCOVERY_DAMPING = 0.82;
+const DISCOVERY_CENTER_GRAVITY = 0.008;
+const DISCOVERY_OVERLAP_PUSH = 2.0;  // hard separation force multiplier
 const DISCOVERY_REFRESH_MS = 30000;
 
 let discoveryState = {
@@ -8240,9 +8241,9 @@ let discoveryState = {
 };
 
 function discoveryNodeRadius(node) {
-    if (node.id === discoveryState.rootSiteId) return 40;
+    if (node.id === discoveryState.rootSiteId) return 14;
     const cc = node.connection_count || 0;
-    return Math.max(12, Math.min(40, 8 + cc * 4));
+    return Math.max(5, Math.min(14, 4 + cc * 1.5));
 }
 
 function discoveryStatusColor(status) {
@@ -8285,17 +8286,28 @@ function discoveryTick() {
         }
     }
 
-    // 1. Repulsion (all pairs — skip pinned nodes as receivers)
+    // 1. Repulsion (all pairs) + hard overlap prevention
     for (let i = 0; i < nodes.length; i++) {
         for (let j = i + 1; j < nodes.length; j++) {
             const a = nodes[i];
             const b = nodes[j];
             let dx = a.x - b.x;
             let dy = a.y - b.y;
-            let dist = Math.sqrt(dx * dx + dy * dy) || 1;
-            const minDist = a.radius + b.radius + 10;
-            if (dist < minDist) dist = minDist;
-            const force = DISCOVERY_REPULSION / (dist * dist);
+            let dist = Math.sqrt(dx * dx + dy * dy) || 0.1;
+            const minSep = a.radius + b.radius + 4;
+
+            // Hard overlap correction: if overlapping, push apart immediately
+            if (dist < minSep) {
+                const overlap = minSep - dist;
+                const pushX = (dx / dist) * overlap * DISCOVERY_OVERLAP_PUSH;
+                const pushY = (dy / dist) * overlap * DISCOVERY_OVERLAP_PUSH;
+                if (!a._pinned && !a._dragging) { a.vx += pushX; a.vy += pushY; }
+                if (!b._pinned && !b._dragging) { b.vx -= pushX; b.vy -= pushY; }
+            }
+
+            // Normal Coulomb repulsion
+            const effectiveDist = Math.max(dist, minSep);
+            const force = DISCOVERY_REPULSION / (effectiveDist * effectiveDist);
             const fx = (dx / dist) * force;
             const fy = (dy / dist) * force;
             if (!a._pinned && !a._dragging) { a.vx += fx; a.vy += fy; }
@@ -8334,7 +8346,7 @@ function discoveryTick() {
                 node.vy -= (dy / dist) * pull;
             } else {
                 // Unconnected nodes: strong repulsion from dragged node
-                const minD = dragNode.radius + node.radius + 20;
+                const minD = dragNode.radius + node.radius + 8;
                 const effectiveDist = Math.max(dist, minD);
                 const force = DISCOVERY_DRAG_REPULSION / (effectiveDist * effectiveDist);
                 node.vx += (dx / dist) * force;
