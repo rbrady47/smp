@@ -1375,6 +1375,10 @@ a {
     opacity: 0.15;
     transition: opacity 0.25s ease;
     pointer-events: none;
+    animation: none !important;
+}
+[data-topology-id].is-topology-faded * {
+    animation: none !important;
 }
 [data-topology-id]:not(.is-topology-faded) {
     transition: opacity 0.25s ease;
