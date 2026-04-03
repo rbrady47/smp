@@ -4401,6 +4401,7 @@ function renderTopologyStage() {
                 ? "Services cloud"
                 : isCluster ? `${entity.unit} Edge Nodes` : entity.level === 1 ? `${entity.unit} / ${entity.location}` : entity.name;
             const isAnchorNode = !isCluster && !isServiceCloud && !isSubmap && !isDiscovered && Boolean(entity.inventory_node_id);
+            const isInsideSubmap = Boolean(document.getElementById("topology-root")?.getAttribute("data-map-view-id"));
             const hoverPanel = isServiceCloud
                 ? `
                     <span class="topology-service-cloud-tooltip" role="tooltip">
@@ -4417,7 +4418,7 @@ function renderTopologyStage() {
                         }
                     </span>
                 `
-                : isAnchorNode ? getTopologyAnchorTooltipMarkup(entity)
+                : isAnchorNode ? (isInsideSubmap ? "" : getTopologyAnchorTooltipMarkup(entity))
                 : isDiscovered ? getTopologyDiscoveredTooltipMarkup(entity)
                 : "";
             const bubbleStyle = `left:${layout.x}px; top:${layout.y}px; --topology-bubble-size:${layout.size}px;`;
@@ -5586,95 +5587,82 @@ async function refreshSubmapDiscovery(submapViewId) {
             }
         });
 
-        // Cluster-place DNs near their source anchor node instead of a blind grid
+        // Radial center-out placement: first DN at center, then spiral outward
+        // Keep clear of ANs (use a generous exclusion zone around each AN)
         const needsLayout = discoveredEntities.filter((dn) => !topologyState.layoutOverrides?.[dn.id]);
         if (needsLayout.length) {
-            // Build a map of source_anchor_id → AN center position
-            const placedEntities = topologyPayload.lvl0_nodes ?? [];
-            const anchorPositions = new Map();
-            placedEntities.forEach((e) => {
-                if (e.inventory_node_id) {
-                    const lo = topologyState.layoutOverrides?.[e.id];
-                    if (lo) {
-                        anchorPositions.set(String(e.inventory_node_id), {
-                            x: lo.x + (lo.size || 96) / 2,
-                            y: lo.y + (lo.size || 96) / 2,
-                            size: lo.size || 96,
-                        });
-                    }
+            const centerX = Math.round(stageW / 2 - dnSize / 2);
+            const centerY = Math.round(stageH / 2 - dnSize / 2);
+            const minSep = dnSize + 24; // minimum separation between DN centers
+            const anClearance = 120;    // keep this far from any AN center
+
+            // Build AN exclusion zones from layout overrides
+            const anZones = [];
+            (topologyPayload.lvl0_nodes ?? []).forEach((e) => {
+                const lo = topologyState.layoutOverrides?.[e.id];
+                if (lo) {
+                    anZones.push({
+                        cx: lo.x + (lo.size || 96) / 2,
+                        cy: lo.y + (lo.size || 96) / 2,
+                    });
                 }
             });
 
-            // Group DNs by source anchor
-            const groups = new Map();
-            const ungrouped = [];
-            needsLayout.forEach((dn) => {
-                const anchorId = String(dn.source_anchor_id || "");
-                if (anchorId && anchorPositions.has(anchorId)) {
-                    if (!groups.has(anchorId)) groups.set(anchorId, []);
-                    groups.get(anchorId).push(dn);
-                } else {
-                    ungrouped.push(dn);
+            const tooCloseToAny = (x, y) => {
+                const cx = x + dnSize / 2;
+                const cy = y + dnSize / 2;
+                // Check AN exclusion zones
+                for (const an of anZones) {
+                    if (Math.hypot(cx - an.cx, cy - an.cy) < anClearance) return true;
+                }
+                // Check occupied nodes (other DNs already placed)
+                for (const occ of occupied) {
+                    const ocx = occ.x + (occ.size || dnSize) / 2;
+                    const ocy = occ.y + (occ.size || dnSize) / 2;
+                    if (Math.hypot(cx - ocx, cy - ocy) < minSep) return true;
+                }
+                return false;
+            };
+
+            const inBounds = (x, y) =>
+                x >= margin && x <= stageW - margin - dnSize &&
+                y >= margin && y <= stageH - margin - dnSize;
+
+            needsLayout.forEach((dn, i) => {
+                if (i === 0 && !tooCloseToAny(centerX, centerY) && inBounds(centerX, centerY)) {
+                    // First DN goes dead center
+                    occupied.push({ x: centerX, y: centerY, size: dnSize });
+                    setTopologyEntityLayout(dn.id, { x: centerX, y: centerY, size: dnSize });
+                    return;
+                }
+                // Spiral outward from center to find a clear spot
+                let placed = false;
+                const ringStep = minSep;
+                for (let radius = ringStep; radius < Math.max(stageW, stageH) && !placed; radius += ringStep) {
+                    // Try positions around the ring at even angular spacing
+                    const circumference = 2 * Math.PI * radius;
+                    const slots = Math.max(6, Math.round(circumference / minSep));
+                    const angleOffset = (i * 137.5 * Math.PI / 180); // golden angle offset per DN
+                    for (let s = 0; s < slots && !placed; s++) {
+                        const angle = angleOffset + (s / slots) * 2 * Math.PI;
+                        const x = Math.round(centerX + radius * Math.cos(angle));
+                        const y = Math.round(centerY + radius * Math.sin(angle));
+                        if (inBounds(x, y) && !tooCloseToAny(x, y)) {
+                            occupied.push({ x, y, size: dnSize });
+                            setTopologyEntityLayout(dn.id, { x, y, size: dnSize });
+                            placed = true;
+                        }
+                    }
+                }
+                // Fallback: just place it below the last occupied node
+                if (!placed) {
+                    const lastOcc = occupied[occupied.length - 1] || { x: centerX, y: centerY, size: dnSize };
+                    const fx = lastOcc.x;
+                    const fy = lastOcc.y + lastOcc.size + 30;
+                    occupied.push({ x: fx, y: fy, size: dnSize });
+                    setTopologyEntityLayout(dn.id, { x: fx, y: fy, size: dnSize });
                 }
             });
-
-            const spacing = dnSize + 20;
-
-            // Place each group in a fan below its source AN
-            for (const [anchorId, dns] of groups) {
-                const anPos = anchorPositions.get(anchorId);
-                const count = dns.length;
-                const fanWidth = (count - 1) * spacing;
-                const startX = anPos.x - fanWidth / 2 - dnSize / 2;
-                const baseY = anPos.y + anPos.size / 2 + 60;
-
-                dns.forEach((dn, i) => {
-                    let x = Math.round(startX + i * spacing);
-                    let y = Math.round(baseY);
-
-                    // Clamp to stage bounds
-                    x = Math.max(margin, Math.min(stageW - margin - dnSize, x));
-                    y = Math.max(topBound, Math.min(stageH - margin - dnSize, y));
-
-                    // Nudge if overlapping an occupied node
-                    for (const occ of occupied) {
-                        const dx = Math.abs(x - occ.x);
-                        const dy = Math.abs(y - occ.y);
-                        if (dx < (dnSize + occ.size) / 2 + 20 && dy < (dnSize + occ.size) / 2 + 20) {
-                            y = occ.y + occ.size + 30;
-                        }
-                    }
-
-                    occupied.push({ x, y, size: dnSize });
-                    setTopologyEntityLayout(dn.id, { x, y, size: dnSize });
-                });
-            }
-
-            // Grid-place any DNs without a known source anchor
-            if (ungrouped.length) {
-                const availW = stageW - margin * 2;
-                const cols = Math.max(1, Math.floor(availW / spacing));
-                const cellW = availW / cols;
-                const cellH = Math.max(dnSize + 20, (stageH - topBound - margin) / Math.max(Math.ceil(ungrouped.length / cols), 1));
-
-                ungrouped.forEach((dn, i) => {
-                    const col = i % cols;
-                    const row = Math.floor(i / cols);
-                    let x = Math.round(margin + col * cellW + cellW / 2 - dnSize / 2);
-                    let y = Math.round(topBound + row * cellH + cellH / 2 - dnSize / 2);
-
-                    for (const occ of occupied) {
-                        const dx = Math.abs(x - occ.x);
-                        const dy = Math.abs(y - occ.y);
-                        if (dx < (dnSize + occ.size) / 2 + 20 && dy < (dnSize + occ.size) / 2 + 20) {
-                            y = occ.y + occ.size + 30;
-                        }
-                    }
-
-                    occupied.push({ x, y, size: dnSize });
-                    setTopologyEntityLayout(dn.id, { x: Math.max(margin, x), y: Math.max(topBound, y), size: dnSize });
-                });
-            }
         }
         // Build discovery links (AN↔DN and DN↔DN tunnel connections)
         const placedEntities = topologyPayload.lvl0_nodes ?? [];
