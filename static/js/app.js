@@ -8222,12 +8222,13 @@ function discoveryScale() {
     const sf = discoveryState.spreadFactor;
     // t=0 at <=20 nodes, t=1 at >=350 nodes
     const t = Math.max(0, Math.min(1, (n - 20) / 330));
+    const sf2 = sf * sf;  // quadratic scaling for repulsion to really push at high spread
     return {
-        repulsion:      (600 + (1 - t) * 600) * sf,        // 1200 → 600, scaled
+        repulsion:      (600 + (1 - t) * 600) * sf2,       // 1200 → 600, quadratic scaled
         spring:         0.04 + t * 0.02,                    // 0.04 → 0.06 (unscaled)
         springRest:     (120 - t * 70) * sf,                // 120  → 50, scaled
-        dragRepulsion:  (800 + (1 - t) * 600) * sf,        // 1400 → 800, scaled
-        centerGravity:  (0.005 + t * 0.005) / sf,          // 0.005 → 0.01, inverse
+        dragRepulsion:  (800 + (1 - t) * 600) * sf2,       // 1400 → 800, quadratic scaled
+        centerGravity:  (0.005 + t * 0.005) / sf2,         // 0.005 → 0.01, inverse quadratic
         radiusMin:      12 - t * 7,                         // 12   → 5
         radiusMax:      40 - t * 26,                        // 40   → 14
         radiusBase:     8 - t * 4,                          // 8    → 4
@@ -8254,7 +8255,7 @@ let discoveryState = {
     running: false,
     refreshTimer: null,
     animFrameId: null,
-    spreadFactor: 1.0,  // 0.5 – 2.0, adjusted by +/- buttons
+    spreadFactor: 1.0,  // 0.3 – 5.0, adjusted by +/- buttons
 };
 
 function discoveryNodeRadius(node) {
@@ -8708,13 +8709,13 @@ function discoveryWireInteractions() {
     const contractBtn = document.getElementById("discovery-contract");
     if (expandBtn) {
         expandBtn.addEventListener("click", () => {
-            discoveryState.spreadFactor = Math.min(2.0, discoveryState.spreadFactor + 0.15);
+            discoveryState.spreadFactor = Math.min(5.0, discoveryState.spreadFactor + 0.25);
             updateSpreadLabel();
         });
     }
     if (contractBtn) {
         contractBtn.addEventListener("click", () => {
-            discoveryState.spreadFactor = Math.max(0.4, discoveryState.spreadFactor - 0.15);
+            discoveryState.spreadFactor = Math.max(0.3, discoveryState.spreadFactor - 0.25);
             updateSpreadLabel();
         });
     }
