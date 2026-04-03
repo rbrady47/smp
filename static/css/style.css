@@ -2266,6 +2266,16 @@ a {
     filter: blur(20px);
 }
 
+.topology-node-icon-status-neutral {
+    color: #7dd3fc;
+    filter: drop-shadow(0 0 12px rgba(125, 211, 252, 0.22));
+}
+
+.topology-node-icon-status-neutral::before {
+    opacity: 0.3;
+    filter: blur(20px);
+}
+
 .topology-node-meta {
     display: block;
     margin-top: 0;
@@ -2655,6 +2665,10 @@ a {
 .topology-node-tooltip.tooltip-border-red {
     border-color: rgba(255, 64, 64, 0.5);
     box-shadow: 0 16px 32px rgba(0, 0, 0, 0.65), 0 0 12px rgba(255, 64, 64, 0.1);
+}
+.topology-node-tooltip.tooltip-border-blue {
+    border-color: rgba(125, 211, 252, 0.4);
+    box-shadow: 0 16px 32px rgba(0, 0, 0, 0.65), 0 0 12px rgba(125, 211, 252, 0.1);
 }
 
 .topology-node:hover .topology-node-tooltip,

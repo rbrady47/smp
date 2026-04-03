@@ -1328,7 +1328,7 @@ function getTopologyAnchorTooltipMarkup(entity) {
             ? "tooltip-border-yellow"
             : effectiveStatus === "healthy" || effectiveStatus === "up" || effectiveStatus === "online"
                 ? "tooltip-border-green"
-                : "tooltip-border-yellow";
+                : "tooltip-border-blue";
 
     return `
         <span class="topology-node-tooltip ${statusClass}" role="tooltip">
