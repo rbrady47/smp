@@ -8694,8 +8694,22 @@ async function loadDiscoveryPage() {
             const nodeId = parseInt(select.value, 10);
             if (!nodeId) return;
             discoveryState.rootNodeId = nodeId;
+            try { localStorage.setItem("smp-discovery-root-node-id", String(nodeId)); } catch (_) {}
             await discoveryFetchAndInit(nodeId);
         });
+
+        // Restore saved root node selection
+        try {
+            const saved = localStorage.getItem("smp-discovery-root-node-id");
+            if (saved) {
+                const savedId = parseInt(saved, 10);
+                if (savedId && select.querySelector(`option[value="${savedId}"]`)) {
+                    select.value = String(savedId);
+                    discoveryState.rootNodeId = savedId;
+                    await discoveryFetchAndInit(savedId);
+                }
+            }
+        } catch (_) {}
     }
 
     discoveryWireInteractions();
