@@ -8213,8 +8213,8 @@ async function handleNodeActionClick(event) {
 const DISCOVERY_REPULSION = 800;
 const DISCOVERY_SPRING = 0.04;
 const DISCOVERY_SPRING_REST = 120;
-const DISCOVERY_CURSOR_REPULSION = 600;
-const DISCOVERY_CURSOR_RADIUS = 150;
+const DISCOVERY_DRAG_REPULSION = 1200;
+const DISCOVERY_DRAG_FOLLOW = 0.08;
 const DISCOVERY_DAMPING = 0.85;
 const DISCOVERY_CENTER_GRAVITY = 0.01;
 const DISCOVERY_REFRESH_MS = 30000;
@@ -8275,7 +8275,17 @@ function discoveryTick() {
     const cx = stageW / 2;
     const cy = stageH / 2;
 
-    // 1. Repulsion (all pairs)
+    // Build set of neighbors for the dragged node (for follow/scatter logic)
+    const dragNode = discoveryState.dragNode;
+    const dragNeighborIds = new Set();
+    if (dragNode) {
+        for (const link of links) {
+            if (link.source === dragNode.id) dragNeighborIds.add(link.target);
+            if (link.target === dragNode.id) dragNeighborIds.add(link.source);
+        }
+    }
+
+    // 1. Repulsion (all pairs — skip pinned nodes as receivers)
     for (let i = 0; i < nodes.length; i++) {
         for (let j = i + 1; j < nodes.length; j++) {
             const a = nodes[i];
@@ -8288,12 +8298,12 @@ function discoveryTick() {
             const force = DISCOVERY_REPULSION / (dist * dist);
             const fx = (dx / dist) * force;
             const fy = (dy / dist) * force;
-            if (!a._dragging) { a.vx += fx; a.vy += fy; }
-            if (!b._dragging) { b.vx -= fx; b.vy -= fy; }
+            if (!a._pinned && !a._dragging) { a.vx += fx; a.vy += fy; }
+            if (!b._pinned && !b._dragging) { b.vx -= fx; b.vy -= fy; }
         }
     }
 
-    // 2. Spring (linked pairs)
+    // 2. Spring (linked pairs — applies even to/from pinned nodes)
     for (const link of links) {
         const a = discoveryState.nodeMap.get(link.source);
         const b = discoveryState.nodeMap.get(link.target);
@@ -8305,37 +8315,58 @@ function discoveryTick() {
         const force = DISCOVERY_SPRING * displacement;
         const fx = (dx / dist) * force;
         const fy = (dy / dist) * force;
-        if (!a._dragging) { a.vx += fx; a.vy += fy; }
-        if (!b._dragging) { b.vx -= fx; b.vy -= fy; }
+        if (!a._pinned && !a._dragging) { a.vx += fx; a.vy += fy; }
+        if (!b._pinned && !b._dragging) { b.vx -= fx; b.vy -= fy; }
     }
 
-    // 3. Cursor repulsion
-    if (discoveryState.mouseX != null && discoveryState.mouseY != null) {
-        const mx = discoveryState.mouseX;
-        const my = discoveryState.mouseY;
+    // 3. Drag forces: connected nodes follow, unconnected scatter
+    if (dragNode) {
         for (const node of nodes) {
-            if (node._dragging) continue;
-            const dx = node.x - mx;
-            const dy = node.y - my;
+            if (node._dragging || node._pinned) continue;
+            const dx = node.x - dragNode.x;
+            const dy = node.y - dragNode.y;
             const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-            if (dist < DISCOVERY_CURSOR_RADIUS) {
-                const force = DISCOVERY_CURSOR_REPULSION / (dist * dist);
+
+            if (dragNeighborIds.has(node.id)) {
+                // Connected nodes: spring pull toward dragged node (follow)
+                const pull = DISCOVERY_DRAG_FOLLOW * (dist - DISCOVERY_SPRING_REST);
+                node.vx -= (dx / dist) * pull;
+                node.vy -= (dy / dist) * pull;
+            } else {
+                // Unconnected nodes: strong repulsion from dragged node
+                const minD = dragNode.radius + node.radius + 20;
+                const effectiveDist = Math.max(dist, minD);
+                const force = DISCOVERY_DRAG_REPULSION / (effectiveDist * effectiveDist);
                 node.vx += (dx / dist) * force;
                 node.vy += (dy / dist) * force;
             }
         }
     }
 
-    // 4. Center gravity
+    // 4. Snap-back: connected nodes return to saved origin after drag release
     for (const node of nodes) {
-        if (node._dragging) continue;
+        if (node._snapBack && node._originX != null) {
+            const dx = node._originX - node.x;
+            const dy = node._originY - node.y;
+            node.vx += dx * 0.06;
+            node.vy += dy * 0.06;
+            // Stop snapping once close enough
+            if (Math.abs(dx) < 1 && Math.abs(dy) < 1) {
+                node._snapBack = false;
+            }
+        }
+    }
+
+    // 5. Center gravity (skip pinned and dragging)
+    for (const node of nodes) {
+        if (node._dragging || node._pinned) continue;
         node.vx += (cx - node.x) * DISCOVERY_CENTER_GRAVITY;
         node.vy += (cy - node.y) * DISCOVERY_CENTER_GRAVITY;
     }
 
-    // 5. Damping + position update + boundary
+    // 6. Damping + position update + boundary (skip pinned and dragging)
     for (const node of nodes) {
-        if (node._dragging) continue;
+        if (node._dragging || node._pinned) continue;
         node.vx *= DISCOVERY_DAMPING;
         node.vy *= DISCOVERY_DAMPING;
         node.x += node.vx;
@@ -8344,7 +8375,7 @@ function discoveryTick() {
         node.y = Math.max(node.radius, Math.min(stageH - node.radius, node.y));
     }
 
-    // 6. Render
+    // 7. Render
     discoveryRender();
 
     discoveryState.animFrameId = requestAnimationFrame(discoveryTick);
@@ -8491,6 +8522,7 @@ function discoveryInitNodes(data) {
             vy: 0,
             radius,
             _dragging: false,
+            _pinned: n.is_root, // root starts pinned at center
         };
     });
 
@@ -8533,16 +8565,45 @@ function discoveryWireInteractions() {
         const node = discoveryState.nodeMap.get(nodeId);
         if (!node) return;
         node._dragging = true;
+        node._pinned = false; // unpin during drag so it follows mouse
         discoveryState.dragNode = node;
         nodeEl.style.cursor = "grabbing";
+
+        // Save origin positions of connected neighbors for snap-back
+        const neighborIds = new Set();
+        for (const link of discoveryState.links) {
+            if (link.source === nodeId) neighborIds.add(link.target);
+            if (link.target === nodeId) neighborIds.add(link.source);
+        }
+        for (const nid of neighborIds) {
+            const neighbor = discoveryState.nodeMap.get(nid);
+            if (neighbor && !neighbor._pinned) {
+                neighbor._originX = neighbor.x;
+                neighbor._originY = neighbor.y;
+                neighbor._snapBack = false; // will be set on mouseup
+            }
+        }
+        discoveryState._dragNeighborIds = neighborIds;
         e.preventDefault();
     });
 
     document.addEventListener("mouseup", () => {
         if (discoveryState.dragNode) {
-            discoveryState.dragNode._dragging = false;
-            discoveryState.dragNode.vx = 0;
-            discoveryState.dragNode.vy = 0;
+            const node = discoveryState.dragNode;
+            node._dragging = false;
+            node._pinned = true; // pin where dropped
+            node.vx = 0;
+            node.vy = 0;
+
+            // Trigger snap-back for connected neighbors
+            const neighborIds = discoveryState._dragNeighborIds || new Set();
+            for (const nid of neighborIds) {
+                const neighbor = discoveryState.nodeMap.get(nid);
+                if (neighbor && !neighbor._pinned && neighbor._originX != null) {
+                    neighbor._snapBack = true;
+                }
+            }
+            discoveryState._dragNeighborIds = null;
             discoveryState.dragNode = null;
         }
         document.querySelectorAll(".discovery-node").forEach((el) => {
