@@ -4350,6 +4350,22 @@ function renderTopologyStage() {
         return;
     }
 
+    // Pre-compute hover-focus fade set: entities NOT connected to the pinned node
+    // are marked faded at render time so the class survives DOM rebuilds
+    const isInsideSubmapView = Boolean(document.getElementById("topology-root")?.getAttribute("data-map-view-id"));
+    const fadedEntityIds = new Set();
+    if (isInsideSubmapView && topologyState.pinnedLinkNodeId) {
+        const connectedIds = new Set();
+        connectedIds.add(topologyState.pinnedLinkNodeId);
+        (topologyPayload?.links ?? []).forEach((link) => {
+            if (link.from === topologyState.pinnedLinkNodeId) connectedIds.add(link.to);
+            if (link.to === topologyState.pinnedLinkNodeId) connectedIds.add(link.from);
+        });
+        visibleEntities.forEach((e) => {
+            if (!connectedIds.has(e.id)) fadedEntityIds.add(e.id);
+        });
+    }
+
     layer.innerHTML = visibleEntities
         .map((entity) => {
             const layout = getTopologyEntityLayout(entity);
@@ -4374,6 +4390,7 @@ function renderTopologyStage() {
                   topologyState.selectedEntityIds.has(entity.id) ? "is-multi-selected" : "",
                   topologyState.selectedKind === "entity" && topologyState.selectedId === entity.id ? "is-selected" : "",
                   topologyState.pinnedTooltipId === entity.id ? "is-tooltip-pinned" : "",
+                  fadedEntityIds.has(entity.id) ? "is-topology-faded" : "",
               ]
                 .filter(Boolean)
                 .join(" ");
@@ -4864,10 +4881,6 @@ function renderTopologyStage() {
         revealAllDiscoveryLinks();
     } else if (topologyState.pinnedLinkNodeId) {
         revealDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
-        const root = document.getElementById("topology-root");
-        if (root?.getAttribute("data-map-view-id")) {
-            applyTopologyHoverFocus(topologyState.pinnedLinkNodeId);
-        }
     }
     refreshPinnedLinkTooltip();
     renderTopologyDrawer();
