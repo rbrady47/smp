@@ -185,7 +185,8 @@ async def seeker_polling_loop(ps: PollerState) -> None:
             enabled_nodes = [node for node in nodes if node.enabled and node.api_username and node.api_password]
             if enabled_nodes:
                 results = await asyncio.gather(
-                    *(refresh_seeker_detail_for_node(ps, node) for node in enabled_nodes),
+                    *(asyncio.wait_for(refresh_seeker_detail_for_node(ps, node), timeout=30.0)
+                      for node in enabled_nodes),
                     return_exceptions=True,
                 )
                 for node, result in zip(enabled_nodes, results):
