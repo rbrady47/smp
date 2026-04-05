@@ -61,6 +61,15 @@ async def topology_submap_page(request: Request, map_view_id: int, db: Session =
     )
 
 
+@router.get("/discovery", response_class=HTMLResponse)
+async def discovery_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request=request,
+        name="discovery.html",
+        context={"page_title": "Network Discovery | Seeker Management Platform"},
+    )
+
+
 @router.get("/nodes", response_class=HTMLResponse)
 async def nodes_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
