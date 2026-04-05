@@ -245,10 +245,10 @@ When features change, update:
 
 SMP polls each anchor node's Seeker API on two cadences:
 
-- **Fast path (5s):** Fetches config, stats, and learnt routes. Updates the dashboard cache immediately. Site names that are already known from previous polls or other nodes are applied instantly.
+- **Fast path (10s):** Fetches config, stats, and learnt routes in a single login session (one login + three requests per node). Updates the dashboard cache immediately. Site names that are already known from previous polls or other nodes are applied instantly. Up to 20 nodes are polled concurrently.
 - **Slow path (30s):** Resolves unknown tunnel-peer site names by probing remote Seekers for their config. This is the expensive step (each probe requires HTTP login + request). Resolved names are patched into the cached data and persist across cycles.
 
-This split keeps the dashboard responsive (fresh data every 5s) while site names fill in progressively over the first few minutes after startup.
+This split keeps the dashboard responsive (fresh data every 10s) while site names fill in progressively over the first few minutes after startup.
 
 ### WAN Throughput Metrics
 

@@ -27,7 +27,7 @@ Browser ──HTTP──> FastAPI (app/main.py)
 
 ### Data Flow
 
-1. **AN Seeker polling** (5s, fast path): `seeker_polling_loop()` → `refresh_seeker_detail_for_node()` → `seeker_detail_cache[node.id]` — fetches config/stats/routes only; applies already-known site names from cache
+1. **AN Seeker polling** (10s, fast path): `seeker_polling_loop()` → `refresh_seeker_detail_for_node()` — single login session (1 login + 3 requests) per node, up to 20 concurrent; applies already-known site names from cache; results written to `seeker_detail_cache[node.id]`
 1b. **Site name resolution** (30s, slow path): `site_name_resolution_loop()` → `resolve_site_name_map()` — probes remote tunnel peers for their site names and patches cached detail in-place
 2. **DN Seeker polling** (5s): `dn_seeker_polling_loop()` → `probe_discovered_node_detail()` → `discovered_node_cache[site_id]`
 3. **Ping monitoring** (5s): `ping_monitor_loop()` → `ping_snapshots[node.id]` / `dn_ping_snapshots[site_id]`
@@ -75,7 +75,7 @@ Background polling loops, each receiving `PollerState` as first parameter:
 | Module | Loop function | Interval | Purpose |
 |--------|--------------|----------|---------|
 | `ping.py` | `ping_monitor_loop(ps)` | 1s tick | ICMP probes for ANs + DNs |
-| `seeker.py` | `seeker_polling_loop(ps)` | 5s | Seeker API polling per AN (fast path — config/stats only) |
+| `seeker.py` | `seeker_polling_loop(ps)` | 10s | Seeker API polling per AN (fast path — single-session login + config/stats/routes); concurrency capped at `SEEKER_POLL_CONCURRENCY = 20` |
 | `seeker.py` | `site_name_resolution_loop(ps)` | 30s (10s delay) | Remote site-name probes for unknown tunnel peers (slow path) |
 | `dn_seeker.py` | `dn_seeker_polling_loop(ps)` | 5s (10s delay) | DN Seeker API probing |
 | `services.py` | `service_polling_loop(ps)` | 30s | HTTP/DNS service checks |
@@ -105,7 +105,8 @@ Route modules split by domain. Each creates an `APIRouter` and is included in `m
 
 **Constants (lines ~85-95):**
 - `PING_INTERVAL_SECONDS = 5.0` — ping burst cycle
-- `SEEKER_POLL_INTERVAL_SECONDS = 5.0` — AN Seeker API poll
+- `SEEKER_POLL_INTERVAL_SECONDS = 10.0` — AN Seeker API poll
+- `SEEKER_POLL_CONCURRENCY = 20` — max concurrent AN polls (asyncio semaphore)
 - `DN_SEEKER_POLL_INTERVAL_SECONDS = 5.0` — DN Seeker API poll
 - `SERVICE_POLL_INTERVAL_SECONDS = 30.0` — service check cycle
 
@@ -119,7 +120,7 @@ Route modules split by domain. Each creates an `APIRouter` and is included in `m
 
 | Function | Interval | Purpose |
 |----------|----------|---------|
-| `seeker_polling_loop()` | 5s | Polls AN Seeker APIs, backfills `node_id` from config |
+| `seeker_polling_loop()` | 10s | Polls AN Seeker APIs via single-session login; backfills `node_id` from config; concurrency limited to 20 |
 | `dn_seeker_polling_loop()` | 5s (10s initial delay) | Polls DN Seeker APIs from DB + in-memory cache |
 | `ping_monitor_loop()` | 5s | Pings all ANs and DNs, updates snapshots |
 | `service_polling_loop()` | 30s | Runs HTTP/DNS service checks |

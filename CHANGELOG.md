@@ -9,10 +9,18 @@ The format is intentionally simple so diffs stay readable in version control.
 ### Performance
 
 - **Seeker polling fast/slow split:** Moved `resolve_site_name_map` (remote HTTP probes for tunnel-peer site names) out of the 5s seeker polling loop into a separate `site_name_resolution_loop` running every 30s. Poll cycle drops from ~35s to <5s. Site names fill in progressively in the background.
+- **Final poll interval set to 10s:** After concurrency improvements, `SEEKER_POLL_INTERVAL_SECONDS` raised from 5s to 10s for a stable, sustainable cadence.
+- **Single-session Seeker login:** `seeker_fetch_all()` in `seeker_api.py` now performs 1 login + 3 data requests per poll cycle (was 3 separate logins). Removes scheme fallback — uses only the operator-configured scheme.
+- **Seeker poll concurrency:** Added `SEEKER_POLL_CONCURRENCY = 20` asyncio semaphore in `pollers/seeker.py`; scales safely to 300+ nodes.
 - **WAN throughput accuracy:** Added `wan_tx_bps_channels` / `wan_rx_bps_channels` (sum of per-channel `txChanRate` / `rxChanRate`) alongside existing `txTotRateIf`-based fields. Channel-sum rates match the Seeker UI; interface-total rates include overhead.
 
 ### Fixed
 
+- **Rate unit fix:** Seeker rate fields are Bytes/s, not bits/s — applied ×8 conversion in `_format_rate()` and `normalize_bwv_stats()`. WAN throughput values now display correct magnitudes.
+- **Sticky yellow fix:** `_publish_dashboard_to_redis` in `pollers/dashboard.py` now publishes windowed rows so `rtt_state` recovers correctly from yellow instead of staying stuck.
+- **SSE live updates — node detail:** Tunnels and channels tables on the node detail page now re-render on incoming SSE events (was static after initial load).
+- **SSE live updates — link tooltip:** Link stat tooltip cache is cleared on SSE events and auto-refreshes if the tooltip is currently pinned. Cache TTL reduced from 10s to 4s.
+- **App logging visibility:** Added `logging.basicConfig(level=logging.INFO)` to `app/main.py` so application-level INFO logs appear at startup.
 - **Redis logging visibility:** Promoted all Redis failure log messages from `debug` to `warning` in `state_manager.py` so connection/write failures are visible at the default log level.
 
 ### Added

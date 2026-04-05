@@ -16,27 +16,46 @@ This file is the shared handoff log for agents working on SMP.
 ### What was built this session
 
 **Seeker poller fast/slow split**
-- Moved `resolve_site_name_map()` out of the fast 5s `seeker_polling_loop` into a new `site_name_resolution_loop` (30s cadence, 10s startup delay)
+- Moved `resolve_site_name_map()` out of the fast poll loop into a new `site_name_resolution_loop` (30s cadence, 10s startup delay)
 - Fast path: `load_node_detail()` now only applies already-known site names from `_collect_known_site_names()` — zero HTTP overhead
 - Slow path: `site_name_resolution_loop()` walks cached tunnel lists, finds unknown peer site names, probes them, and patches the cache in-place
 - Added timing logs: each poll cycle and resolution cycle logs elapsed time
 - Added `site_name_resolution_task` to `PollerState` and wired into lifespan start/stop
 
-**WAN throughput accuracy**
-- Added `wan_tx_bps_channels` / `wan_rx_bps_channels` to `normalize_bwv_stats()` — sum of per-channel `txChanRate` / `rxChanRate`
-- Existing `wan_tx_bps` / `wan_rx_bps` (from `txTotRateIf` / `rxTotRateIf`) retained — these include interface overhead
-- Channel-sum rates match what the Seeker UI shows per-channel
+**Single-session Seeker login**
+- New `seeker_fetch_all()` in `seeker_api.py` performs 1 login + 3 data requests per node per cycle (was 3 separate login/request pairs)
+- Removed scheme fallback — only the operator-configured scheme (http/https) is used; no silent retry on the other scheme
+
+**Seeker poll concurrency and interval**
+- Added `SEEKER_POLL_CONCURRENCY = 20` asyncio semaphore in `pollers/seeker.py` — allows scaling to 300+ nodes without flooding
+- `SEEKER_POLL_INTERVAL_SECONDS` raised to 10s (was 5s) for a stable, sustainable cadence after fast/slow split
+
+**Rate unit fix**
+- Seeker rate fields (`txChanRate`, `rxChanRate`, `txTotRateIf`, `rxTotRateIf`) are Bytes/s, not bits/s
+- Applied ×8 conversion in `_format_rate()` and in `normalize_bwv_stats()` for both interface-total and channel-sum fields
+- `wan_tx_bps_channels` / `wan_rx_bps_channels` (sum of per-channel rates) added alongside existing `wan_tx_bps` / `wan_rx_bps`
+
+**Sticky yellow fix**
+- `_publish_dashboard_to_redis` in `pollers/dashboard.py` now publishes windowed rows so `rtt_state` correctly recovers from yellow; previously the state could get stuck yellow indefinitely
+
+**SSE live updates — node detail and link tooltip**
+- Node detail page: tunnels and channels tables now re-render on SSE node_update events (was static after initial page load)
+- Link tooltip: stat cache cleared on SSE events; if the tooltip is pinned it auto-refreshes; link stats cache TTL reduced from 10s to 4s
+
+**App logging**
+- Added `logging.basicConfig(level=logging.INFO)` to `app/main.py` so INFO-level logs from application startup and pollers are visible
 
 **Redis logging visibility**
 - Promoted all Redis failure/error log messages in `state_manager.py` from `logger.debug()` to `logger.warning()`
-- Connection failures, write failures, scan failures now visible at default log level
 
 ### Files touched
-- `app/pollers/seeker.py` — fast/slow split, `_collect_known_site_names`, `_apply_known_site_names`, `_sort_tunnels`, `site_name_resolution_loop`
+- `app/pollers/seeker.py` — fast/slow split, single-session login, concurrency semaphore, 10s interval, `_collect_known_site_names`, `_apply_known_site_names`, `site_name_resolution_loop`
+- `app/pollers/dashboard.py` — sticky yellow fix (`_publish_dashboard_to_redis` windowed rows)
 - `app/poller_state.py` — added `site_name_resolution_task`
-- `app/main.py` — wired `site_name_resolution_loop` into lifespan
-- `app/seeker_api.py` — added `wan_tx_bps_channels` / `wan_rx_bps_channels` to `normalize_bwv_stats()`
+- `app/main.py` — wired `site_name_resolution_loop` into lifespan; added `logging.basicConfig`
+- `app/seeker_api.py` — `seeker_fetch_all()` single-session login; ×8 rate conversion; `wan_tx_bps_channels` / `wan_rx_bps_channels`
 - `app/state_manager.py` — promoted Redis failure logs to warning level
+- `static/js/app.js` — node detail SSE re-render (tunnels/channels); link tooltip cache clear + auto-refresh on SSE; link stats cache TTL 4s
 - `docs/USER_GUIDE.md`, `docs/CODE_DOCUMENTATION.md`, `CHANGELOG.md`, `docs/AGENT_HANDOFF.md`
 
 ### Verification
