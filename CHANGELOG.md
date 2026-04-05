@@ -8,6 +8,7 @@ The format is intentionally simple so diffs stay readable in version control.
 
 ### Added
 
+- **Redis cache warm-up (Phase 5):** Seeker detail cache and service status cache are now persisted to Redis with TTL and restored on process restart. Eliminates the ~15s cold-start delay — dashboard shows data immediately after restart instead of waiting for the first polling cycle.
 - **Frontend SSE migration (Phase 4):** All pages now connect to the unified SSE endpoint on load. Node dashboard, services dashboard, main dashboard, and node detail page receive live updates via SSE events instead of `setInterval` polling. Topology structure refresh timer kept as safety net. Added `service_update`, `service_snapshot`, `dn_discovered`, `dn_removed`, and `structure_changed` event handlers to the frontend.
 - **Multi-channel Redis pub/sub (Phase 3):** Extended `state_manager.py` with 3 new channels (`smp:services`, `smp:discovery`, `smp:topology-structure`) and corresponding publish functions. Service poller now publishes after each check cycle. Discovery routes publish `dn_discovered`/`dn_removed` events. Topology/node/map CRUD routes publish `structure_changed` events. New unified SSE endpoint `GET /api/stream/events?channels=...` subscribes to any combination of channels. Legacy `/api/stream/node-states` preserved as alias.
 

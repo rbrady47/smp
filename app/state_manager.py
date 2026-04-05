@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 _AN_KEY_PREFIX = "smp:node:"
 _DN_KEY_PREFIX = "smp:dn:"
 _SVC_KEY_PREFIX = "smp:service:"
+_SEEKER_KEY_PREFIX = "smp:seeker-cache:"
 
 # Channel names
 CHANNEL_NODE_STATES = "smp:node-updates"
@@ -36,6 +37,7 @@ ALL_CHANNELS = [CHANNEL_NODE_STATES, CHANNEL_SERVICES, CHANNEL_DISCOVERY, CHANNE
 
 _DEFAULT_TTL_SECONDS = 30  # 2x the 15s poll interval
 _SERVICE_TTL_SECONDS = 60  # 2x the 30s service check interval
+_SEEKER_CACHE_TTL_SECONDS = 30  # 2x the 5s seeker poll interval — expires if poller stops
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +140,45 @@ async def get_all_service_states() -> dict[str, dict[str, Any]]:
         return result
     except Exception:
         logger.debug("Redis scan failed for service states", exc_info=True)
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# Seeker detail cache — persisted for warm restart
+# ---------------------------------------------------------------------------
+
+async def update_seeker_cache(node_id: int | str, detail: dict[str, Any]) -> None:
+    """Persist seeker detail to Redis so it survives process restarts."""
+    r = await get_redis()
+    if r is None:
+        return
+    key = f"{_SEEKER_KEY_PREFIX}{node_id}"
+    try:
+        await r.set(key, json.dumps(detail, default=str), ex=_SEEKER_CACHE_TTL_SECONDS)
+    except Exception:
+        logger.debug("Redis write failed for %s", key, exc_info=True)
+
+
+async def get_all_seeker_cache() -> dict[str, dict[str, Any]]:
+    """Read all seeker detail cache entries from Redis. Returns {node_id: detail_dict}."""
+    r = await get_redis()
+    if r is None:
+        return {}
+    try:
+        keys: list[str] = []
+        async for key in r.scan_iter(match=f"{_SEEKER_KEY_PREFIX}*", count=500):
+            keys.append(key)
+        if not keys:
+            return {}
+        values = await r.mget(keys)
+        result: dict[str, dict[str, Any]] = {}
+        for key, val in zip(keys, values):
+            if val is not None:
+                node_id = key.removeprefix(_SEEKER_KEY_PREFIX)
+                result[node_id] = json.loads(val)
+        return result
+    except Exception:
+        logger.debug("Redis scan failed for seeker cache", exc_info=True)
         return {}
 
 

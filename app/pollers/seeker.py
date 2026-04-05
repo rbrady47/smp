@@ -18,6 +18,7 @@ from app.seeker_api import (
     get_bwv_stats,
     resolve_site_name_map,
 )
+from app import state_manager
 
 if TYPE_CHECKING:
     from app.poller_state import PollerState
@@ -168,6 +169,7 @@ async def refresh_seeker_detail_for_node(ps: PollerState, node: Node) -> dict[st
     detail["raw"] = raw
     detail["cached_at"] = datetime.now(timezone.utc).isoformat()
     ps.seeker_detail_cache[node.id] = detail
+    await state_manager.update_seeker_cache(node.id, detail)
     return detail
 
 
@@ -216,6 +218,7 @@ async def seeker_polling_loop(ps: PollerState) -> None:
                         "raw": cached.get("raw", {}),
                         "cached_at": datetime.now(timezone.utc).isoformat(),
                     }
+                    await state_manager.update_seeker_cache(node.id, ps.seeker_detail_cache[node.id])
 
             backfill_needed = []
             for node in enabled_nodes:

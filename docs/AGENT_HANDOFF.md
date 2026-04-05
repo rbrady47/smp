@@ -8,7 +8,7 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
-## 2026-04-05 — Session: Modular Architecture Rebuild (Phases 1–4)
+## 2026-04-05 — Session: Modular Architecture Rebuild (Phases 1–5)
 
 ### Branch / commit
 - Branch: `claude/ecstatic-hamilton-bTOp5`
@@ -36,8 +36,19 @@ This file is the shared handoff log for agents working on SMP.
 - Kept legacy `/api/stream/node-states` as backward-compatible alias
 - Service snapshot emitted as `service_snapshot` event on SSE connect
 
-### Next steps
-- Phase 5 (optional): Move seeker cache to Redis for restart recovery
+### Phase 5: Redis Cache Warm-Up
+- Added `update_seeker_cache()` and `get_all_seeker_cache()` to `state_manager.py` — stores seeker detail in Redis keys `smp:seeker-cache:{node_id}` with 30s TTL
+- Wired `pollers/seeker.py` to write to Redis after each seeker detail cache update (both success and error fallback paths)
+- Added `_warm_caches_from_redis()` to `main.py` lifespan — runs after Redis init, before pollers start
+- Warms: seeker detail cache, service status cache, and node/DN states
+- Eliminates the ~15s cold-start delay — dashboard has data immediately after restart
+
+### All phases complete
+- Phase 1: Route extraction (56 routes → 9 modules)
+- Phase 2: Poller extraction (5 loops → `app/pollers/`, PollerState)
+- Phase 3: Multi-channel Redis pub/sub (4 channels, unified SSE)
+- Phase 4: Frontend SSE migration (no more setInterval polling)
+- Phase 5: Redis cache warm-up (instant restart recovery)
 
 ---
 

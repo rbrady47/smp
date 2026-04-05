@@ -46,6 +46,7 @@ from app.seeker_api import (
     normalize_bwv_stats,
 )
 from app.redis_client import get_redis, close_redis
+from app import state_manager
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +158,38 @@ async def check_service(service):  # noqa: F811
 # Lifespan — replaces @app.on_event("startup") / @app.on_event("shutdown")
 # ---------------------------------------------------------------------------
 
+async def _warm_caches_from_redis() -> None:
+    """Populate in-memory caches from Redis on startup for instant data availability."""
+    # Seeker detail cache — eliminates the 15s cold-start delay
+    seeker_entries = await state_manager.get_all_seeker_cache()
+    for node_id_str, detail in seeker_entries.items():
+        try:
+            _ps.seeker_detail_cache[int(node_id_str)] = detail
+        except (ValueError, TypeError):
+            pass
+    if seeker_entries:
+        logger.info("Warmed seeker cache from Redis: %d entries", len(seeker_entries))
+
+    # Service status cache — services show status immediately instead of "Pending first check"
+    service_entries = await state_manager.get_all_service_states()
+    for svc_id_str, state in service_entries.items():
+        try:
+            _ps.service_status_cache[int(svc_id_str)] = state
+        except (ValueError, TypeError):
+            pass
+    if service_entries:
+        logger.info("Warmed service cache from Redis: %d entries", len(service_entries))
+
+    # Node states — pre-populate dashboard backend so first projection has data
+    node_states = await state_manager.get_all_node_states()
+    dn_states = await state_manager.get_all_dn_states()
+    if node_states or dn_states:
+        logger.info(
+            "Warmed node state from Redis: %d anchors, %d discovered",
+            len(node_states), len(dn_states),
+        )
+
+
 async def _cancel_task(task: asyncio.Task | None) -> None:
     if task is not None:
         task.cancel()
@@ -176,6 +209,9 @@ async def lifespan(app: FastAPI):
 
     Base.metadata.create_all(bind=engine)
     await get_redis()
+
+    # Warm caches from Redis so the dashboard has data immediately on restart
+    await _warm_caches_from_redis()
 
     _ps.ping_monitor_task = asyncio.create_task(ping_monitor_loop(_ps))
     _ps.seeker_poll_task = asyncio.create_task(seeker_polling_loop(_ps))
