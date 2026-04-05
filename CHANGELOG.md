@@ -8,6 +8,7 @@ The format is intentionally simple so diffs stay readable in version control.
 
 ### Refactored
 
+- **Poller + service extraction (Phase 2):** Extracted all 5 polling loops, health/service functions, and dashboard logic from `app/main.py` into `app/pollers/` (5 files) and `app/services/node_health.py`. Introduced `app/poller_state.py` — a PollerState dataclass that owns all mutable in-memory state. Converted startup/shutdown to FastAPI lifespan context manager. Main.py reduced from ~1,250 to 221 lines.
 - **Route extraction (Phase 1):** Extracted all 56 route handlers from `app/main.py` into 9 modular route files under `app/routes/`. Main.py reduced from 2,612 to ~1,250 lines. No behavior change — all API endpoints, URL paths, and response shapes remain identical.
 
 ### Added

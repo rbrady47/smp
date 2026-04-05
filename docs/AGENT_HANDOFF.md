@@ -8,6 +8,33 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-05 — Session: Modular Architecture Rebuild (Phase 1 + Phase 2)
+
+### Branch / commit
+- Branch: `claude/ecstatic-hamilton-bTOp5`
+
+### What was built this session
+
+**Phase 2: Poller + Service Extraction**
+- Created `app/poller_state.py` — `PollerState` dataclass holding all 11 mutable cache dicts + task handles
+- Created `app/pollers/ping.py` — `ping_host`, `check_tcp_port`, `build_ping_snapshot`, `build_dn_ping_snapshot`, `ping_monitor_loop`
+- Created `app/pollers/seeker.py` — `compute_node_status`, `load_node_detail`, `refresh_seeker_detail_for_node`, `seeker_polling_loop`
+- Created `app/pollers/dn_seeker.py` — `dn_seeker_polling_loop`
+- Created `app/pollers/services.py` — `check_service`, `service_polling_loop`, `merge_service_payload`, `summarize_service_statuses`
+- Created `app/pollers/dashboard.py` — `summarize_dashboard_node`, `probe_discovered_node_detail`, `node_dashboard_polling_loop`, `normalize_node_dashboard_window`, `apply_windowed_detail_summary`
+- Created `app/services/node_health.py` — `serialize_node`, `refresh_nodes`, `get_node_or_404`, `request_node_telemetry`
+- Converted startup/shutdown from `@app.on_event` to FastAPI lifespan context manager
+- `main.py` reduced from ~1,250 → 221 lines (total 2,612 → 221, 92% reduction)
+- All poller functions now receive `PollerState` as first parameter
+- Backward-compatible wrapper functions in `main.py` inject `_ps` so route modules work unchanged
+
+### Verification
+- `python -m compileall app tests alembic` — clean
+- `python -m unittest discover -s tests` — same 3 pre-existing failures
+- All 20 backward-compatible names verified in `main.py`
+
+---
+
 ## 2026-04-05 — Session: Modular Architecture Rebuild (Phase 1)
 
 ### Branch / commit

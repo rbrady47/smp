@@ -38,9 +38,31 @@ Browser ──HTTP──> FastAPI (app/main.py)
 
 ## Backend Files
 
-### `app/main.py` (~1250 lines)
+### `app/main.py` (~220 lines)
 
-The FastAPI application entry point. Contains background tasks, polling loops, helper functions, and core orchestration logic. Route handlers have been extracted into `app/routes/` modules.
+Thin application entry point. Creates a `PollerState` instance, initializes the `NodeDashboardBackend`, starts/stops background polling loops via a FastAPI lifespan context manager, and mounts route modules. Also exports backward-compatible wrapper functions so route modules can import directly from `app.main`.
+
+### `app/poller_state.py`
+
+`PollerState` dataclass holding all mutable in-memory state: 11 cache dicts (ping, seeker, services, DN ping) + task handles + dashboard backend reference. A single instance (`_ps`) is created at module load in `main.py` and passed to every poller and service function.
+
+### `app/pollers/` (5 files)
+
+Background polling loops, each receiving `PollerState` as first parameter:
+
+| Module | Loop function | Interval | Purpose |
+|--------|--------------|----------|---------|
+| `ping.py` | `ping_monitor_loop(ps)` | 1s tick | ICMP probes for ANs + DNs |
+| `seeker.py` | `seeker_polling_loop(ps)` | 5s | Seeker API polling per AN |
+| `dn_seeker.py` | `dn_seeker_polling_loop(ps)` | 5s (10s delay) | DN Seeker API probing |
+| `services.py` | `service_polling_loop(ps)` | 30s | HTTP/DNS service checks |
+| `dashboard.py` | `node_dashboard_polling_loop(ps)` | 1s | Projection build + Redis publish |
+
+Also contains stateless helpers: `ping_host`, `check_tcp_port`, `compute_node_status`, `summarize_dashboard_node`, `merge_service_payload`, etc.
+
+### `app/services/node_health.py`
+
+Node-level business logic: `serialize_node`, `refresh_nodes`, `get_node_or_404`, `request_node_telemetry`. Functions that take `PollerState` + DB session + Node and return serialized dicts.
 
 ### `app/routes/` (10 files)
 
