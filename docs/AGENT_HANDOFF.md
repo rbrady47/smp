@@ -234,6 +234,70 @@ This file is the shared handoff log for agents working on SMP.
 
 ---
 
+## 2026-04-03 — Session: Topology submap improvements, services cloud, hover focus
+
+### Branch / commit
+- Branch: `claude/topology-feature-updates-95FqO`
+- Latest commit: `7f577bd` — "fix: kill all visual activity on faded nodes with filter override"
+- All commits pushed to origin
+
+### What was built this session
+
+**Submap mesh icon bug fix**
+- Padding dots (added to reach 3-dot minimum) were incorrectly colored red. Now white/neutral.
+
+**Services cloud re-enabled**
+- `buildTopologyServiceCloudEntity()` wired back into `getTopologyEntities()`
+- Bypasses layoutOverrides filter so it always renders
+- Only visible on main map — hidden inside submap views via `isTopologyEntityVisible()`
+
+**DN auto-placement — center-out radial spiral**
+- First DN placed dead center of the submap stage
+- Subsequent DNs spiral outward using golden-angle (137.5°) offset
+- 120px exclusion zone around each AN position, 84px minimum separation between DNs
+- Saved positions (DB) and layout overrides still take priority
+
+**Discovery link anchor point assignment**
+- AN→DN: fixed south (AN) → north (DN)
+- DN→DN: geometry-based selection from E/SE/S/SW/W via `pickAnchorPointFromSet()`
+- Replaced generic `pickAnchorPointByAngle()` with constrained AP picker
+
+**Hover focus effect (submaps only)**
+- Hovering or click-pinning a node fades all unconnected nodes to 12% opacity with desaturation
+- Pinned state is render-baked (computed in `fadedEntityIds` set before render loop) — no flash on DOM rebuild
+- Transient hover uses DOM-based `applyTopologyHoverFocus()` / `clearTopologyHoverFocus()`
+- CSS: `animation: none !important` and `filter: saturate(0) brightness(0.4) !important` on faded nodes and children
+- Only active inside submap views, not on main map
+
+**AN tooltips hidden in submaps**
+- `isInsideSubmap` check suppresses AN hover tooltip inside submap views
+
+**CLAUDE.md update**
+- Added instruction to read `docs/CLAUDE_GIT_INSTRUCTIONS.md` at session start
+
+### Files touched
+- `CLAUDE.md` — git instructions reference
+- `static/js/app.js` — services cloud wiring, DN placement, AP assignment, hover focus, AN tooltip suppression
+- `static/css/style.css` — hover focus fade styling
+- `docs/USER_GUIDE.md` — submap interactions, services cloud, hover focus
+- `docs/CODE_DOCUMENTATION.md` — hover focus system, DN placement, AP assignment docs
+- `CHANGELOG.md` — session entries
+- `docs/AGENT_HANDOFF.md` — this entry
+
+### Verification
+- Services cloud renders on main map only
+- Mesh icon padding dots are white/neutral
+- DN placement spirals from center, avoids ANs
+- AN→DN links use S→N, DN→DN use geometry-based E/SE/S/SW/W
+- Pinned hover focus is solid (no flashing); transient hover has minor flicker (known, acceptable)
+- AN tooltips suppressed inside submaps
+
+### Known gaps / next steps
+- Transient hover focus (non-pinned) has minor flicker during refresh cycles since it's DOM-based rather than render-baked. Could be improved by storing hovered entity ID in state.
+- Documentation updates should be reviewed for consistency with prior entries.
+
+---
+
 ## 2026-04-02 — Session: Submap icon/card redesign, DN count bubbles, hover tooltips
 
 ### Branch / commit

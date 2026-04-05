@@ -366,16 +366,37 @@ When SVG links are created in `drawTopologyLinks()`, links for pinned nodes or e
 - `mouseleave` removes tooltip; stale tooltips cleaned up at start of each render cycle
 
 **Entity interactions:**
-- **Hover**: reveals discovery links for that entity
-- **Click**: pins/unpins tooltip + discovery links
+- **Hover**: reveals discovery links for that entity; in submaps, fades unconnected nodes (DOM-based via `applyTopologyHoverFocus()`)
+- **Click**: pins/unpins tooltip + discovery links; in submaps, fades unconnected nodes (render-baked via `fadedEntityIds` set computed before render loop)
 - **Double-click (AN)**: opens HTTPS web session to node
 - **Double-click (DN)**: opens HTTPS web session to DN host
 - **Right-click (AN/DN)**: opens floating detail panel
 - **Right-click (Submap, edit mode)**: rename prompt via `renameTopologySubmap()`
-- **Stage click**: clears all pins
+- **Stage click**: clears all pins and hover focus
 
-**`refreshSubmapDiscovery(submapViewId)` (~line 5274):**
-Called on every frontend refresh cycle. Fetches discovery data, builds DN entities, builds discovery link objects (AN→DN and DN→DN with deduplication), detects state changes, and triggers flash animations.
+**Hover focus system:**
+- `applyTopologyHoverFocus(entityId)` — DOM-based, adds `is-topology-faded` class to unconnected nodes (used for transient hover)
+- `clearTopologyHoverFocus()` — removes all `is-topology-faded` classes
+- `fadedEntityIds` set (computed in `renderTopologyStage()`) — bakes fade into HTML class list at render time for pinned state, preventing flash on DOM rebuild
+- CSS: `.is-topology-faded` uses `opacity: 0.12`, `filter: saturate(0) brightness(0.4) !important`, `animation: none !important` on element and all children
+- Only active inside submap views (`data-map-view-id` present on `#topology-root`)
+
+**DN auto-placement (inside `refreshSubmapDiscovery`):**
+- Center-out radial spiral using golden-angle (137.5°) offset per DN
+- First DN placed dead center of the stage
+- 120px exclusion zone around each AN position
+- `minSep` (84px) between DN centers prevents overlap
+- Saved DB positions and layout overrides take priority over auto-placement
+
+**Discovery link anchor point assignment:**
+- AN→DN links: fixed south (AN) → north (DN)
+- DN→DN links: `pickAnchorPointFromSet()` selects from E/SE/S/SW/W based on geometric angle between entity centers
+- Operator anchor overrides (from edit mode) still take priority at draw time
+
+**AN tooltips:** Hidden inside submap views; only DN tooltips are shown.
+
+**`refreshSubmapDiscovery(submapViewId)`:**
+Called on every frontend refresh cycle. Fetches discovery data, builds DN entities, auto-places new DNs using radial spiral, builds discovery link objects (AN→DN and DN→DN with geometry-based AP assignment and deduplication), detects state changes, and triggers flash animations.
 
 ---
 

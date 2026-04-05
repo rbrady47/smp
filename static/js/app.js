@@ -825,7 +825,7 @@ function getTopologyIconStatus(status) {
     if (normalized === "degraded") {
         return "degraded";
     }
-    if (normalized === "down") {
+    if (normalized === "down" || normalized === "offline" || normalized === "failed") {
         return "down";
     }
     return "neutral";
@@ -1015,6 +1015,31 @@ function getTopologyAnchorPointDefinitions() {
         { key: "w", x: 0, y: 0.5 },
         { key: "nw", x: 0.18, y: 0.12 },
     ];
+}
+
+/**
+ * Pick the best anchor point key given the angle from source center to target center.
+ * Returns one of: "n", "ne", "e", "se", "s", "sw", "w", "nw".
+ */
+/**
+ * Pick the best anchor point from a constrained set based on angle.
+ * Each allowed AP has a canonical angle; pick the one closest to the actual angle.
+ */
+function pickAnchorPointFromSet(fromX, fromY, toX, toY, allowedKeys) {
+    const apAngles = { e: 0, se: 45, s: 90, sw: 135, w: 180, nw: 225, n: 270, ne: 315 };
+    const angle = Math.atan2(toY - fromY, toX - fromX);
+    const deg = ((angle * 180 / Math.PI) + 360) % 360;
+    let best = allowedKeys[0];
+    let bestDiff = 360;
+    for (const key of allowedKeys) {
+        const apDeg = apAngles[key] ?? 0;
+        const diff = Math.min(Math.abs(deg - apDeg), 360 - Math.abs(deg - apDeg));
+        if (diff < bestDiff) {
+            bestDiff = diff;
+            best = key;
+        }
+    }
+    return best;
 }
 
 function getTopologyConnectedAnchorMap() {
@@ -1298,12 +1323,18 @@ function getTopologyAnchorTooltipMarkup(entity) {
         ? `${Math.round(entity.cpu_avg)}%`
         : "--";
     const versionText = String(entity.version || "--").trim() || "--";
-    const statusReason = getTopologyAnchorStatusReason(entity);
+    const effectiveStatus = getEffectiveTopologyEntityStatus(entity);
+    const statusClass = effectiveStatus === "down" || effectiveStatus === "offline" || effectiveStatus === "failed"
+        ? "tooltip-border-red"
+        : effectiveStatus === "degraded"
+            ? "tooltip-border-yellow"
+            : effectiveStatus === "healthy" || effectiveStatus === "up" || effectiveStatus === "online"
+                ? "tooltip-border-green"
+                : "tooltip-border-blue";
 
     return `
-        <span class="topology-node-tooltip" role="tooltip">
+        <span class="topology-node-tooltip ${statusClass}" role="tooltip">
             <strong class="topology-node-tooltip-title">${escapeHtml(entity.inventory_name || entity.name || "Node")}</strong>
-            <span class="topology-node-tooltip-reason">${escapeHtml(statusReason)}</span>
             <span class="topology-node-tooltip-grid">
                 <span class="topology-node-tooltip-label">Node ID</span>
                 <span class="topology-node-tooltip-value">${escapeHtml(String(nodeId))}</span>
@@ -1333,7 +1364,6 @@ function getTopologyDiscoveredTooltipMarkup(entity) {
 
     const siteId = entity.site_id || entity.node_id || "--";
     const hostIp = entity.host || "--";
-    const rttState = String(entity.rtt_state || "unknown").toLowerCase();
     const rttText = typeof entity.latency_ms === "number" && Number.isFinite(entity.latency_ms)
         ? `${Math.round(entity.latency_ms)} ms`
         : "--";
@@ -1344,25 +1374,18 @@ function getTopologyDiscoveredTooltipMarkup(entity) {
     const rxText = entity.rx_display || "--";
     const sourceName = entity.source_name || "--";
 
-    let statusReason;
-    if (rttState === "good") {
-        statusReason = rttText !== "--"
-            ? `Green: Ping is healthy (${rttText}).`
-            : "Green: Ping is healthy.";
-    } else if (rttState === "warn") {
-        statusReason = rttText !== "--"
-            ? `Yellow: Ping is degraded (${rttText}).`
-            : "Yellow: Ping is degraded.";
-    } else if (rttState === "down") {
-        statusReason = "Red: Ping is down.";
-    } else {
-        statusReason = "Ping state not available yet.";
-    }
+    const effectiveStatus = getEffectiveTopologyEntityStatus(entity);
+    const statusClass = effectiveStatus === "down" || effectiveStatus === "offline" || effectiveStatus === "failed"
+        ? "tooltip-border-red"
+        : effectiveStatus === "degraded"
+            ? "tooltip-border-yellow"
+            : effectiveStatus === "healthy" || effectiveStatus === "up" || effectiveStatus === "online"
+                ? "tooltip-border-green"
+                : "tooltip-border-blue";
 
     return `
-        <span class="topology-node-tooltip" role="tooltip">
+        <span class="topology-node-tooltip ${statusClass}" role="tooltip">
             <strong class="topology-node-tooltip-title">${escapeHtml(entity.name || siteId)}</strong>
-            <span class="topology-node-tooltip-reason">${escapeHtml(statusReason)}</span>
             <span class="topology-node-tooltip-grid">
                 <span class="topology-node-tooltip-label">Site ID</span>
                 <span class="topology-node-tooltip-value">${escapeHtml(String(siteId))}</span>
@@ -4719,12 +4742,13 @@ function getTopologyEntities() {
     };
 
     const authoredEntities = [
+        buildTopologyServiceCloudEntity(),
         ...((topologyPayload.lvl0_nodes ?? []).map(mergeDashboardAnchorState)),
         ...((topologyPayload.lvl1_nodes ?? []).map(mergeDashboardAnchorState)),
         ...(topologyPayload.lvl2_clusters ?? []),
         ...(topologyPayload.submaps ?? []),
     ];
-    return authoredEntities.filter((entity) => Boolean(topologyState.layoutOverrides?.[entity.id]));
+    return authoredEntities.filter((entity) => entity.kind === "services-cloud" || Boolean(topologyState.layoutOverrides?.[entity.id]));
 }
 
 function getTopologyLinkId(link, index) {
@@ -4736,13 +4760,17 @@ function isTopologyEntityVisible(entity) {
         return true;
     }
 
+    if (entity.kind === "services-cloud") {
+        const root = document.getElementById("topology-root");
+        if (root?.getAttribute("data-map-view-id")) {
+            return false;
+        }
+        return topologyState.activeLocations.has("Cloud");
+    }
+
     const root = document.getElementById("topology-root");
     if (root?.getAttribute("data-map-view-id")) {
         return true;
-    }
-
-    if (entity.kind === "services-cloud") {
-        return topologyState.activeLocations.has("Cloud");
     }
 
     if (entity.level === 0) {
@@ -4812,6 +4840,22 @@ function renderTopologyStage() {
         return;
     }
 
+    // Pre-compute hover-focus fade set: entities NOT connected to the pinned node
+    // are marked faded at render time so the class survives DOM rebuilds
+    const isInsideSubmapView = Boolean(document.getElementById("topology-root")?.getAttribute("data-map-view-id"));
+    const fadedEntityIds = new Set();
+    if (isInsideSubmapView && topologyState.pinnedLinkNodeId) {
+        const connectedIds = new Set();
+        connectedIds.add(topologyState.pinnedLinkNodeId);
+        (topologyPayload?.links ?? []).forEach((link) => {
+            if (link.from === topologyState.pinnedLinkNodeId) connectedIds.add(link.to);
+            if (link.to === topologyState.pinnedLinkNodeId) connectedIds.add(link.from);
+        });
+        visibleEntities.forEach((e) => {
+            if (!connectedIds.has(e.id)) fadedEntityIds.add(e.id);
+        });
+    }
+
     layer.innerHTML = visibleEntities
         .map((entity) => {
             const layout = getTopologyEntityLayout(entity);
@@ -4836,6 +4880,7 @@ function renderTopologyStage() {
                   topologyState.selectedEntityIds.has(entity.id) ? "is-multi-selected" : "",
                   topologyState.selectedKind === "entity" && topologyState.selectedId === entity.id ? "is-selected" : "",
                   topologyState.pinnedTooltipId === entity.id ? "is-tooltip-pinned" : "",
+                  fadedEntityIds.has(entity.id) ? "is-topology-faded" : "",
               ]
                 .filter(Boolean)
                 .join(" ");
@@ -4863,6 +4908,7 @@ function renderTopologyStage() {
                 ? "Services cloud"
                 : isCluster ? `${entity.unit} Edge Nodes` : entity.level === 1 ? `${entity.unit} / ${entity.location}` : entity.name;
             const isAnchorNode = !isCluster && !isServiceCloud && !isSubmap && !isDiscovered && Boolean(entity.inventory_node_id);
+            const isInsideSubmap = Boolean(document.getElementById("topology-root")?.getAttribute("data-map-view-id"));
             const hoverPanel = isServiceCloud
                 ? `
                     <span class="topology-service-cloud-tooltip" role="tooltip">
@@ -4879,7 +4925,7 @@ function renderTopologyStage() {
                         }
                     </span>
                 `
-                : isAnchorNode ? getTopologyAnchorTooltipMarkup(entity)
+                : isAnchorNode ? (isInsideSubmap ? "" : getTopologyAnchorTooltipMarkup(entity))
                 : isDiscovered ? getTopologyDiscoveredTooltipMarkup(entity)
                 : "";
             const bubbleStyle = `left:${layout.x}px; top:${layout.y}px; --topology-bubble-size:${layout.size}px;`;
@@ -5151,12 +5197,17 @@ function renderTopologyStage() {
                 if (topologyState.pinnedLinkNodeId === nextId) {
                     topologyState.pinnedLinkNodeId = null;
                     hideAllDiscoveryLinks();
+                    clearTopologyHoverFocus();
                 } else {
                     if (topologyState.pinnedLinkNodeId) {
                         hideDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
                     }
                     topologyState.pinnedLinkNodeId = nextId;
                     revealDiscoveryLinksForEntity(nextId);
+                    const root = document.getElementById("topology-root");
+                    if (root?.getAttribute("data-map-view-id")) {
+                        applyTopologyHoverFocus(nextId);
+                    }
                 }
                 renderTopologyStage();
                 return;
@@ -5261,12 +5312,17 @@ function renderTopologyStage() {
             if (!entityId || topologyState.editMode) return;
             if (topologyState.pinnedLinkNodeId && topologyState.pinnedLinkNodeId !== entityId) return;
             revealDiscoveryLinksForEntity(entityId);
+            const root = document.getElementById("topology-root");
+            if (root?.getAttribute("data-map-view-id")) {
+                applyTopologyHoverFocus(entityId);
+            }
         });
         button.addEventListener("mouseleave", () => {
             const entityId = button.getAttribute("data-topology-id");
             if (!entityId || topologyState.editMode) return;
             if (topologyState.pinnedLinkNodeId === entityId) return;
             hideDiscoveryLinksForEntity(entityId);
+            clearTopologyHoverFocus();
         });
     });
 
@@ -5299,6 +5355,7 @@ function renderTopologyStage() {
         if (topologyState.pinnedLinkNodeId) {
             hideDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
             topologyState.pinnedLinkNodeId = null;
+            clearTopologyHoverFocus();
         }
         if (topologyState.pinnedLinkTooltipId) {
             topologyState.pinnedLinkTooltipId = null;
@@ -5655,15 +5712,17 @@ function getTopologySubmapIconMarkup(entity, dnUp, dnDown, dnUpNames, dnDownName
         return `<line x1="${positions[a].x}" y1="${positions[a].y}" x2="${positions[b].x}" y2="${positions[b].y}" class="topology-submap-mesh-line"></line>`;
     });
 
-    // Assign colors: placeholder=white, first dnUp=green, rest=red
+    // Assign colors: first dnUp=green, next dnDown=red, padding=white/neutral
     const dotsSvg = positions.map((p, i) => {
         let color;
         if (isPlaceholder) {
             color = "rgba(180, 200, 220, 0.6)";
         } else if (i < dnUp) {
             color = "#4ade80";
-        } else {
+        } else if (i < dnUp + dnDown) {
             color = "#ff4040";
+        } else {
+            color = "rgba(180, 200, 220, 0.6)";
         }
         return `<circle cx="${p.x}" cy="${p.y}" r="2.2" fill="${color}" class="topology-submap-mesh-node"></circle>`;
     }).join("");
@@ -6006,7 +6065,7 @@ async function refreshSubmapDiscovery(submapViewId) {
             });
         topologyPayload.lvl1_nodes = discoveredEntities;
 
-        // Apply saved positions from DB first, then grid-place truly new DNs
+        // Apply saved positions from DB first, then cluster-place truly new DNs near their source AN
         const savedPositions = result?.saved_positions ?? {};
         const stage = document.getElementById("topology-stage");
         const stageW = stage ? stage.clientWidth : 1200;
@@ -6035,33 +6094,81 @@ async function refreshSubmapDiscovery(submapViewId) {
             }
         });
 
-        // Grid-place only DNs with no layout override (no DB position and no local override)
+        // Radial center-out placement: first DN at center, then spiral outward
+        // Keep clear of ANs (use a generous exclusion zone around each AN)
         const needsLayout = discoveredEntities.filter((dn) => !topologyState.layoutOverrides?.[dn.id]);
         if (needsLayout.length) {
-            const availW = stageW - margin * 2;
-            const availH = stageH - topBound - margin;
-            const cols = Math.max(1, Math.floor(availW / (dnSize + 30)));
-            const rows = Math.ceil(needsLayout.length / cols);
-            const cellW = availW / cols;
-            const cellH = Math.max(dnSize + 20, availH / Math.max(rows, 1));
+            const centerX = Math.round(stageW / 2 - dnSize / 2);
+            const centerY = Math.round(stageH / 2 - dnSize / 2);
+            const minSep = dnSize + 24; // minimum separation between DN centers
+            const anClearance = 120;    // keep this far from any AN center
+
+            // Build AN exclusion zones from layout overrides
+            const anZones = [];
+            (topologyPayload.lvl0_nodes ?? []).forEach((e) => {
+                const lo = topologyState.layoutOverrides?.[e.id];
+                if (lo) {
+                    anZones.push({
+                        cx: lo.x + (lo.size || 96) / 2,
+                        cy: lo.y + (lo.size || 96) / 2,
+                    });
+                }
+            });
+
+            const tooCloseToAny = (x, y) => {
+                const cx = x + dnSize / 2;
+                const cy = y + dnSize / 2;
+                // Check AN exclusion zones
+                for (const an of anZones) {
+                    if (Math.hypot(cx - an.cx, cy - an.cy) < anClearance) return true;
+                }
+                // Check occupied nodes (other DNs already placed)
+                for (const occ of occupied) {
+                    const ocx = occ.x + (occ.size || dnSize) / 2;
+                    const ocy = occ.y + (occ.size || dnSize) / 2;
+                    if (Math.hypot(cx - ocx, cy - ocy) < minSep) return true;
+                }
+                return false;
+            };
+
+            const inBounds = (x, y) =>
+                x >= margin && x <= stageW - margin - dnSize &&
+                y >= margin && y <= stageH - margin - dnSize;
 
             needsLayout.forEach((dn, i) => {
-                const col = i % cols;
-                const row = Math.floor(i / cols);
-                let x = Math.round(margin + col * cellW + cellW / 2 - dnSize / 2);
-                let y = Math.round(topBound + row * cellH + cellH / 2 - dnSize / 2);
-
-                // Nudge if overlapping an occupied node
-                for (const occ of occupied) {
-                    const dx = Math.abs(x - occ.x);
-                    const dy = Math.abs(y - occ.y);
-                    if (dx < (dnSize + occ.size) / 2 + 20 && dy < (dnSize + occ.size) / 2 + 20) {
-                        y = occ.y + occ.size + 30;
+                if (i === 0 && !tooCloseToAny(centerX, centerY) && inBounds(centerX, centerY)) {
+                    // First DN goes dead center
+                    occupied.push({ x: centerX, y: centerY, size: dnSize });
+                    setTopologyEntityLayout(dn.id, { x: centerX, y: centerY, size: dnSize });
+                    return;
+                }
+                // Spiral outward from center to find a clear spot
+                let placed = false;
+                const ringStep = minSep;
+                for (let radius = ringStep; radius < Math.max(stageW, stageH) && !placed; radius += ringStep) {
+                    // Try positions around the ring at even angular spacing
+                    const circumference = 2 * Math.PI * radius;
+                    const slots = Math.max(6, Math.round(circumference / minSep));
+                    const angleOffset = (i * 137.5 * Math.PI / 180); // golden angle offset per DN
+                    for (let s = 0; s < slots && !placed; s++) {
+                        const angle = angleOffset + (s / slots) * 2 * Math.PI;
+                        const x = Math.round(centerX + radius * Math.cos(angle));
+                        const y = Math.round(centerY + radius * Math.sin(angle));
+                        if (inBounds(x, y) && !tooCloseToAny(x, y)) {
+                            occupied.push({ x, y, size: dnSize });
+                            setTopologyEntityLayout(dn.id, { x, y, size: dnSize });
+                            placed = true;
+                        }
                     }
                 }
-
-                occupied.push({ x, y, size: dnSize });
-                setTopologyEntityLayout(dn.id, { x: Math.max(margin, x), y: Math.max(topBound, y), size: dnSize });
+                // Fallback: just place it below the last occupied node
+                if (!placed) {
+                    const lastOcc = occupied[occupied.length - 1] || { x: centerX, y: centerY, size: dnSize };
+                    const fx = lastOcc.x;
+                    const fy = lastOcc.y + lastOcc.size + 30;
+                    occupied.push({ x: fx, y: fy, size: dnSize });
+                    setTopologyEntityLayout(dn.id, { x: fx, y: fy, size: dnSize });
+                }
             });
         }
         // Build discovery links (AN↔DN and DN↔DN tunnel connections)
@@ -6073,23 +6180,36 @@ async function refreshSubmapDiscovery(submapViewId) {
                 anchorEntityMap.set(String(e.inventory_node_id), e.id);
             }
         });
+        // Helper: get entity center from layout overrides
+        const entityCenter = (entityId) => {
+            const lo = topologyState.layoutOverrides?.[entityId];
+            if (!lo) return null;
+            const sz = lo.size || 60;
+            return { x: lo.x + sz / 2, y: lo.y + sz / 2 };
+        };
+
         const dnEntityIds = new Set(discoveredEntities.map((dn) => dn.id));
+        const dnDnAllowedAPs = ["e", "se", "s", "sw", "w"];
         const discoveryLinks = rawLinks
             .map((link, i) => {
                 const toEntityId = `dn-${link.target_site_id}`;
                 if (!dnEntityIds.has(toEntityId)) return null;
 
-                // DN↔DN link: from is a DN entity
+                // DN↔DN link: use E/SE/S/SW/W based on geometry
                 if (link.kind === "dn-dn" && link.source_dn_site_id) {
                     const fromEntityId = `dn-${link.source_dn_site_id}`;
                     if (!dnEntityIds.has(fromEntityId)) return null;
                     if (fromEntityId === toEntityId) return null; // self-link guard
+                    const fromC = entityCenter(fromEntityId);
+                    const toC = entityCenter(toEntityId);
+                    const srcAP = fromC && toC ? pickAnchorPointFromSet(fromC.x, fromC.y, toC.x, toC.y, dnDnAllowedAPs) : "s";
+                    const tgtAP = fromC && toC ? pickAnchorPointFromSet(toC.x, toC.y, fromC.x, fromC.y, dnDnAllowedAPs) : "s";
                     return {
                         id: `discovery-link-${i}`,
                         from: fromEntityId,
                         to: toEntityId,
-                        source_anchor: "s",
-                        target_anchor: "n",
+                        source_anchor: srcAP,
+                        target_anchor: tgtAP,
                         link_type: "dotted",
                         kind: "discovery",
                         status: link.status || "neutral",
@@ -6098,7 +6218,7 @@ async function refreshSubmapDiscovery(submapViewId) {
                     };
                 }
 
-                // AN↔DN link: from is an anchor entity
+                // AN↔DN link: always south (AN) → north (DN)
                 const fromEntityId = anchorEntityMap.get(String(link.source_anchor_id));
                 if (!fromEntityId) return null;
                 return {
@@ -6312,6 +6432,37 @@ function flashDiscoveryLinksForEntity(entityId) {
     topologyState._flashTimers.push(timer);
 }
 
+// --- Hover focus: fade unconnected nodes ---
+
+function applyTopologyHoverFocus(entityId) {
+    // Build set of connected entity IDs from topology links
+    const connectedIds = new Set();
+    connectedIds.add(entityId);
+    (topologyPayload?.links ?? []).forEach((link) => {
+        if (link.from === entityId) connectedIds.add(link.to);
+        if (link.to === entityId) connectedIds.add(link.from);
+    });
+
+    const stage = document.getElementById("topology-stage");
+    if (!stage) return;
+    stage.querySelectorAll("[data-topology-id]").forEach((el) => {
+        const id = el.getAttribute("data-topology-id");
+        if (!connectedIds.has(id)) {
+            el.classList.add("is-topology-faded");
+        } else {
+            el.classList.remove("is-topology-faded");
+        }
+    });
+}
+
+function clearTopologyHoverFocus() {
+    const stage = document.getElementById("topology-stage");
+    if (!stage) return;
+    stage.querySelectorAll(".is-topology-faded").forEach((el) => {
+        el.classList.remove("is-topology-faded");
+    });
+}
+
 // --- End discovery link visibility helpers ---
 
 async function fetchTopologyLinkStats(inventoryNodeId) {
@@ -6332,12 +6483,18 @@ async function fetchTopologyLinkStats(inventoryNodeId) {
     return null;
 }
 
-function findTunnelRowForPeer(statsData, peerSiteId) {
-    if (!statsData?.tunnels || !peerSiteId) {
+function findTunnelRowForPeer(statsData, peerSiteId, peerNodeId) {
+    if (!statsData?.tunnels || (!peerSiteId && !peerNodeId)) {
         return null;
     }
-    const peerId = String(peerSiteId).trim();
-    return statsData.tunnels.find((t) => String(t.mate_site_id || "").trim() === peerId) || null;
+    const siteId = peerSiteId ? String(peerSiteId).trim() : null;
+    const nodeId = peerNodeId ? String(peerNodeId).trim() : null;
+    return statsData.tunnels.find((t) => {
+        const mateSite = String(t.mate_site_id || "").trim();
+        if (siteId && mateSite === siteId) return true;
+        if (nodeId && mateSite === nodeId) return true;
+        return false;
+    }) || null;
 }
 
 function getTopologyLinkPeerSiteId(link) {
@@ -6354,17 +6511,19 @@ function buildTopologyLinkTooltipMarkup(link, tunnelRow) {
     if (!link || (link.kind !== "authored" && link.kind !== "discovery")) {
         return "";
     }
+    const entities = getTopologyEntities();
+    const sourceEntity = entities.find((e) => e.id === link.from);
+    const targetEntity = entities.find((e) => e.id === link.to);
     let name;
     let entity;
     if (link.kind === "discovery") {
-        const entities = getTopologyEntities();
-        const dnEntity = entities.find((e) => e.id === link.to);
-        const anEntity = entities.find((e) => e.id === link.from);
-        name = `${anEntity?.name || "AN"} ↔ ${dnEntity?.site_id || "DN"}`;
-        entity = anEntity || dnEntity;
+        name = `${sourceEntity?.name || "AN"} ↔ ${targetEntity?.site_id || "DN"}`;
+        entity = sourceEntity || targetEntity;
     } else {
-        entity = getTopologyStatusNodeEntity(link.status_node_id);
-        name = entity?.inventory_name || entity?.name || "Node";
+        const sourceName = sourceEntity?.inventory_name || sourceEntity?.name || sourceEntity?.node_id || "?";
+        const targetName = targetEntity?.inventory_name || targetEntity?.name || targetEntity?.node_id || "?";
+        name = `${sourceName} ↔ ${targetName}`;
+        entity = getTopologyStatusNodeEntity(link.status_node_id) || sourceEntity || targetEntity;
     }
     if (!entity) {
         return "";
@@ -6372,7 +6531,6 @@ function buildTopologyLinkTooltipMarkup(link, tunnelRow) {
     const linkStatus = link.kind === "discovery"
         ? (link.status === "down" ? "down" : link.status === "degraded" ? "degraded" : "healthy")
         : computeTopologyLinkStatusFromNode(entity);
-    const statusLabel = linkStatus === "down" ? "Down" : linkStatus === "degraded" ? "Degraded" : "Healthy";
     const statusDot = linkStatus === "down" ? "down" : linkStatus === "degraded" ? "degraded" : "up";
 
     const hasTunnel = tunnelRow != null;
@@ -6381,11 +6539,6 @@ function buildTopologyLinkTooltipMarkup(link, tunnelRow) {
     const txText = hasTunnel ? (tunnelRow.tx_rate || "--") : "--";
     const rxText = hasTunnel ? (tunnelRow.rx_rate || "--") : "--";
     const tunnelHealth = hasTunnel && Array.isArray(tunnelRow.tunnel_health) ? tunnelRow.tunnel_health : [];
-    const reason = linkStatus === "down"
-        ? "Ping is down"
-        : linkStatus === "degraded"
-            ? "RTT elevated >50% above average"
-            : "Link healthy";
 
     const tunnelDots = tunnelHealth.length
         ? `<span class="topology-link-tooltip-label">Tunnels</span>
@@ -6397,9 +6550,8 @@ function buildTopologyLinkTooltipMarkup(link, tunnelRow) {
     return `
         <strong class="topology-link-tooltip-title">
             <span class="topology-link-tooltip-status-dot ${statusDot}"></span>
-            ${escapeHtml(name)} — ${escapeHtml(statusLabel)}
+            ${escapeHtml(name)}
         </strong>
-        <span class="topology-link-tooltip-reason">${escapeHtml(reason)}</span>
         <span class="topology-link-tooltip-grid">
             ${tunnelDots}
             <span class="topology-link-tooltip-label">Ping</span>
@@ -6432,9 +6584,17 @@ async function showTopologyLinkTooltip(link, midX, midY) {
     tooltip.style.left = `${midX}px`;
     tooltip.style.top = `${midY}px`;
 
-    const peerSiteId = link.kind === "discovery" ? String(link.target_site_id || "") : getTopologyLinkPeerSiteId(link);
+    const entities = getTopologyEntities();
+    const sourceEntity = entities.find((e) => e.id === link.from);
+    const targetEntity = entities.find((e) => e.id === link.to);
+    const statusEntity = link.status_node_id
+        ? ((sourceEntity?.inventory_node_id == link.status_node_id) ? sourceEntity : targetEntity)
+        : sourceEntity;
+    const peerEntity = (statusEntity === sourceEntity) ? targetEntity : sourceEntity;
+    const peerSiteId = link.kind === "discovery" ? String(link.target_site_id || "") : (peerEntity?.site_id || peerEntity?.node_id || null);
+    const peerNodeId = peerEntity?.node_id || peerEntity?.site_id || null;
     const stats = link.status_node_id ? await fetchTopologyLinkStats(link.status_node_id) : null;
-    const tunnelRow = findTunnelRowForPeer(stats, peerSiteId);
+    const tunnelRow = findTunnelRowForPeer(stats, peerSiteId, peerNodeId);
     const markup = buildTopologyLinkTooltipMarkup(link, tunnelRow);
     if (!markup) {
         hideTopologyLinkTooltip();
@@ -8616,6 +8776,632 @@ async function handleNodeActionClick(event) {
     }
 }
 
+// ==================== DISCOVERY PAGE ====================
+
+const DISCOVERY_DRAG_FOLLOW = 0.08;
+const DISCOVERY_DAMPING = 0.82;
+const DISCOVERY_OVERLAP_PUSH = 2.0;  // hard separation force multiplier
+const DISCOVERY_REFRESH_MS = 30000;
+
+// Dynamic physics/sizing based on node count — lerps between "few" and "many"
+// spreadFactor (0.5–2.0) scales spacing: >1 expands, <1 contracts
+function discoveryScale() {
+    const n = discoveryState.nodes.length || 1;
+    const sf = discoveryState.spreadFactor;
+    // t=0 at <=20 nodes, t=1 at >=350 nodes
+    const t = Math.max(0, Math.min(1, (n - 20) / 330));
+    const sf2 = sf * sf;  // quadratic scaling for repulsion to really push at high spread
+    return {
+        repulsion:      (600 + (1 - t) * 600) * sf2,       // 1200 → 600, quadratic scaled
+        spring:         0.04 + t * 0.02,                    // 0.04 → 0.06 (unscaled)
+        springRest:     (120 - t * 70) * sf,                // 120  → 50, scaled
+        dragRepulsion:  (800 + (1 - t) * 600) * sf2,       // 1400 → 800, quadratic scaled
+        centerGravity:  (0.005 + t * 0.005) / sf2,         // 0.005 → 0.01, inverse quadratic
+        radiusMin:      12 - t * 7,                         // 12   → 5
+        radiusMax:      40 - t * 26,                        // 40   → 14
+        radiusBase:     8 - t * 4,                          // 8    → 4
+        radiusPerConn:  4 - t * 2.5,                        // 4    → 1.5
+        rootRadius:     40 - t * 26,                        // 40   → 14
+    };
+}
+
+let discoveryState = {
+    nodes: [],
+    links: [],
+    nodeMap: new Map(),
+    showAllLabels: false,
+    pinnedLabels: new Set(),
+    rootNodeIds: [],      // DB IDs of selected root nodes
+    rootSiteIds: new Set(), // site IDs returned from crawl
+    mouseX: null,
+    mouseY: null,
+    dragNode: null,
+    dragOffsetX: 0,
+    dragOffsetY: 0,
+    scale: 1,
+    searchTerm: "",
+    running: false,
+    refreshTimer: null,
+    animFrameId: null,
+    spreadFactor: 1.0,  // 0.3 – 5.0, adjusted by +/- buttons
+};
+
+function discoveryNodeRadius(node) {
+    const s = discoveryScale();
+    if (node.is_root || discoveryState.rootSiteIds.has(node.id)) return s.rootRadius;
+    const cc = node.connection_count || 0;
+    return Math.max(s.radiusMin, Math.min(s.radiusMax, s.radiusBase + cc * s.radiusPerConn));
+}
+
+function discoveryStatusColor(status) {
+    const s = String(status || "").toLowerCase();
+    if (s === "healthy" || s === "up" || s === "online") return "#4ade80";
+    if (s === "degraded" || s === "warn") return "#fbbf24";
+    if (s === "down" || s === "offline" || s === "failed") return "#ff4040";
+    return "#7dd3fc";
+}
+
+function discoveryStatusClass(status) {
+    const s = String(status || "").toLowerCase();
+    if (s === "healthy" || s === "up" || s === "online") return "discovery-node-healthy";
+    if (s === "degraded" || s === "warn") return "discovery-node-degraded";
+    if (s === "down" || s === "offline" || s === "failed") return "discovery-node-down";
+    return "discovery-node-unknown";
+}
+
+function discoveryTick() {
+    if (!discoveryState.running) return;
+    const nodes = discoveryState.nodes;
+    const links = discoveryState.links;
+    const stage = document.getElementById("discovery-stage");
+    if (!stage || !nodes.length) {
+        discoveryState.animFrameId = requestAnimationFrame(discoveryTick);
+        return;
+    }
+    const stageW = stage.clientWidth;
+    const stageH = stage.clientHeight;
+    const cx = stageW / 2;
+    const cy = stageH / 2;
+    const sc = discoveryScale();
+
+    // Build set of neighbors for the dragged node (for follow/scatter logic)
+    const dragNode = discoveryState.dragNode;
+    const dragNeighborIds = new Set();
+    if (dragNode) {
+        for (const link of links) {
+            if (link.source === dragNode.id) dragNeighborIds.add(link.target);
+            if (link.target === dragNode.id) dragNeighborIds.add(link.source);
+        }
+    }
+
+    // 1. Repulsion (all pairs) + hard overlap prevention
+    for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+            const a = nodes[i];
+            const b = nodes[j];
+            let dx = a.x - b.x;
+            let dy = a.y - b.y;
+            let dist = Math.sqrt(dx * dx + dy * dy) || 0.1;
+            const minSep = a.radius + b.radius + 4;
+
+            // Hard overlap correction: if overlapping, push apart immediately
+            if (dist < minSep) {
+                const overlap = minSep - dist;
+                const pushX = (dx / dist) * overlap * DISCOVERY_OVERLAP_PUSH;
+                const pushY = (dy / dist) * overlap * DISCOVERY_OVERLAP_PUSH;
+                if (!a._pinned && !a._dragging) { a.vx += pushX; a.vy += pushY; }
+                if (!b._pinned && !b._dragging) { b.vx -= pushX; b.vy -= pushY; }
+            }
+
+            // Normal Coulomb repulsion
+            const effectiveDist = Math.max(dist, minSep);
+            const force = sc.repulsion / (effectiveDist * effectiveDist);
+            const fx = (dx / dist) * force;
+            const fy = (dy / dist) * force;
+            if (!a._pinned && !a._dragging) { a.vx += fx; a.vy += fy; }
+            if (!b._pinned && !b._dragging) { b.vx -= fx; b.vy -= fy; }
+        }
+    }
+
+    // 2. Spring (linked pairs — applies even to/from pinned nodes)
+    for (const link of links) {
+        const a = discoveryState.nodeMap.get(link.source);
+        const b = discoveryState.nodeMap.get(link.target);
+        if (!a || !b) continue;
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const displacement = dist - sc.springRest;
+        const force = sc.spring * displacement;
+        const fx = (dx / dist) * force;
+        const fy = (dy / dist) * force;
+        if (!a._pinned && !a._dragging) { a.vx += fx; a.vy += fy; }
+        if (!b._pinned && !b._dragging) { b.vx -= fx; b.vy -= fy; }
+    }
+
+    // 3. Drag forces: connected nodes follow, unconnected scatter
+    if (dragNode) {
+        for (const node of nodes) {
+            if (node._dragging || node._pinned) continue;
+            const dx = node.x - dragNode.x;
+            const dy = node.y - dragNode.y;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+
+            if (dragNeighborIds.has(node.id)) {
+                // Connected nodes: spring pull toward dragged node (follow)
+                const pull = DISCOVERY_DRAG_FOLLOW * (dist - sc.springRest);
+                node.vx -= (dx / dist) * pull;
+                node.vy -= (dy / dist) * pull;
+            } else {
+                // Unconnected nodes: strong repulsion from dragged node
+                const minD = dragNode.radius + node.radius + 8;
+                const effectiveDist = Math.max(dist, minD);
+                const force = sc.dragRepulsion / (effectiveDist * effectiveDist);
+                node.vx += (dx / dist) * force;
+                node.vy += (dy / dist) * force;
+            }
+        }
+    }
+
+    // 4. Snap-back: connected nodes return to saved origin after drag release
+    for (const node of nodes) {
+        if (node._snapBack && node._originX != null) {
+            const dx = node._originX - node.x;
+            const dy = node._originY - node.y;
+            node.vx += dx * 0.06;
+            node.vy += dy * 0.06;
+            // Stop snapping once close enough
+            if (Math.abs(dx) < 1 && Math.abs(dy) < 1) {
+                node._snapBack = false;
+            }
+        }
+    }
+
+    // 5. Center gravity (skip pinned and dragging)
+    for (const node of nodes) {
+        if (node._dragging || node._pinned) continue;
+        node.vx += (cx - node.x) * sc.centerGravity;
+        node.vy += (cy - node.y) * sc.centerGravity;
+    }
+
+    // 6. Damping + position update + boundary (skip pinned and dragging)
+    for (const node of nodes) {
+        if (node._dragging || node._pinned) continue;
+        node.vx *= DISCOVERY_DAMPING;
+        node.vy *= DISCOVERY_DAMPING;
+        node.x += node.vx;
+        node.y += node.vy;
+        node.x = Math.max(node.radius, Math.min(stageW - node.radius, node.x));
+        node.y = Math.max(node.radius, Math.min(stageH - node.radius, node.y));
+    }
+
+    // 7. Render
+    discoveryRender();
+
+    discoveryState.animFrameId = requestAnimationFrame(discoveryTick);
+}
+
+function discoveryRender() {
+    const nodeLayer = document.getElementById("discovery-node-layer");
+    const svgEl = document.getElementById("discovery-links");
+    if (!nodeLayer || !svgEl) return;
+
+    const nodes = discoveryState.nodes;
+    const links = discoveryState.links;
+    const stage = document.getElementById("discovery-stage");
+    if (!stage) return;
+
+    svgEl.setAttribute("viewBox", `0 0 ${stage.clientWidth} ${stage.clientHeight}`);
+    svgEl.style.width = stage.clientWidth + "px";
+    svgEl.style.height = stage.clientHeight + "px";
+
+    // Update or create link lines
+    const existingLines = svgEl.querySelectorAll(".discovery-link");
+    const lineMap = new Map();
+    existingLines.forEach((el) => lineMap.set(el.dataset.linkId, el));
+
+    links.forEach((link, i) => {
+        const a = discoveryState.nodeMap.get(link.source);
+        const b = discoveryState.nodeMap.get(link.target);
+        if (!a || !b) return;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const ux = dx / dist;
+        const uy = dy / dist;
+        const x1 = a.x + ux * a.radius;
+        const y1 = a.y + uy * a.radius;
+        const x2 = b.x - ux * b.radius;
+        const y2 = b.y - uy * b.radius;
+
+        const linkId = `${link.source}::${link.target}`;
+        let line = lineMap.get(linkId);
+        if (!line) {
+            line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            line.classList.add("discovery-link");
+            line.dataset.linkId = linkId;
+            svgEl.appendChild(line);
+        }
+        line.setAttribute("x1", x1);
+        line.setAttribute("y1", y1);
+        line.setAttribute("x2", x2);
+        line.setAttribute("y2", y2);
+        line.setAttribute("stroke", link.status === "down" ? "rgba(255,64,64,0.4)" : "rgba(74,222,128,0.35)");
+        lineMap.delete(linkId);
+    });
+    // Remove stale lines
+    lineMap.forEach((el) => el.remove());
+
+    // Update or create node elements
+    const existingNodes = nodeLayer.querySelectorAll(".discovery-node");
+    const domMap = new Map();
+    existingNodes.forEach((el) => domMap.set(el.dataset.nodeId, el));
+
+    nodes.forEach((node) => {
+        const size = node.radius * 2;
+        let el = domMap.get(node.id);
+        if (!el) {
+            el = document.createElement("div");
+            el.className = "discovery-node";
+            el.dataset.nodeId = node.id;
+            el.innerHTML = `<span class="discovery-label"></span>`;
+            el.classList.add("discovery-node-entering");
+            nodeLayer.appendChild(el);
+            // Remove entrance animation after it plays
+            el.addEventListener("animationend", () => el.classList.remove("discovery-node-entering"), { once: true });
+        }
+
+        const isRoot = node.is_root || discoveryState.rootSiteIds.has(node.id);
+        const isHighlighted = discoveryState.searchTerm &&
+            node.id.toLowerCase().includes(discoveryState.searchTerm.toLowerCase());
+        const showLabel = discoveryState.showAllLabels ||
+            discoveryState.pinnedLabels.has(node.id) || isRoot;
+
+        el.style.left = `${node.x - node.radius}px`;
+        el.style.top = `${node.y - node.radius}px`;
+        el.style.width = `${size}px`;
+        el.style.height = `${size}px`;
+        el.style.backgroundColor = discoveryStatusColor(node.status);
+        el.classList.toggle("is-root", isRoot);
+        el.classList.toggle("is-highlighted", isHighlighted);
+        el.title = `${node.name} (${node.id})\n${node.host || ""}\nStatus: ${node.status}\nConnections: ${node.connection_count || 0}`;
+
+        const label = el.querySelector(".discovery-label");
+        if (label) {
+            label.textContent = node.id;
+            label.style.display = showLabel ? "" : "none";
+        }
+
+        domMap.delete(node.id);
+    });
+    // Remove stale nodes with fade
+    domMap.forEach((el) => {
+        el.classList.add("discovery-node-exiting");
+        el.addEventListener("animationend", () => el.remove(), { once: true });
+    });
+}
+
+function discoveryInitNodes(data) {
+    const stage = document.getElementById("discovery-stage");
+    const stageW = stage ? stage.clientWidth : 800;
+    const stageH = stage ? stage.clientHeight : 600;
+    const cx = stageW / 2;
+    const cy = stageH / 2;
+
+    const oldNodeMap = new Map(discoveryState.nodes.map((n) => [n.id, n]));
+
+    discoveryState.nodes = data.nodes.map((n) => {
+        const existing = oldNodeMap.get(n.id);
+        const radius = discoveryNodeRadius(n);
+        if (existing) {
+            // Preserve position for existing nodes, update status/count
+            existing.status = n.status;
+            existing.connection_count = n.connection_count;
+            existing.name = n.name;
+            existing.host = n.host;
+            existing.radius = radius;
+            return existing;
+        }
+        // New node: place near a linked peer or random near center
+        let startX = cx + (Math.random() - 0.5) * 100;
+        let startY = cy + (Math.random() - 0.5) * 100;
+        const linkedPeer = data.links.find((l) => l.source === n.id || l.target === n.id);
+        if (linkedPeer) {
+            const peerId = linkedPeer.source === n.id ? linkedPeer.target : linkedPeer.source;
+            const peer = oldNodeMap.get(peerId);
+            if (peer) {
+                startX = peer.x + (Math.random() - 0.5) * 60;
+                startY = peer.y + (Math.random() - 0.5) * 60;
+            }
+        }
+        return {
+            ...n,
+            x: startX,
+            y: startY,
+            vx: 0,
+            vy: 0,
+            radius,
+            _dragging: false,
+            _pinned: n.is_root, // root starts pinned at center
+        };
+    });
+
+    discoveryState.links = data.links;
+    discoveryState.rootSiteIds = new Set(data.root_site_ids || []);
+    discoveryState.nodeMap = new Map(discoveryState.nodes.map((n) => [n.id, n]));
+}
+
+function discoveryWireInteractions() {
+    const stage = document.getElementById("discovery-stage");
+    const nodeLayer = document.getElementById("discovery-node-layer");
+    if (!stage || !nodeLayer) return;
+
+    // Cursor tracking
+    stage.addEventListener("mousemove", (e) => {
+        const rect = stage.getBoundingClientRect();
+        const scale = discoveryState.scale;
+        discoveryState.mouseX = (e.clientX - rect.left) / scale;
+        discoveryState.mouseY = (e.clientY - rect.top) / scale;
+
+        if (discoveryState.dragNode) {
+            const node = discoveryState.dragNode;
+            node.x = discoveryState.mouseX;
+            node.y = discoveryState.mouseY;
+            node.vx = 0;
+            node.vy = 0;
+        }
+    });
+
+    stage.addEventListener("mouseleave", () => {
+        discoveryState.mouseX = null;
+        discoveryState.mouseY = null;
+    });
+
+    // Drag: mousedown on a node
+    nodeLayer.addEventListener("mousedown", (e) => {
+        const nodeEl = e.target.closest(".discovery-node");
+        if (!nodeEl) return;
+        const nodeId = nodeEl.dataset.nodeId;
+        const node = discoveryState.nodeMap.get(nodeId);
+        if (!node) return;
+        node._dragging = true;
+        node._pinned = false; // unpin during drag so it follows mouse
+        discoveryState.dragNode = node;
+        nodeEl.style.cursor = "grabbing";
+
+        // Save origin positions of connected neighbors for snap-back
+        const neighborIds = new Set();
+        for (const link of discoveryState.links) {
+            if (link.source === nodeId) neighborIds.add(link.target);
+            if (link.target === nodeId) neighborIds.add(link.source);
+        }
+        for (const nid of neighborIds) {
+            const neighbor = discoveryState.nodeMap.get(nid);
+            if (neighbor && !neighbor._pinned) {
+                neighbor._originX = neighbor.x;
+                neighbor._originY = neighbor.y;
+                neighbor._snapBack = false; // will be set on mouseup
+            }
+        }
+        discoveryState._dragNeighborIds = neighborIds;
+        e.preventDefault();
+    });
+
+    document.addEventListener("mouseup", () => {
+        if (discoveryState.dragNode) {
+            const node = discoveryState.dragNode;
+            node._dragging = false;
+            node._pinned = true; // pin where dropped
+            node.vx = 0;
+            node.vy = 0;
+
+            // Trigger snap-back for connected neighbors
+            const neighborIds = discoveryState._dragNeighborIds || new Set();
+            for (const nid of neighborIds) {
+                const neighbor = discoveryState.nodeMap.get(nid);
+                if (neighbor && !neighbor._pinned && neighbor._originX != null) {
+                    neighbor._snapBack = true;
+                }
+            }
+            discoveryState._dragNeighborIds = null;
+            discoveryState.dragNode = null;
+        }
+        document.querySelectorAll(".discovery-node").forEach((el) => {
+            el.style.cursor = "";
+        });
+    });
+
+    // Double-click: pin label
+    nodeLayer.addEventListener("dblclick", (e) => {
+        const nodeEl = e.target.closest(".discovery-node");
+        if (!nodeEl) return;
+        const nodeId = nodeEl.dataset.nodeId;
+        if (discoveryState.pinnedLabels.has(nodeId)) {
+            discoveryState.pinnedLabels.delete(nodeId);
+        } else {
+            discoveryState.pinnedLabels.add(nodeId);
+        }
+    });
+
+    // Zoom: mouse wheel
+    stage.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -0.1 : 0.1;
+        discoveryState.scale = Math.max(0.3, Math.min(3.0, discoveryState.scale + delta));
+        const container = document.getElementById("discovery-zoom-container");
+        if (container) {
+            container.style.transform = `scale(${discoveryState.scale})`;
+            container.style.transformOrigin = "center center";
+        }
+    }, { passive: false });
+
+    // Show labels toggle
+    const labelToggle = document.getElementById("discovery-show-labels");
+    if (labelToggle) {
+        labelToggle.addEventListener("change", () => {
+            discoveryState.showAllLabels = labelToggle.checked;
+        });
+    }
+
+    // Search
+    const searchInput = document.getElementById("discovery-search");
+    if (searchInput) {
+        searchInput.addEventListener("input", () => {
+            discoveryState.searchTerm = searchInput.value.trim();
+            // Pan to highlighted node
+            if (discoveryState.searchTerm) {
+                const match = discoveryState.nodes.find((n) =>
+                    n.id.toLowerCase().includes(discoveryState.searchTerm.toLowerCase())
+                );
+                if (match) {
+                    const stage = document.getElementById("discovery-stage");
+                    if (stage) {
+                        const scale = discoveryState.scale;
+                        stage.scrollTo({
+                            left: match.x * scale - stage.clientWidth / 2,
+                            top: match.y * scale - stage.clientHeight / 2,
+                            behavior: "smooth",
+                        });
+                    }
+                }
+            }
+        });
+    }
+
+    // Expand / Contract buttons
+    function updateSpreadLabel() {
+        const lbl = document.getElementById("discovery-spread-label");
+        if (lbl) lbl.textContent = Math.round(discoveryState.spreadFactor * 100) + "%";
+    }
+    const expandBtn = document.getElementById("discovery-expand");
+    const contractBtn = document.getElementById("discovery-contract");
+    if (expandBtn) {
+        expandBtn.addEventListener("click", () => {
+            discoveryState.spreadFactor = Math.min(5.0, discoveryState.spreadFactor + 0.25);
+            updateSpreadLabel();
+        });
+    }
+    if (contractBtn) {
+        contractBtn.addEventListener("click", () => {
+            discoveryState.spreadFactor = Math.max(0.3, discoveryState.spreadFactor - 0.25);
+            updateSpreadLabel();
+        });
+    }
+}
+
+// Inventory nodes cache for root picker
+let discoveryInventoryNodes = [];
+
+function discoveryRenderPills() {
+    const container = document.getElementById("discovery-root-pills");
+    if (!container) return;
+    container.innerHTML = "";
+    for (const id of discoveryState.rootNodeIds) {
+        const inv = discoveryInventoryNodes.find((n) => n.id === id);
+        const label = inv ? `${inv.node_id || inv.name || id}` : String(id);
+        const pill = document.createElement("span");
+        pill.className = "discovery-root-pill";
+        pill.innerHTML = `${label} <span class="discovery-root-pill-x" data-id="${id}">&times;</span>`;
+        container.appendChild(pill);
+    }
+    // Wire remove buttons
+    container.querySelectorAll(".discovery-root-pill-x").forEach((el) => {
+        el.addEventListener("click", async () => {
+            const removeId = parseInt(el.dataset.id, 10);
+            discoveryState.rootNodeIds = discoveryState.rootNodeIds.filter((id) => id !== removeId);
+            discoveryPersistRoots();
+            discoveryRenderPills();
+            if (discoveryState.rootNodeIds.length) {
+                await discoveryFetchAndInit();
+            }
+        });
+    });
+}
+
+function discoveryPersistRoots() {
+    try { localStorage.setItem("smp-discovery-root-node-ids", JSON.stringify(discoveryState.rootNodeIds)); } catch (_) {}
+}
+
+async function loadDiscoveryPage() {
+    const root = document.getElementById("discovery-root");
+    if (!root) return;
+
+    const select = document.getElementById("discovery-root-select");
+    if (select) {
+        try {
+            discoveryInventoryNodes = await apiRequest("/api/nodes");
+            if (Array.isArray(discoveryInventoryNodes)) {
+                discoveryInventoryNodes.forEach((node) => {
+                    const opt = document.createElement("option");
+                    opt.value = String(node.id);
+                    opt.textContent = `${node.name || "Node"} (${node.node_id || node.id})`;
+                    select.appendChild(opt);
+                });
+            }
+        } catch (err) {
+            console.error("Failed to load nodes for discovery selector:", err);
+        }
+
+        select.addEventListener("change", async () => {
+            const nodeId = parseInt(select.value, 10);
+            if (!nodeId) return;
+            select.value = ""; // reset dropdown
+            if (discoveryState.rootNodeIds.includes(nodeId)) return; // already selected
+            discoveryState.rootNodeIds.push(nodeId);
+            discoveryPersistRoots();
+            discoveryRenderPills();
+            await discoveryFetchAndInit();
+        });
+
+        // Restore saved roots
+        try {
+            const saved = localStorage.getItem("smp-discovery-root-node-ids");
+            if (saved) {
+                const ids = JSON.parse(saved);
+                if (Array.isArray(ids) && ids.length) {
+                    discoveryState.rootNodeIds = ids.filter((id) => typeof id === "number");
+                    discoveryRenderPills();
+                    if (discoveryState.rootNodeIds.length) {
+                        await discoveryFetchAndInit();
+                    }
+                }
+            }
+        } catch (_) {}
+    }
+
+    discoveryWireInteractions();
+}
+
+async function discoveryFetchAndInit() {
+    if (!discoveryState.rootNodeIds.length) return;
+    const idsParam = discoveryState.rootNodeIds.join(",");
+    try {
+        const data = await apiRequest(`/api/discovery/crawl?root_node_ids=${idsParam}`);
+        discoveryInitNodes(data);
+        if (!discoveryState.running) {
+            discoveryState.running = true;
+            discoveryState.animFrameId = requestAnimationFrame(discoveryTick);
+        }
+        // Set up auto-refresh
+        if (discoveryState.refreshTimer) clearInterval(discoveryState.refreshTimer);
+        discoveryState.refreshTimer = setInterval(async () => {
+            if (!discoveryState.rootNodeIds.length) return;
+            try {
+                const ids = discoveryState.rootNodeIds.join(",");
+                const freshData = await apiRequest(`/api/discovery/crawl?root_node_ids=${ids}`);
+                discoveryInitNodes(freshData);
+            } catch (err) {
+                console.error("Discovery auto-refresh failed:", err);
+            }
+        }, DISCOVERY_REFRESH_MS);
+    } catch (err) {
+        console.error("Discovery crawl failed:", err);
+    }
+}
+
+// ==================== END DISCOVERY PAGE ====================
+
+
 window.addEventListener("DOMContentLoaded", () => {
     applyThemeMode();
     mountThemeControl();
@@ -8626,6 +9412,7 @@ window.addEventListener("DOMContentLoaded", () => {
     safeStart(loadMainDashboard, "main-dashboard");
     safeStart(loadServices, "services");
     safeStart(loadTopologyPage, "topology");
+    safeStart(loadDiscoveryPage, "discovery");
     safeStart(loadNodeDetailPage, "node-detail");
 
     // Connect SSE for real-time updates on all pages

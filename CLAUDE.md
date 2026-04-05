@@ -112,6 +112,7 @@ alembic upgrade head
 
 ## Agent Coordination
 
+- **Read `docs/CLAUDE_GIT_INSTRUCTIONS.md`** at the beginning of every session and follow them closely — it defines the mandatory git ritual (pre-work checklist, branch naming, commit protocol, end-of-session checklist)
 - **Read `docs/AGENT_HANDOFF.md`** before starting work — it contains the latest session state
 - **Add a handoff entry** when you stop or complete a meaningful slice
 - Do not revert other agents' edits unless explicitly instructed
