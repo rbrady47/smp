@@ -11,6 +11,12 @@ import asyncio
 from contextlib import asynccontextmanager
 import logging
 
+# Configure app-level logging so INFO messages from pollers/services are visible
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s:     %(name)s - %(message)s",
+)
+
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
