@@ -8,6 +8,61 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-05 — Session: Backend rework — Redis cache + SSE real-time updates
+
+### Branch / commit
+- Branch: `back-end-refactor` (also developed on `claude/ecstatic-hamilton-bTOp5`)
+- All changes committed and pushed
+
+### What was built this session
+
+**Redis integration (Phase 1)**
+- `app/redis_client.py` — async Redis connection with lazy init, graceful fallback if Redis unavailable
+- `app/state_manager.py` — dual-write layer publishing node state to Redis pub/sub channel `smp:node-updates`
+- `app/main.py` — wired state_manager into `node_dashboard_polling_loop`, added Redis init/shutdown to startup/shutdown hooks
+- `requirements.txt` — added `redis>=5.0`
+
+**SSE endpoint (Phase 2)**
+- `GET /api/stream/node-states` — new SSE endpoint with two modes:
+  - Redis mode: snapshot on connect + pub/sub push for deltas
+  - Fallback mode: 1s poll loop comparing serialized dashboard cache
+- Existing `/api/node-dashboard/stream` kept for backward compatibility
+
+**Frontend EventSource (Phase 3)**
+- `static/js/app.js` — new `connectNodeStateStream()` replaces `setInterval(refreshTopologyPingStatus, 2000)` with SSE-driven updates
+- Targeted DOM updates via `_updateTopologyEntityDOM()` — updates RTT chip, tooltip, and status badge without full redraw
+- `applyFullSnapshot()`, `applyNodeUpdate()`, `applyDnUpdate()`, `applyNodeOffline()` handle each SSE event type
+- Reconnection indicator in topology header ("reconnecting...")
+
+**Docker infrastructure (Phase 4)**
+- `Dockerfile` — Python 3.11-slim, compile check at build time
+- `docker-compose.yml` — 3 services: app + PostgreSQL 16 + Redis 7 (ephemeral, no disk persistence)
+- `.env.example` — added `REDIS_URL`
+
+### Files touched
+- `app/redis_client.py` (new)
+- `app/state_manager.py` (new)
+- `app/main.py` (modified — imports, polling loop, SSE endpoint, startup/shutdown)
+- `static/js/app.js` (modified — SSE handler, polling replacement, targeted updates)
+- `requirements.txt` (modified — added redis)
+- `.env.example` (modified — added REDIS_URL)
+- `Dockerfile` (new)
+- `docker-compose.yml` (new)
+- `docs/USER_GUIDE.md`, `docs/CODE_DOCUMENTATION.md`, `CHANGELOG.md`, `docs/AGENT_HANDOFF.md`
+
+### Verification
+- `python -m compileall app tests alembic` — passes
+- `python -m unittest discover -s tests` — 21 pass, 7 pre-existing failures (unrelated to this work)
+- Redis is optional — app starts and polls correctly without Redis running
+
+### Known gaps / next steps
+- **Node Dashboard SSE**: The node dashboard page (`/nodes/dashboard`) still uses `setInterval` + fetch for its list refresh. Could be wired to the same SSE stream.
+- **Service checks**: Not yet published to Redis — services status updates still polled.
+- **Load testing**: SSE with 300+ nodes and multiple concurrent clients not yet validated.
+- **Docker prod config**: `docker-compose.yml` uses default PG creds — should be parameterized for production.
+
+---
+
 ## 2026-04-02 — Session: Submap icon/card redesign, DN count bubbles, hover tooltips
 
 ### Branch / commit

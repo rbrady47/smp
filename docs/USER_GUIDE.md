@@ -114,6 +114,7 @@ Current behavior:
   - yellow when the pinned set is mixed or degraded
   - red with a pulse when all pinned services are down, unknown, or disabled
 - Includes a demo-mode selector in edit mode for previewing all-up, all-down, or mixed topology states, and remembers that choice in the saved topology editor state
+- Real-time node status updates via Server-Sent Events (SSE): node status, RTT, and bandwidth update automatically without manual page refresh. If Redis is running, updates are push-based; otherwise the system falls back to polling. A "reconnecting..." indicator appears in the header if the connection drops.
 
 #### Submaps
 

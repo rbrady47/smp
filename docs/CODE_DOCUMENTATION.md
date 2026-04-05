@@ -72,6 +72,7 @@ The FastAPI application. Contains routes, background tasks, and the core orchest
 | `/nodes/discovered/{site_id}` | GET | DN detail page (HTML) |
 | `/topology` | GET | Topology page (HTML) |
 | `/topology/maps/{id}` | GET | Submap page (HTML) |
+| `/api/stream/node-states` | GET | **SSE stream** — real-time node state updates (Redis push or polling fallback) |
 
 **Submap discovery endpoint (`get_submap_discovery`, ~line 1868):**
 
@@ -168,6 +169,43 @@ SNMPc-style authored map CRUD. Manages views (canvases), objects (nodes/labels/s
 ### `app/topology_editor_state_service.py` (~71 lines)
 
 Persists topology editor state (layout overrides, link anchor assignments, demo mode) to/from `topology_editor_state` DB table.
+
+---
+
+### `app/redis_client.py` (~60 lines)
+
+Async Redis connection with lazy initialization and graceful fallback. Reads `REDIS_URL` from environment (default `redis://localhost:6379/0`). If Redis is unavailable at startup, sets `_unavailable = True` and all subsequent calls return `None` — the app continues with in-memory caches.
+
+Key functions:
+- `get_redis()` — returns shared async Redis connection or `None`
+- `close_redis()` — shuts down pool on app shutdown
+- `redis_available()` — live ping check
+
+---
+
+### `app/state_manager.py` (~170 lines)
+
+Dual-write state layer that publishes node state to Redis for SSE push. All operations are no-ops if Redis is unavailable.
+
+Key design:
+- Redis keys: `smp:node:{node_id}` (ANs), `smp:dn:{site_id}` (DNs)
+- Values: JSON-serialized state dicts with 30s TTL (2x poll interval)
+- Pub/sub channel: `smp:node-updates`
+- Published events: `node_update`, `dn_update`, `node_offline`
+
+Key functions:
+- `update_node_state(node_id, state)` — SET + PUBLISH for AN state change
+- `update_dn_state(site_id, state)` — SET + PUBLISH for DN state change
+- `publish_offline(node_type, id)` — DELETE + PUBLISH for offline event
+- `get_all_node_states()` / `get_all_dn_states()` — SCAN + MGET for bulk reads
+- `subscribe_state_changes()` — async iterator yielding pub/sub events
+
+**Data flow:**
+```
+Background poll loop → in-memory cache → state_manager.update_*() → Redis SET + PUBLISH
+                                                                          ↓
+SSE endpoint ← subscribe_state_changes() ← Redis pub/sub ← smp:node-updates channel
+```
 
 ---
 

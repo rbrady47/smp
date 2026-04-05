@@ -8,6 +8,12 @@ The format is intentionally simple so diffs stay readable in version control.
 
 ### Added
 
+- **Redis integration** for real-time node state pub/sub (`app/redis_client.py`, `app/state_manager.py`). Redis is optional — app degrades gracefully to in-memory caching if unavailable.
+- **SSE endpoint** `GET /api/stream/node-states` pushes node status, RTT, and bandwidth changes to connected clients in real time. Uses Redis pub/sub when available, falls back to 1s polling otherwise.
+- **Frontend EventSource** replaces `setInterval` polling for topology ping status. Node cards update reactively via SSE events without full page redraw.
+- **Docker infrastructure** — `Dockerfile` and `docker-compose.yml` for containerized deployment (app + PostgreSQL + Redis).
+- `redis>=5.0` added to `requirements.txt`.
+- `REDIS_URL` added to `.env.example`.
 - Initial markdown changelog tracking.
 - Initial version-controlled user guide in [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 - Operational-map backend foundation for authored SNMPc-style map workflows:

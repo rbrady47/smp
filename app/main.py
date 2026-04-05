@@ -63,6 +63,8 @@ from app.schemas import (
 from app.topology_editor_state_service import get_topology_editor_state_payload, upsert_topology_editor_state
 from app.topology import build_mock_topology_payload, build_topology_discovery_payload, normalize_topology_location
 import app.operational_map_service as operational_map_service
+from app.redis_client import get_redis, close_redis, redis_available
+from app import state_manager
 
 app = FastAPI(title="Seeker Management Platform", version="0.1.0")
 templates = Jinja2Templates(directory="templates")
@@ -1292,6 +1294,17 @@ async def refresh_node_dashboard_cache_once() -> None:
         db.close()
 
 
+async def _publish_dashboard_to_redis() -> None:
+    """Push per-node and per-DN states from the dashboard cache to Redis."""
+    cache = node_dashboard_backend.node_dashboard_cache
+    for anchor in cache.get("anchors") or []:
+        if isinstance(anchor, dict) and anchor.get("id"):
+            await state_manager.update_node_state(anchor["id"], anchor)
+    for dn in cache.get("discovered") or []:
+        if isinstance(dn, dict) and dn.get("site_id"):
+            await state_manager.update_dn_state(dn["site_id"], dn)
+
+
 def get_serialized_node_dashboard_cache(window_seconds: int | None = None) -> dict[str, object]:
     return node_dashboard_backend.get_serialized_cache(normalize_node_dashboard_window(window_seconds))
 
@@ -1300,6 +1313,7 @@ async def node_dashboard_polling_loop() -> None:
     while True:
         try:
             await refresh_node_dashboard_cache_once()
+            await _publish_dashboard_to_redis()
         except Exception:
             logger.exception("Node dashboard cache refresh failed")
             node_dashboard_backend.mark_cache_refresh_failed()
@@ -1310,6 +1324,7 @@ async def node_dashboard_polling_loop() -> None:
 async def startup_ping_monitor() -> None:
     global ping_monitor_task, seeker_poll_task, dn_seeker_poll_task, service_poll_task, node_dashboard_poll_task
     Base.metadata.create_all(bind=engine)
+    await get_redis()  # initialize Redis pool (logs warning if unavailable)
 
     if ping_monitor_task is None or ping_monitor_task.done():
         ping_monitor_task = asyncio.create_task(ping_monitor_loop())
@@ -1362,6 +1377,8 @@ async def shutdown_ping_monitor() -> None:
         except asyncio.CancelledError:
             pass
         node_dashboard_poll_task = None
+
+    await close_redis()
 
 
 @app.get("/api/nodes/ping-status")
@@ -2323,6 +2340,57 @@ async def node_dashboard_stream(window_seconds: int = Query(default=60)) -> Stre
             return
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.get("/api/stream/node-states")
+async def stream_node_states() -> StreamingResponse:
+    """SSE endpoint for real-time node state updates.
+
+    Redis mode: snapshot on connect, then pub/sub push for each change.
+    Fallback mode: 1s poll loop comparing serialized dashboard cache.
+    """
+    use_redis = await redis_available()
+
+    async def redis_event_generator():
+        """Push-based SSE via Redis pub/sub."""
+        try:
+            # Snapshot phase: emit current state of all nodes
+            an_states = await state_manager.get_all_node_states()
+            dn_states = await state_manager.get_all_dn_states()
+            snapshot = {"anchors": an_states, "discovered": dn_states}
+            yield f"event: snapshot\ndata: {json.dumps(snapshot, default=str)}\n\n"
+
+            # Live phase: subscribe and forward deltas
+            async for event in state_manager.subscribe_state_changes():
+                event_type = event.get("type", "node_update")
+                yield f"event: {event_type}\ndata: {json.dumps(event, default=str)}\n\n"
+        except Exception:
+            logger.debug("Redis SSE subscription ended, falling back to polling", exc_info=True)
+            async for chunk in fallback_event_generator():
+                yield chunk
+
+    async def fallback_event_generator():
+        """Poll-based SSE fallback when Redis is unavailable."""
+        last_sent: str | None = None
+        try:
+            while True:
+                cache = node_dashboard_backend.node_dashboard_cache
+                payload = {
+                    "anchors": {str(a["id"]): a for a in (cache.get("anchors") or []) if isinstance(a, dict) and a.get("id")},
+                    "discovered": {str(d["site_id"]): d for d in (cache.get("discovered") or []) if isinstance(d, dict) and d.get("site_id")},
+                }
+                serialized = json.dumps(payload, default=str)
+                if serialized != last_sent:
+                    yield f"event: snapshot\ndata: {serialized}\n\n"
+                    last_sent = serialized
+                else:
+                    yield ": keep-alive\n\n"
+                await asyncio.sleep(1.0)
+        except asyncio.CancelledError:
+            return
+
+    generator = redis_event_generator() if use_redis else fallback_event_generator()
+    return StreamingResponse(generator, media_type="text/event-stream")
 
 
 @app.get("/api/topology")

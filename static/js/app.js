@@ -42,6 +42,8 @@ let topologyPingTimer = null;
 let topologyLastUpdatedAt = null;
 let topologyLastUpdatedTimer = null;
 let nodeDashboardEventSource = null;
+let nodeStateEventSource = null;
+let _prevNodeStates = {};
 const dashboardOrderStorageKey = "smp-dashboard-order";
 const anchorListOrderStorageKey = "smp-anchor-list-order";
 const dashboardRefreshStorageKey = "smp-dashboard-refresh-seconds";
@@ -2745,6 +2747,206 @@ function disconnectNodeDashboardStream() {
 
 function connectNodeDashboardStream() {
     disconnectNodeDashboardStream();
+}
+
+// --- SSE-driven real-time node state updates ---
+
+function disconnectNodeStateStream() {
+    if (nodeStateEventSource) {
+        nodeStateEventSource.close();
+        nodeStateEventSource = null;
+    }
+}
+
+function connectNodeStateStream() {
+    disconnectNodeStateStream();
+    const es = new EventSource("/api/stream/node-states");
+
+    es.addEventListener("snapshot", (e) => {
+        try {
+            const data = JSON.parse(e.data);
+            applyFullSnapshot(data);
+        } catch (err) { /* non-fatal */ }
+    });
+
+    es.addEventListener("node_update", (e) => {
+        try {
+            const { id, state } = JSON.parse(e.data);
+            applyNodeUpdate(id, state);
+        } catch (err) { /* non-fatal */ }
+    });
+
+    es.addEventListener("dn_update", (e) => {
+        try {
+            const { id, state } = JSON.parse(e.data);
+            applyDnUpdate(id, state);
+        } catch (err) { /* non-fatal */ }
+    });
+
+    es.addEventListener("node_offline", (e) => {
+        try {
+            const { id } = JSON.parse(e.data);
+            applyNodeOffline(id);
+        } catch (err) { /* non-fatal */ }
+    });
+
+    es.onerror = () => {
+        // EventSource auto-reconnects; show reconnecting indicator
+        const ageEl = document.querySelector(".topology-updated-ago");
+        if (ageEl) ageEl.textContent = "reconnecting\u2026";
+    };
+
+    es.onopen = () => {
+        markTopologyLastUpdated();
+    };
+
+    nodeStateEventSource = es;
+}
+
+function applyFullSnapshot(data) {
+    const anchors = data.anchors || {};
+    const discovered = data.discovered || {};
+
+    // Update topology cached payloads with fresh state
+    for (const [nodeId, state] of Object.entries(anchors)) {
+        _applyAnchorStateToPayloads(nodeId, state);
+    }
+    for (const [siteId, state] of Object.entries(discovered)) {
+        _applyDnStateToPayloads(siteId, state);
+    }
+    _prevNodeStates = { ...anchors, ...discovered };
+
+    // Re-render topology if we're on that page
+    if (document.getElementById("topology-root") && topologyPayload) {
+        detectNodeStateChanges();
+        detectLinkStateChanges();
+        renderTopologyStage();
+    }
+    markTopologyLastUpdated();
+}
+
+function applyNodeUpdate(nodeId, state) {
+    _applyAnchorStateToPayloads(nodeId, state);
+
+    // Detect changes for flash animations
+    const prevState = _prevNodeStates[nodeId];
+    const statusChanged = prevState && prevState.status !== state.status;
+    _prevNodeStates[nodeId] = state;
+
+    if (document.getElementById("topology-root")) {
+        // Targeted DOM update for this node
+        _updateTopologyEntityDOM(`node-${nodeId}`, state);
+        if (statusChanged) {
+            detectNodeStateChanges();
+            detectLinkStateChanges();
+        }
+    }
+    markTopologyLastUpdated();
+}
+
+function applyDnUpdate(siteId, state) {
+    _applyDnStateToPayloads(siteId, state);
+
+    const prevState = _prevNodeStates[siteId];
+    const statusChanged = prevState && prevState.ping !== state.ping;
+    _prevNodeStates[siteId] = state;
+
+    if (document.getElementById("topology-root")) {
+        _updateTopologyEntityDOM(`dn-${siteId}`, state);
+        if (statusChanged) {
+            detectNodeStateChanges();
+            detectLinkStateChanges();
+        }
+    }
+    markTopologyLastUpdated();
+}
+
+function applyNodeOffline(nodeId) {
+    const offlineState = { status: "offline", ping_ok: false, ping_state: "down", latency_ms: null };
+    _applyAnchorStateToPayloads(nodeId, offlineState);
+    _prevNodeStates[nodeId] = offlineState;
+
+    if (document.getElementById("topology-root")) {
+        _updateTopologyEntityDOM(`node-${nodeId}`, offlineState);
+        detectNodeStateChanges();
+        detectLinkStateChanges();
+    }
+    markTopologyLastUpdated();
+}
+
+function _applyAnchorStateToPayloads(nodeId, state) {
+    // Update state in all cached topology payload lists
+    const allLists = [
+        topologyPayload?.lvl0_nodes,
+        topologyPayload?.lvl1_nodes,
+    ];
+    if (Array.isArray(topologyNodeDashboardPayload?.anchors)) {
+        allLists.push(topologyNodeDashboardPayload.anchors);
+    }
+    for (const list of allLists) {
+        if (!Array.isArray(list)) continue;
+        for (const node of list) {
+            const nid = String(node.inventory_node_id ?? node.id ?? "");
+            if (nid === String(nodeId)) {
+                if (state.ping_state !== undefined) node.ping_state = state.ping_state;
+                if (state.latency_ms !== undefined) node.latency_ms = state.latency_ms;
+                if (state.avg_latency_ms !== undefined) node.avg_latency_ms = state.avg_latency_ms;
+                if (state.status !== undefined) node.status = state.status;
+                if (state.tx_bps !== undefined) node.tx_bps = state.tx_bps;
+                if (state.rx_bps !== undefined) node.rx_bps = state.rx_bps;
+                if (state.wan_tx_bps !== undefined) node.wan_tx_bps = state.wan_tx_bps;
+                if (state.wan_rx_bps !== undefined) node.wan_rx_bps = state.wan_rx_bps;
+                if (state.lan_tx_bps !== undefined) node.lan_tx_bps = state.lan_tx_bps;
+                if (state.lan_rx_bps !== undefined) node.lan_rx_bps = state.lan_rx_bps;
+                if (state.cpu_avg !== undefined) node.cpu_avg = state.cpu_avg;
+                if (state.web_ok !== undefined) node.web_ok = state.web_ok;
+                if (state.ssh_ok !== undefined) node.ssh_ok = state.ssh_ok;
+                if (state.ping_ok !== undefined) node.ping_ok = state.ping_ok;
+            }
+        }
+    }
+}
+
+function _applyDnStateToPayloads(siteId, state) {
+    // Update DN state in discovery payload if loaded
+    if (topologyDiscoveryPayload?.discovered_peers) {
+        for (const dn of topologyDiscoveryPayload.discovered_peers) {
+            if (String(dn.site_id) === String(siteId)) {
+                if (state.ping !== undefined) dn.ping = state.ping;
+                if (state.latency_ms !== undefined) dn.latency_ms = state.latency_ms;
+                if (state.web_ok !== undefined) dn.web_ok = state.web_ok;
+                if (state.ssh_ok !== undefined) dn.ssh_ok = state.ssh_ok;
+            }
+        }
+    }
+}
+
+function _updateTopologyEntityDOM(entityId, state) {
+    const stage = document.getElementById("topology-stage");
+    if (!stage) return;
+    const el = stage.querySelector(`[data-topology-id="${entityId}"]`);
+    if (!el) return;
+
+    // Update RTT chip
+    const chip = el.querySelector(".topology-rtt-chip");
+    if (chip) {
+        const rttState = state.ping_state || state.rtt_state || "unknown";
+        chip.className = `topology-rtt-chip rtt-${rttState}`;
+        chip.textContent = state.latency_ms != null ? `${state.latency_ms} ms` : "--";
+    }
+
+    // Update tooltip RTT
+    const tooltipRtt = el.querySelector("[data-tooltip-rtt]");
+    if (tooltipRtt) {
+        tooltipRtt.textContent = state.latency_ms != null ? `${state.latency_ms} ms` : "--";
+    }
+
+    // Update status badge
+    const badge = el.querySelector(".topology-status-badge");
+    if (badge && state.status) {
+        badge.className = `topology-status-badge ${state.status}`;
+        badge.textContent = state.status;
+    }
 }
 
 function applyDashboardRefreshInterval() {
@@ -7188,14 +7390,13 @@ function updateTopologyLastUpdatedAge() {
 }
 
 function startTopologyTimers() {
-    // Seeker data — user-selected interval (handled by applyDashboardRefreshInterval)
+    // Structure refresh — user-selected interval (new nodes, links, submaps)
     applyDashboardRefreshInterval();
 
-    // Ping RTT — poll every 2s (lightweight in-memory endpoint)
-    if (topologyPingTimer) clearInterval(topologyPingTimer);
-    topologyPingTimer = setInterval(refreshTopologyPingStatus, 2000);
+    // Real-time node status — SSE stream (replaces 2s ping polling)
+    connectNodeStateStream();
 
-    // "Updated X ago" counter — ticks every second
+    // "Updated X ago" counter — ticks every second (local clock, no fetch)
     if (topologyLastUpdatedTimer) clearInterval(topologyLastUpdatedTimer);
     topologyLastUpdatedTimer = setInterval(updateTopologyLastUpdatedAge, 1000);
 }
@@ -8301,6 +8502,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
     window.addEventListener("beforeunload", () => {
         disconnectNodeDashboardStream();
+        disconnectNodeStateStream();
     });
 });
 
