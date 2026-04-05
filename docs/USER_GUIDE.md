@@ -114,6 +114,7 @@ Current behavior:
   - yellow when the pinned set is mixed or degraded
   - red with a pulse when all pinned services are down, unknown, or disabled
 - Includes a demo-mode selector in edit mode for previewing all-up, all-down, or mixed topology states, and remembers that choice in the saved topology editor state
+- Real-time updates via Server-Sent Events (SSE) on all pages: node status, RTT, bandwidth, service check results, and discovery events update automatically without manual page refresh. The node dashboard, services dashboard, main dashboard, node detail page, and topology all receive live updates. If Redis is running, updates are push-based; otherwise the system falls back to polling. A "reconnecting..." indicator appears in the header if the connection drops. Manual refresh buttons remain available as a force-reload fallback.
 
 #### Submaps
 
@@ -249,6 +250,24 @@ When features change, update:
 
 - `docs/USER_GUIDE.md` for operator-visible behavior
 - `CHANGELOG.md` for a concise history of notable changes
+
+## Polling Architecture
+
+SMP polls each anchor node's Seeker API on two cadences:
+
+- **Fast path (10s):** Fetches config, stats, and learnt routes in a single login session (one login + three requests per node). Updates the dashboard cache immediately. Site names that are already known from previous polls or other nodes are applied instantly. Up to 20 nodes are polled concurrently.
+- **Slow path (30s):** Resolves unknown tunnel-peer site names by probing remote Seekers for their config. This is the expensive step (each probe requires HTTP login + request). Resolved names are patched into the cached data and persist across cycles.
+
+This split keeps the dashboard responsive (fresh data every 10s) while site names fill in progressively over the first few minutes after startup.
+
+### WAN Throughput Metrics
+
+SMP shows two WAN throughput values:
+
+- **Interface total** (`wan_tx_bps` / `wan_rx_bps`): From `txTotRateIf` / `rxTotRateIf`. Includes all traffic on the WAN interface (tunnel payload + overhead + non-tunnel).
+- **Channel sum** (`wan_tx_bps_channels` / `wan_rx_bps_channels`): Sum of per-channel rates (`txChanRate` / `rxChanRate`). Matches what the Seeker UI shows per-channel. This is the tunnel payload rate only.
+
+The channel-sum rate is typically slightly lower than the interface total because it excludes overhead.
 
 ## Known Current State
 

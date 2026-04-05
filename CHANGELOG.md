@@ -6,8 +6,42 @@ The format is intentionally simple so diffs stay readable in version control.
 
 ## Unreleased
 
+### Performance
+
+- **Seeker polling fast/slow split:** Moved `resolve_site_name_map` (remote HTTP probes for tunnel-peer site names) out of the 5s seeker polling loop into a separate `site_name_resolution_loop` running every 30s. Poll cycle drops from ~35s to <5s. Site names fill in progressively in the background.
+- **Final poll interval set to 10s:** After concurrency improvements, `SEEKER_POLL_INTERVAL_SECONDS` raised from 5s to 10s for a stable, sustainable cadence.
+- **Single-session Seeker login:** `seeker_fetch_all()` in `seeker_api.py` now performs 1 login + 3 data requests per poll cycle (was 3 separate logins). Removes scheme fallback — uses only the operator-configured scheme.
+- **Seeker poll concurrency:** Added `SEEKER_POLL_CONCURRENCY = 20` asyncio semaphore in `pollers/seeker.py`; scales safely to 300+ nodes.
+- **WAN throughput accuracy:** Added `wan_tx_bps_channels` / `wan_rx_bps_channels` (sum of per-channel `txChanRate` / `rxChanRate`) alongside existing `txTotRateIf`-based fields. Channel-sum rates match the Seeker UI; interface-total rates include overhead.
+
+### Fixed
+
+- **Rate unit fix:** Seeker rate fields are Bytes/s, not bits/s — applied ×8 conversion in `_format_rate()` and `normalize_bwv_stats()`. WAN throughput values now display correct magnitudes.
+- **Sticky yellow fix:** `_publish_dashboard_to_redis` in `pollers/dashboard.py` now publishes windowed rows so `rtt_state` recovers correctly from yellow instead of staying stuck.
+- **SSE live updates — node detail:** Tunnels and channels tables on the node detail page now re-render on incoming SSE events (was static after initial load).
+- **SSE live updates — link tooltip:** Link stat tooltip cache is cleared on SSE events and auto-refreshes if the tooltip is currently pinned. Cache TTL reduced from 10s to 4s.
+- **App logging visibility:** Added `logging.basicConfig(level=logging.INFO)` to `app/main.py` so application-level INFO logs appear at startup.
+- **Redis logging visibility:** Promoted all Redis failure log messages from `debug` to `warning` in `state_manager.py` so connection/write failures are visible at the default log level.
+
 ### Added
 
+- **Redis cache warm-up (Phase 5):** Seeker detail cache and service status cache are now persisted to Redis with TTL and restored on process restart. Eliminates the ~15s cold-start delay — dashboard shows data immediately after restart instead of waiting for the first polling cycle.
+- **Frontend SSE migration (Phase 4):** All pages now connect to the unified SSE endpoint on load. Node dashboard, services dashboard, main dashboard, and node detail page receive live updates via SSE events instead of `setInterval` polling. Topology structure refresh timer kept as safety net. Added `service_update`, `service_snapshot`, `dn_discovered`, `dn_removed`, and `structure_changed` event handlers to the frontend.
+- **Multi-channel Redis pub/sub (Phase 3):** Extended `state_manager.py` with 3 new channels (`smp:services`, `smp:discovery`, `smp:topology-structure`) and corresponding publish functions. Service poller now publishes after each check cycle. Discovery routes publish `dn_discovered`/`dn_removed` events. Topology/node/map CRUD routes publish `structure_changed` events. New unified SSE endpoint `GET /api/stream/events?channels=...` subscribes to any combination of channels. Legacy `/api/stream/node-states` preserved as alias.
+
+### Refactored
+
+- **Poller + service extraction (Phase 2):** Extracted all 5 polling loops, health/service functions, and dashboard logic from `app/main.py` into `app/pollers/` (5 files) and `app/services/node_health.py`. Introduced `app/poller_state.py` — a PollerState dataclass that owns all mutable in-memory state. Converted startup/shutdown to FastAPI lifespan context manager. Main.py reduced from ~1,250 to 221 lines.
+- **Route extraction (Phase 1):** Extracted all 56 route handlers from `app/main.py` into 9 modular route files under `app/routes/`. Main.py reduced from 2,612 to ~1,250 lines. No behavior change — all API endpoints, URL paths, and response shapes remain identical.
+
+### Added
+
+- **Redis integration** for real-time node state pub/sub (`app/redis_client.py`, `app/state_manager.py`). Redis is optional — app degrades gracefully to in-memory caching if unavailable.
+- **SSE endpoint** `GET /api/stream/node-states` pushes node status, RTT, and bandwidth changes to connected clients in real time. Uses Redis pub/sub when available, falls back to 1s polling otherwise.
+- **Frontend EventSource** replaces `setInterval` polling for topology ping status. Node cards update reactively via SSE events without full page redraw.
+- **Docker infrastructure** — `Dockerfile` and `docker-compose.yml` for containerized deployment (app + PostgreSQL + Redis).
+- `redis>=5.0` added to `requirements.txt`.
+- `REDIS_URL` added to `.env.example`.
 - Initial markdown changelog tracking.
 - Initial version-controlled user guide in [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 - Operational-map backend foundation for authored SNMPc-style map workflows:

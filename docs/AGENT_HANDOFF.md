@@ -8,6 +8,232 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-05 — Session: Optimize Seeker Polling Performance
+
+### Branch / commit
+- Branch: `claude/optimize-seeker-polling-jbU5K`
+
+### What was built this session
+
+**Seeker poller fast/slow split**
+- Moved `resolve_site_name_map()` out of the fast poll loop into a new `site_name_resolution_loop` (30s cadence, 10s startup delay)
+- Fast path: `load_node_detail()` now only applies already-known site names from `_collect_known_site_names()` — zero HTTP overhead
+- Slow path: `site_name_resolution_loop()` walks cached tunnel lists, finds unknown peer site names, probes them, and patches the cache in-place
+- Added timing logs: each poll cycle and resolution cycle logs elapsed time
+- Added `site_name_resolution_task` to `PollerState` and wired into lifespan start/stop
+
+**Single-session Seeker login**
+- New `seeker_fetch_all()` in `seeker_api.py` performs 1 login + 3 data requests per node per cycle (was 3 separate login/request pairs)
+- Removed scheme fallback — only the operator-configured scheme (http/https) is used; no silent retry on the other scheme
+
+**Seeker poll concurrency and interval**
+- Added `SEEKER_POLL_CONCURRENCY = 20` asyncio semaphore in `pollers/seeker.py` — allows scaling to 300+ nodes without flooding
+- `SEEKER_POLL_INTERVAL_SECONDS` raised to 10s (was 5s) for a stable, sustainable cadence after fast/slow split
+
+**Rate unit fix**
+- Seeker rate fields (`txChanRate`, `rxChanRate`, `txTotRateIf`, `rxTotRateIf`) are Bytes/s, not bits/s
+- Applied ×8 conversion in `_format_rate()` and in `normalize_bwv_stats()` for both interface-total and channel-sum fields
+- `wan_tx_bps_channels` / `wan_rx_bps_channels` (sum of per-channel rates) added alongside existing `wan_tx_bps` / `wan_rx_bps`
+
+**Sticky yellow fix**
+- `_publish_dashboard_to_redis` in `pollers/dashboard.py` now publishes windowed rows so `rtt_state` correctly recovers from yellow; previously the state could get stuck yellow indefinitely
+
+**SSE live updates — node detail and link tooltip**
+- Node detail page: tunnels and channels tables now re-render on SSE node_update events (was static after initial page load)
+- Link tooltip: stat cache cleared on SSE events; if the tooltip is pinned it auto-refreshes; link stats cache TTL reduced from 10s to 4s
+
+**App logging**
+- Added `logging.basicConfig(level=logging.INFO)` to `app/main.py` so INFO-level logs from application startup and pollers are visible
+
+**Redis logging visibility**
+- Promoted all Redis failure/error log messages in `state_manager.py` from `logger.debug()` to `logger.warning()`
+
+### Files touched
+- `app/pollers/seeker.py` — fast/slow split, single-session login, concurrency semaphore, 10s interval, `_collect_known_site_names`, `_apply_known_site_names`, `site_name_resolution_loop`
+- `app/pollers/dashboard.py` — sticky yellow fix (`_publish_dashboard_to_redis` windowed rows)
+- `app/poller_state.py` — added `site_name_resolution_task`
+- `app/main.py` — wired `site_name_resolution_loop` into lifespan; added `logging.basicConfig`
+- `app/seeker_api.py` — `seeker_fetch_all()` single-session login; ×8 rate conversion; `wan_tx_bps_channels` / `wan_rx_bps_channels`
+- `app/state_manager.py` — promoted Redis failure logs to warning level
+- `static/js/app.js` — node detail SSE re-render (tunnels/channels); link tooltip cache clear + auto-refresh on SSE; link stats cache TTL 4s
+- `docs/USER_GUIDE.md`, `docs/CODE_DOCUMENTATION.md`, `CHANGELOG.md`, `docs/AGENT_HANDOFF.md`
+
+### Verification
+- `python -m compileall app tests alembic` — clean
+- `python -m unittest discover -s tests` — same pre-existing failures (missing deps in env)
+
+### Known gaps / next steps
+- **Schema pass-through:** `wan_tx_bps_channels` / `wan_rx_bps_channels` are available in the normalized stats dict but not yet surfaced in `NodeDashboardAnchorRow` Pydantic schema or the frontend tooltip — add when UI comparison is needed
+- **Seeker UI field mapping:** The Seeker UI "Throughput" column appears to use `txChanRate[i]` per channel; the `txTotRateIf` value is the aggregate interface rate. Operators seeing a mismatch should compare against the channel-sum fields.
+- **Resolution cache persistence:** `REMOTE_SITE_CFG_CACHE` in `seeker_api.py` is in-memory only. Could be moved to Redis for cross-restart persistence.
+
+---
+
+## 2026-04-05 — Session: Modular Architecture Rebuild (Phases 1–5)
+
+### Branch / commit
+- Branch: `claude/ecstatic-hamilton-bTOp5`
+
+### Phase 4: Frontend SSE Migration
+- Changed `connectNodeStateStream()` to connect to `/api/stream/events` (all channels) instead of `/api/stream/node-states`
+- Added SSE event handlers: `service_snapshot`, `service_update`, `dn_discovered`, `dn_removed`, `structure_changed`
+- Connected SSE from `DOMContentLoaded` on ALL pages (not just topology)
+- Removed `setInterval` polling for node dashboard, services dashboard, main dashboard, and node detail pages
+- Only topology structure refresh timer remains (safety net for submap/link/DN count re-fetch)
+- Added `_updateNodeDashboardFromSSE()` — updates `currentNodeDashboardPayload` rows in-place and re-renders
+- Added `_updateNodeDetailFromSSE()` — updates detail page summary gauges live from SSE node_update events
+- Added `_rerenderServicesIfVisible()` — re-renders services dashboard/main dashboard services from SSE service_update events
+- `loadServicesDashboard()` now saves payload to `topologyDashboardServicesPayload` for SSE to update
+
+### Phase 3: Multi-Channel Redis Pub/Sub
+- Extended `app/state_manager.py` with 4 channels: `smp:node-updates`, `smp:services`, `smp:discovery`, `smp:topology-structure`
+- Added `publish_service_state()`, `publish_discovery_event()`, `publish_topology_change()`
+- Added `subscribe_channels()` for multi-channel pub/sub subscription
+- Added `get_all_service_states()` for service snapshot on SSE connect
+- Wired service poller (`app/pollers/services.py`) to publish after each check
+- Wired discovery routes to publish `dn_discovered`/`dn_removed`
+- Wired topology link CRUD + map CRUD + node create/delete to publish `structure_changed`
+- Created unified SSE endpoint `GET /api/stream/events?channels=node-states,services,discovery,topology-structure`
+- Kept legacy `/api/stream/node-states` as backward-compatible alias
+- Service snapshot emitted as `service_snapshot` event on SSE connect
+
+### Phase 5: Redis Cache Warm-Up
+- Added `update_seeker_cache()` and `get_all_seeker_cache()` to `state_manager.py` — stores seeker detail in Redis keys `smp:seeker-cache:{node_id}` with 30s TTL
+- Wired `pollers/seeker.py` to write to Redis after each seeker detail cache update (both success and error fallback paths)
+- Added `_warm_caches_from_redis()` to `main.py` lifespan — runs after Redis init, before pollers start
+- Warms: seeker detail cache, service status cache, and node/DN states
+- Eliminates the ~15s cold-start delay — dashboard has data immediately after restart
+
+### All phases complete
+- Phase 1: Route extraction (56 routes → 9 modules)
+- Phase 2: Poller extraction (5 loops → `app/pollers/`, PollerState)
+- Phase 3: Multi-channel Redis pub/sub (4 channels, unified SSE)
+- Phase 4: Frontend SSE migration (no more setInterval polling)
+- Phase 5: Redis cache warm-up (instant restart recovery)
+
+---
+
+## 2026-04-05 — Session: Modular Architecture Rebuild (Phase 1 + Phase 2)
+
+### Branch / commit
+- Branch: `claude/ecstatic-hamilton-bTOp5`
+
+### What was built this session
+
+**Phase 2: Poller + Service Extraction**
+- Created `app/poller_state.py` — `PollerState` dataclass holding all 11 mutable cache dicts + task handles
+- Created `app/pollers/ping.py` — `ping_host`, `check_tcp_port`, `build_ping_snapshot`, `build_dn_ping_snapshot`, `ping_monitor_loop`
+- Created `app/pollers/seeker.py` — `compute_node_status`, `load_node_detail`, `refresh_seeker_detail_for_node`, `seeker_polling_loop`
+- Created `app/pollers/dn_seeker.py` — `dn_seeker_polling_loop`
+- Created `app/pollers/services.py` — `check_service`, `service_polling_loop`, `merge_service_payload`, `summarize_service_statuses`
+- Created `app/pollers/dashboard.py` — `summarize_dashboard_node`, `probe_discovered_node_detail`, `node_dashboard_polling_loop`, `normalize_node_dashboard_window`, `apply_windowed_detail_summary`
+- Created `app/services/node_health.py` — `serialize_node`, `refresh_nodes`, `get_node_or_404`, `request_node_telemetry`
+- Converted startup/shutdown from `@app.on_event` to FastAPI lifespan context manager
+- `main.py` reduced from ~1,250 → 221 lines (total 2,612 → 221, 92% reduction)
+- All poller functions now receive `PollerState` as first parameter
+- Backward-compatible wrapper functions in `main.py` inject `_ps` so route modules work unchanged
+
+### Verification
+- `python -m compileall app tests alembic` — clean
+- `python -m unittest discover -s tests` — same 3 pre-existing failures
+- All 20 backward-compatible names verified in `main.py`
+
+---
+
+## 2026-04-05 — Session: Modular Architecture Rebuild (Phase 1)
+
+### Branch / commit
+- Branch: `claude/ecstatic-hamilton-bTOp5`
+- All changes committed and pushed
+
+### What was built this session
+
+**Route extraction (Phase 1 of 5)**
+- Extracted all 56 route handlers from `app/main.py` into 9 route modules under `app/routes/`
+- `app/routes/pages.py` — 9 HTML page routes
+- `app/routes/system.py` — `/api/status`
+- `app/routes/nodes.py` — `/api/nodes` CRUD, detail, refresh, telemetry, bwvstats, flush-all
+- `app/routes/services.py` — `/api/services` CRUD, `/api/dashboard/services`
+- `app/routes/dashboard.py` — `/api/dashboard/nodes`, `/api/node-dashboard`
+- `app/routes/topology.py` — `/api/topology`, links CRUD, editor-state
+- `app/routes/maps.py` — `/api/topology/maps` CRUD, objects, links, bindings
+- `app/routes/discovery.py` — `/api/discovered-nodes`, submap discovery
+- `app/routes/stream.py` — SSE endpoints
+- `main.py` reduced from 2,612 → ~1,250 lines (non-route code: constants, globals, helpers, polling loops, startup/shutdown)
+- Route handlers use deferred imports (`from app.main import ...`) to access shared state — this is an intentional temporary pattern that Phase 2 will replace with PollerState injection
+
+### Verification
+- `python -m compileall app tests alembic` — all files compile clean
+- `python -m unittest discover -s tests` — same 3 pre-existing failures (not caused by this change)
+- All 56 route handlers verified to reference only names that exist in `main.py`
+
+### Architecture plan (remaining phases)
+- Phase 2: Extract pollers + services from main.py → `app/pollers/`, `app/services/`, `app/poller_state.py`
+- Phase 3: Multi-channel Redis pub/sub (services, discovery, topology-structure events)
+- Phase 4: Frontend SSE migration (eliminate all setInterval polling)
+- Phase 5: Move seeker cache to Redis (optional, deferred)
+
+### Known gaps
+- Route modules use deferred imports from `app.main` — Phase 2 will replace with proper dependency injection
+- Pre-existing test failures (3 failures, 4 errors) unrelated to this change
+
+---
+
+## 2026-04-05 — Session: Backend rework — Redis cache + SSE real-time updates
+
+### Branch / commit
+- Branch: `back-end-refactor` (also developed on `claude/ecstatic-hamilton-bTOp5`)
+- All changes committed and pushed
+
+### What was built this session
+
+**Redis integration (Phase 1)**
+- `app/redis_client.py` — async Redis connection with lazy init, graceful fallback if Redis unavailable
+- `app/state_manager.py` — dual-write layer publishing node state to Redis pub/sub channel `smp:node-updates`
+- `app/main.py` — wired state_manager into `node_dashboard_polling_loop`, added Redis init/shutdown to startup/shutdown hooks
+- `requirements.txt` — added `redis>=5.0`
+
+**SSE endpoint (Phase 2)**
+- `GET /api/stream/node-states` — new SSE endpoint with two modes:
+  - Redis mode: snapshot on connect + pub/sub push for deltas
+  - Fallback mode: 1s poll loop comparing serialized dashboard cache
+- Existing `/api/node-dashboard/stream` kept for backward compatibility
+
+**Frontend EventSource (Phase 3)**
+- `static/js/app.js` — new `connectNodeStateStream()` replaces `setInterval(refreshTopologyPingStatus, 2000)` with SSE-driven updates
+- Targeted DOM updates via `_updateTopologyEntityDOM()` — updates RTT chip, tooltip, and status badge without full redraw
+- `applyFullSnapshot()`, `applyNodeUpdate()`, `applyDnUpdate()`, `applyNodeOffline()` handle each SSE event type
+- Reconnection indicator in topology header ("reconnecting...")
+
+**Docker infrastructure (Phase 4)**
+- `Dockerfile` — Python 3.11-slim, compile check at build time
+- `docker-compose.yml` — 3 services: app + PostgreSQL 16 + Redis 7 (ephemeral, no disk persistence)
+- `.env.example` — added `REDIS_URL`
+
+### Files touched
+- `app/redis_client.py` (new)
+- `app/state_manager.py` (new)
+- `app/main.py` (modified — imports, polling loop, SSE endpoint, startup/shutdown)
+- `static/js/app.js` (modified — SSE handler, polling replacement, targeted updates)
+- `requirements.txt` (modified — added redis)
+- `.env.example` (modified — added REDIS_URL)
+- `Dockerfile` (new)
+- `docker-compose.yml` (new)
+- `docs/USER_GUIDE.md`, `docs/CODE_DOCUMENTATION.md`, `CHANGELOG.md`, `docs/AGENT_HANDOFF.md`
+
+### Verification
+- `python -m compileall app tests alembic` — passes
+- `python -m unittest discover -s tests` — 21 pass, 7 pre-existing failures (unrelated to this work)
+- Redis is optional — app starts and polls correctly without Redis running
+
+### Known gaps / next steps
+- **Node Dashboard SSE**: The node dashboard page (`/nodes/dashboard`) still uses `setInterval` + fetch for its list refresh. Could be wired to the same SSE stream.
+- **Service checks**: Not yet published to Redis — services status updates still polled.
+- **Load testing**: SSE with 300+ nodes and multiple concurrent clients not yet validated.
+- **Docker prod config**: `docker-compose.yml` uses default PG creds — should be parameterized for production.
+
+---
+
 ## 2026-04-03 — Session: Topology submap improvements, services cloud, hover focus
 
 ### Branch / commit

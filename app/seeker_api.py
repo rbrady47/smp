@@ -87,14 +87,17 @@ def _stringify(value: Any) -> str:
 
 
 def _format_rate(value: Any) -> str:
+    """Format a Seeker rate value (Bytes/s) as a human-readable bits/s string."""
     parsed = _safe_float(value)
     if parsed is None:
         return "--"
-    if parsed >= 1_000_000:
-        return f"{parsed / 1_000_000:.1f} Mbps"
-    if parsed >= 1_000:
-        return f"{parsed / 1_000:.1f} Kbps"
-    return f"{parsed:.0f} bps"
+    # Seeker rate fields are in Bytes/s — convert to bits/s for display
+    bps = parsed * 8
+    if bps >= 1_000_000:
+        return f"{bps / 1_000_000:.1f} Mbps"
+    if bps >= 1_000:
+        return f"{bps / 1_000:.1f} Kbps"
+    return f"{bps:.0f} bps"
 
 
 def _format_bitmap(value: Any) -> str:
@@ -219,12 +222,15 @@ def _build_base_url(node: Node) -> str:
 
 
 def _build_candidate_base_urls(node: Node) -> list[str]:
-    preferred_scheme = "https" if node.api_use_https else "http"
-    alternate_scheme = "http" if preferred_scheme == "https" else "https"
-    return [
-        f"{preferred_scheme}://{node.host}:{node.web_port}",
-        f"{alternate_scheme}://{node.host}:{node.web_port}",
-    ]
+    """Build URL candidates for the Seeker API.
+
+    When the operator explicitly sets ``api_use_https``, only that scheme is
+    tried.  Falling back to the opposite scheme caused confusing errors
+    (e.g. ``http://host:443`` → ``RemoteProtocolError``) and wasted time on
+    a connection that could never succeed.
+    """
+    scheme = "https" if node.api_use_https else "http"
+    return [f"{scheme}://{node.host}:{node.web_port}"]
 
 
 def _build_candidate_login_paths() -> list[str]:
@@ -361,12 +367,89 @@ async def login_to_seeker(
             await request_client.aclose()
 
 
+def _make_bwv_request_body(
+    data0: Mapping[str, Any],
+    *,
+    username: str,
+    trans_id: str,
+    trans_id_refresh: str,
+) -> str:
+    """Build the URL-encoded POST body for a BV data request."""
+    serialized = json.dumps(dict(data0), separators=(",", ":"), ensure_ascii=True)
+    return urllib.parse.urlencode({
+        "userName": username,
+        "transId": trans_id,
+        "transIdRefresh": trans_id_refresh,
+        "isAjaxReq": "1",
+        "reqType": "bwv",
+        "data0": serialized,
+    })
+
+
+def _bwv_error(message: str, *, kind: str = "http_error", **extra: Any) -> dict[str, Any]:
+    return {
+        "status": "error",
+        "rc": None,
+        "message": message,
+        "error": {"kind": kind, **extra},
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+async def _post_one_bwv(
+    client: httpx.AsyncClient,
+    base_url: str,
+    data0: Mapping[str, Any],
+    *,
+    username: str,
+    trans_id: str,
+    trans_id_refresh: str,
+    emit_logs: bool = False,
+    node_name: str = "",
+) -> dict[str, Any]:
+    """Execute a single BV data request on an already-authenticated client."""
+    body = _make_bwv_request_body(
+        data0, username=username, trans_id=trans_id, trans_id_refresh=trans_id_refresh,
+    )
+    headers = {
+        "User-Agent": "curl/7.55.1",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+    for request_path in _build_candidate_request_paths():
+        try:
+            if emit_logs:
+                logger.warning("BV request URL for node %s: %s%s", node_name, base_url, request_path)
+            response = await client.post(request_path, headers=headers, content=body)
+            response.raise_for_status()
+            response_text = response.text
+            payload = _safe_json_loads(response_text)
+            if not isinstance(payload, dict):
+                continue
+            rc = payload.get("rc")
+            if rc not in (None, 0, "0"):
+                if emit_logs:
+                    logger.warning("BV raw response for node %s rc=%s: %s", node_name, rc, response_text)
+                continue
+            return {
+                "status": "ok",
+                "rc": 0,
+                "raw": payload,
+                "error": None,
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+            }
+        except httpx.HTTPError:
+            continue
+    return _bwv_error(f"Seeker data request failed at {base_url}")
+
+
 async def _seeker_post_bwv(
     node: Node,
     data0: Mapping[str, Any],
     *,
     emit_logs: bool = False,
 ) -> dict[str, Any]:
+    """Single-request convenience wrapper — login + one data fetch."""
     last_error: dict[str, Any] | None = None
     for base_url in _build_candidate_base_urls(node):
         async with httpx.AsyncClient(
@@ -379,94 +462,57 @@ async def _seeker_post_bwv(
             if login_result.get("status") != "ok":
                 last_error = login_result
                 continue
+            return await _post_one_bwv(
+                client, base_url, data0,
+                username=str(node.api_username),
+                trans_id=login_result["trans_id"],
+                trans_id_refresh=login_result["trans_id_refresh"],
+                emit_logs=emit_logs,
+                node_name=node.name,
+            )
+    return last_error or _bwv_error("Seeker request failed")
 
-            serialized_data0 = json.dumps(dict(data0), separators=(",", ":"), ensure_ascii=True)
-            form_fields = {
-                "userName": str(node.api_username),
-                "transId": str(login_result["trans_id"]),
-                "transIdRefresh": str(login_result["trans_id_refresh"]),
-                "isAjaxReq": "1",
-                "reqType": "bwv",
-                "data0": serialized_data0,
+
+async def seeker_fetch_all(
+    node: Node,
+    *,
+    emit_logs: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Fetch cfg, stats, and learnt-routes with **one login** session.
+
+    Returns (cfg_result, stats_result, learnt_routes_result).
+    Previously each call did its own login — 3 logins per poll.
+    Now it's 1 login + 3 sequential data requests on the same connection.
+    """
+    cfg_data = {"reqType": "bwvCfg"}
+    stats_data: dict[str, Any] = {"reqType": "bwvStats"}
+    routes_data: dict[str, Any] = {"reqType": "bwvStats", "learntRoutes": "1"}
+
+    for base_url in _build_candidate_base_urls(node):
+        async with httpx.AsyncClient(
+            base_url=base_url,
+            timeout=SEEKER_API_TIMEOUT_SECONDS,
+            verify=SEEKER_API_VERIFY_TLS,
+            follow_redirects=True,
+        ) as client:
+            login_result = await login_to_seeker(node, client=client, emit_logs=emit_logs, base_url_label=base_url)
+            if login_result.get("status") != "ok":
+                continue
+
+            common = {
+                "username": str(node.api_username),
+                "trans_id": login_result["trans_id"],
+                "trans_id_refresh": login_result["trans_id_refresh"],
+                "emit_logs": emit_logs,
+                "node_name": node.name,
             }
-            encoded_body = urllib.parse.urlencode(form_fields)
-            headers = {
-                "User-Agent": "curl/7.55.1",
-                "Content-Type": "application/x-www-form-urlencoded",
-                "X-Requested-With": "XMLHttpRequest",
-            }
+            cfg_result = await _post_one_bwv(client, base_url, cfg_data, **common)
+            stats_result = await _post_one_bwv(client, base_url, stats_data, **common)
+            routes_result = await _post_one_bwv(client, base_url, routes_data, **common)
+            return cfg_result, stats_result, routes_result
 
-            for request_path in _build_candidate_request_paths():
-                try:
-                    if emit_logs:
-                        safe_fields = {key: _mask_value(key, value) for key, value in form_fields.items() if key != "data0"}
-                        logger.warning("BV request URL for node %s: %s%s", node.name, base_url, request_path)
-                        logger.warning("BV request form fields for node %s: %s", node.name, safe_fields)
-                        logger.warning("BV request data0 for node %s: %s", node.name, serialized_data0)
-
-                    response = await client.post(request_path, headers=headers, content=encoded_body)
-                    response.raise_for_status()
-                    response_text = response.text
-                    payload = _safe_json_loads(response_text)
-                    if not isinstance(payload, dict):
-                        last_error = {
-                            "status": "error",
-                            "rc": None,
-                            "message": f"Seeker returned non-JSON from {base_url}{request_path}",
-                            "error": {
-                                "kind": "non_json",
-                                "raw_response": response_text,
-                                "attempted_url": f"{base_url}{request_path}",
-                            },
-                            "fetched_at": datetime.now(timezone.utc).isoformat(),
-                        }
-                        continue
-                    rc = payload.get("rc")
-                    if rc not in (None, 0, "0"):
-                        if emit_logs:
-                            logger.warning("BV raw response for node %s rc=%s: %s", node.name, rc, response_text)
-                        last_error = {
-                            "status": "error",
-                            "rc": _safe_int(rc) if _safe_int(rc) is not None else rc,
-                            "message": f"Seeker request failed (rc={rc}) at {base_url}{request_path}",
-                            "raw": payload,
-                            "error": {
-                                "kind": "rc_error",
-                                "raw_response": response_text,
-                                "attempted_url": f"{base_url}{request_path}",
-                            },
-                            "fetched_at": datetime.now(timezone.utc).isoformat(),
-                        }
-                        continue
-                    return {
-                        "status": "ok",
-                        "rc": 0,
-                        "raw": payload,
-                        "error": None,
-                        "fetched_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                except httpx.HTTPError as exc:
-                    last_error = {
-                        "status": "error",
-                        "rc": None,
-                        "message": f"Seeker request failed at {base_url}{request_path}: {exc!r}",
-                        "error": {
-                            "kind": "http_error",
-                            "raw_response": None,
-                            "attempted_url": f"{base_url}{request_path}",
-                        },
-                    }
-                    continue
-
-    return last_error or {
-        "status": "error",
-        "rc": None,
-        "message": "Seeker request failed",
-        "error": {
-            "kind": "http_error",
-            "raw_response": None,
-        },
-    }
+    err = _bwv_error("Seeker login failed — could not authenticate")
+    return err, err, err
 
 
 async def get_bwv_stats(
@@ -604,6 +650,15 @@ def _sum_seeker_bytes_list(values: Any) -> str:
 
 
 def normalize_bwv_stats(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize raw bwvStats into a standard dict.
+
+    All Seeker rate fields (txTotRateIf, rxTotRateIf, txChanRate,
+    rxChanRate, userRate) are in **Bytes per second**.  We multiply
+    by 8 to convert to bits per second so the frontend ``formatRate()``
+    displays correctly (Kbps / Mbps / Gbps).
+    """
+    BYTES_TO_BITS = 8  # Seeker rate fields are Bytes/s; multiply to get bps
+
     cpu = data.get("cpuCoreUtil", [])
     cpu_values = []
     if isinstance(cpu, list):
@@ -615,8 +670,8 @@ def normalize_bwv_stats(data: dict[str, Any]) -> dict[str, Any]:
     cpu_avg = sum(cpu_values) / len(cpu_values) if cpu_values else None
 
     user_rate = data.get("userRate", [])
-    lan_tx_bps = _safe_int(user_rate[0]) or 0 if isinstance(user_rate, list) and len(user_rate) > 0 else 0
-    lan_rx_bps = _safe_int(user_rate[1]) or 0 if isinstance(user_rate, list) and len(user_rate) > 1 else 0
+    lan_tx_bps = ((_safe_int(user_rate[0]) or 0) * BYTES_TO_BITS) if isinstance(user_rate, list) and len(user_rate) > 0 else 0
+    lan_rx_bps = ((_safe_int(user_rate[1]) or 0) * BYTES_TO_BITS) if isinstance(user_rate, list) and len(user_rate) > 1 else 0
 
     tot_user = data.get("totUserBytes", [])
     lan_tx_total = str(tot_user[0]).strip() if isinstance(tot_user, list) and len(tot_user) > 0 else "--"
@@ -625,13 +680,24 @@ def normalize_bwv_stats(data: dict[str, Any]) -> dict[str, Any]:
     wan_tx_total = _sum_seeker_bytes_list(data.get("totChanBytesTx"))
     wan_rx_total = _sum_seeker_bytes_list(data.get("totChanBytesRx"))
 
+    # Per-channel rates — sum gives aggregate WAN throughput as shown in the
+    # Seeker UI channel table.  txTotRateIf includes all interface traffic
+    # (tunnel + overhead) and may read higher than the channel sum.
+    tx_chan_rates = _as_list(data.get("txChanRate"))
+    rx_chan_rates = _as_list(data.get("rxChanRate"))
+    wan_tx_bps_channels = sum((_safe_int(v) or 0) for v in tx_chan_rates) * BYTES_TO_BITS
+    wan_rx_bps_channels = sum((_safe_int(v) or 0) for v in rx_chan_rates) * BYTES_TO_BITS
+
     return {
         "latency_ms": _safe_int(_first_or_none(data.get("chanWanDelay", []))),
-        # WAN interface rates (txTotRateIf / rxTotRateIf)
-        "tx_bps": _safe_int(data.get("txTotRateIf")) or 0,
-        "rx_bps": _safe_int(data.get("rxTotRateIf")) or 0,
-        "wan_tx_bps": _safe_int(data.get("txTotRateIf")) or 0,
-        "wan_rx_bps": _safe_int(data.get("rxTotRateIf")) or 0,
+        # WAN interface rates (txTotRateIf / rxTotRateIf) — total including overhead
+        "tx_bps": (_safe_int(data.get("txTotRateIf")) or 0) * BYTES_TO_BITS,
+        "rx_bps": (_safe_int(data.get("rxTotRateIf")) or 0) * BYTES_TO_BITS,
+        "wan_tx_bps": (_safe_int(data.get("txTotRateIf")) or 0) * BYTES_TO_BITS,
+        "wan_rx_bps": (_safe_int(data.get("rxTotRateIf")) or 0) * BYTES_TO_BITS,
+        # WAN channel-sum rates (sum of txChanRate / rxChanRate) — tunnel payload only
+        "wan_tx_bps_channels": wan_tx_bps_channels,
+        "wan_rx_bps_channels": wan_rx_bps_channels,
         # LAN user rates (userRate[0] / userRate[1])
         "lan_tx_bps": lan_tx_bps,
         "lan_rx_bps": lan_rx_bps,

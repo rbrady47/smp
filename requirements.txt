@@ -3,5 +3,6 @@ fastapi
 httpx
 jinja2
 psycopg[binary]
+redis>=5.0
 sqlalchemy
 uvicorn

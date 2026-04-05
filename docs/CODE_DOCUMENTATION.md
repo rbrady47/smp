@@ -1,24 +1,34 @@
 # SMP Code Documentation
 
-> Current state as of 2026-04-02 — branch `claude/update-smp-topology-tOXUn`
+> Current state as of 2026-04-05 — branch `claude/ecstatic-hamilton-bTOp5`
 
 ---
 
 ## Architecture Overview
 
-SMP is a FastAPI monolith with a vanilla JS frontend. All backend logic lives in `app/`, the single-page frontend is `static/js/app.js` + `static/css/style.css`, and HTML is served via Jinja2 templates.
+SMP is a FastAPI application with modular route modules and a vanilla JS frontend. Backend logic lives in `app/`, routes are split into `app/routes/`, the single-page frontend is `static/js/app.js` + `static/css/style.css`, and HTML is served via Jinja2 templates.
 
 ```
 Browser ──HTTP──> FastAPI (app/main.py)
-                    ├── REST API (/api/*)
-                    ├── HTML pages (Jinja2 templates)
+                    ├── Route modules (app/routes/*.py)
+                    │     ├── pages.py     — HTML page routes
+                    │     ├── nodes.py     — /api/nodes CRUD
+                    │     ├── services.py  — /api/services CRUD + dashboard
+                    │     ├── dashboard.py — /api/dashboard, /api/node-dashboard
+                    │     ├── topology.py  — /api/topology, links, editor-state
+                    │     ├── maps.py      — /api/topology/maps CRUD
+                    │     ├── discovery.py  — /api/discovered-nodes, submap discovery
+                    │     ├── stream.py    — SSE endpoints
+                    │     └── system.py    — /api/status
                     ├── Background tasks (ping, Seeker polling, service checks)
+                    ├── Redis pub/sub (state_manager.py)
                     └── SQLAlchemy ──> PostgreSQL
 ```
 
 ### Data Flow
 
-1. **AN Seeker polling** (5s): `seeker_polling_loop()` → `refresh_seeker_detail_for_node()` → `seeker_detail_cache[node.id]`
+1. **AN Seeker polling** (10s, fast path): `seeker_polling_loop()` → `refresh_seeker_detail_for_node()` — single login session (1 login + 3 requests) per node, up to 20 concurrent; applies already-known site names from cache; results written to `seeker_detail_cache[node.id]`
+1b. **Site name resolution** (30s, slow path): `site_name_resolution_loop()` → `resolve_site_name_map()` — probes remote tunnel peers for their site names and patches cached detail in-place
 2. **DN Seeker polling** (5s): `dn_seeker_polling_loop()` → `probe_discovered_node_detail()` → `discovered_node_cache[site_id]`
 3. **Ping monitoring** (5s): `ping_monitor_loop()` → `ping_snapshots[node.id]` / `dn_ping_snapshots[site_id]`
 4. **Service checks** (30s): `service_polling_loop()` → DB updates
@@ -29,13 +39,74 @@ Browser ──HTTP──> FastAPI (app/main.py)
 
 ## Backend Files
 
-### `app/main.py` (~2500 lines)
+### `app/main.py` (~220 lines)
 
-The FastAPI application. Contains routes, background tasks, and the core orchestration logic.
+Thin application entry point. Creates a `PollerState` instance, initializes the `NodeDashboardBackend`, starts/stops background polling loops via a FastAPI lifespan context manager, and mounts route modules. Also exports backward-compatible wrapper functions so route modules can import directly from `app.main`.
+
+### `app/state_manager.py`
+
+Multi-channel Redis pub/sub layer. Publishes state changes to 4 channels:
+
+| Channel | Events | Publishers |
+|---------|--------|-----------|
+| `smp:node-updates` | `node_update`, `dn_update`, `node_offline` | Dashboard poller |
+| `smp:services` | `service_update` | Service poller |
+| `smp:discovery` | `dn_discovered`, `dn_removed` | Discovery routes |
+| `smp:topology-structure` | `structure_changed` | Node/link/map CRUD routes |
+
+Key functions: `update_node_state()`, `update_dn_state()`, `publish_service_state()`, `publish_discovery_event()`, `publish_topology_change()`, `subscribe_channels()`.
+
+### SSE Endpoints
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/stream/events?channels=...` | Unified SSE — subscribes to specified channels (defaults to all) |
+| `GET /api/stream/node-states` | Legacy — node state changes only |
+| `GET /api/node-dashboard/stream` | Legacy — poll-based dashboard snapshot |
+
+### `app/poller_state.py`
+
+`PollerState` dataclass holding all mutable in-memory state: 11 cache dicts (ping, seeker, services, DN ping) + 6 task handles (including `site_name_resolution_task`) + dashboard backend reference. A single instance (`_ps`) is created at module load in `main.py` and passed to every poller and service function.
+
+### `app/pollers/` (5 files)
+
+Background polling loops, each receiving `PollerState` as first parameter:
+
+| Module | Loop function | Interval | Purpose |
+|--------|--------------|----------|---------|
+| `ping.py` | `ping_monitor_loop(ps)` | 1s tick | ICMP probes for ANs + DNs |
+| `seeker.py` | `seeker_polling_loop(ps)` | 10s | Seeker API polling per AN (fast path — single-session login + config/stats/routes); concurrency capped at `SEEKER_POLL_CONCURRENCY = 20` |
+| `seeker.py` | `site_name_resolution_loop(ps)` | 30s (10s delay) | Remote site-name probes for unknown tunnel peers (slow path) |
+| `dn_seeker.py` | `dn_seeker_polling_loop(ps)` | 5s (10s delay) | DN Seeker API probing |
+| `services.py` | `service_polling_loop(ps)` | 30s | HTTP/DNS service checks |
+| `dashboard.py` | `node_dashboard_polling_loop(ps)` | 1s | Projection build + Redis publish |
+
+Also contains stateless helpers: `ping_host`, `check_tcp_port`, `compute_node_status`, `summarize_dashboard_node`, `merge_service_payload`, etc.
+
+### `app/services/node_health.py`
+
+Node-level business logic: `serialize_node`, `refresh_nodes`, `get_node_or_404`, `request_node_telemetry`. Functions that take `PollerState` + DB session + Node and return serialized dicts.
+
+### `app/routes/` (10 files)
+
+Route modules split by domain. Each creates an `APIRouter` and is included in `main.py` via `app.include_router()`. Route handlers use deferred imports (`from app.main import ...`) to access shared state (caches, backend instances).
+
+| Module | Prefix | Routes |
+|--------|--------|--------|
+| `pages.py` | `/` | HTML page routes (9 routes) |
+| `system.py` | `/api` | `/api/status` |
+| `nodes.py` | `/api` | `/api/nodes` CRUD, detail, refresh, telemetry, bwvstats, flush-all |
+| `services.py` | `/api` | `/api/services` CRUD, `/api/dashboard/services` |
+| `dashboard.py` | `/api` | `/api/dashboard/nodes`, `/api/node-dashboard` |
+| `topology.py` | `/api` | `/api/topology`, links CRUD, editor-state |
+| `maps.py` | `/api` | `/api/topology/maps` CRUD, objects, links, bindings |
+| `discovery.py` | `/api` | `/api/discovered-nodes`, submap discovery |
+| `stream.py` | `/api` | SSE endpoints (`/api/stream/node-states`, `/api/node-dashboard/stream`) |
 
 **Constants (lines ~85-95):**
 - `PING_INTERVAL_SECONDS = 5.0` — ping burst cycle
-- `SEEKER_POLL_INTERVAL_SECONDS = 5.0` — AN Seeker API poll
+- `SEEKER_POLL_INTERVAL_SECONDS = 10.0` — AN Seeker API poll
+- `SEEKER_POLL_CONCURRENCY = 20` — max concurrent AN polls (asyncio semaphore)
 - `DN_SEEKER_POLL_INTERVAL_SECONDS = 5.0` — DN Seeker API poll
 - `SERVICE_POLL_INTERVAL_SECONDS = 30.0` — service check cycle
 
@@ -49,7 +120,7 @@ The FastAPI application. Contains routes, background tasks, and the core orchest
 
 | Function | Interval | Purpose |
 |----------|----------|---------|
-| `seeker_polling_loop()` | 5s | Polls AN Seeker APIs, backfills `node_id` from config |
+| `seeker_polling_loop()` | 10s | Polls AN Seeker APIs via single-session login; backfills `node_id` from config; concurrency limited to 20 |
 | `dn_seeker_polling_loop()` | 5s (10s initial delay) | Polls DN Seeker APIs from DB + in-memory cache |
 | `ping_monitor_loop()` | 5s | Pings all ANs and DNs, updates snapshots |
 | `service_polling_loop()` | 30s | Runs HTTP/DNS service checks |
@@ -72,6 +143,7 @@ The FastAPI application. Contains routes, background tasks, and the core orchest
 | `/nodes/discovered/{site_id}` | GET | DN detail page (HTML) |
 | `/topology` | GET | Topology page (HTML) |
 | `/topology/maps/{id}` | GET | Submap page (HTML) |
+| `/api/stream/node-states` | GET | **SSE stream** — real-time node state updates (Redis push or polling fallback) |
 
 **Submap discovery endpoint (`get_submap_discovery`, ~line 1868):**
 
@@ -168,6 +240,43 @@ SNMPc-style authored map CRUD. Manages views (canvases), objects (nodes/labels/s
 ### `app/topology_editor_state_service.py` (~71 lines)
 
 Persists topology editor state (layout overrides, link anchor assignments, demo mode) to/from `topology_editor_state` DB table.
+
+---
+
+### `app/redis_client.py` (~60 lines)
+
+Async Redis connection with lazy initialization and graceful fallback. Reads `REDIS_URL` from environment (default `redis://localhost:6379/0`). If Redis is unavailable at startup, sets `_unavailable = True` and all subsequent calls return `None` — the app continues with in-memory caches.
+
+Key functions:
+- `get_redis()` — returns shared async Redis connection or `None`
+- `close_redis()` — shuts down pool on app shutdown
+- `redis_available()` — live ping check
+
+---
+
+### `app/state_manager.py` (~170 lines)
+
+Dual-write state layer that publishes node state to Redis for SSE push. All operations are no-ops if Redis is unavailable.
+
+Key design:
+- Redis keys: `smp:node:{node_id}` (ANs), `smp:dn:{site_id}` (DNs)
+- Values: JSON-serialized state dicts with 30s TTL (2x poll interval)
+- Pub/sub channel: `smp:node-updates`
+- Published events: `node_update`, `dn_update`, `node_offline`
+
+Key functions:
+- `update_node_state(node_id, state)` — SET + PUBLISH for AN state change
+- `update_dn_state(site_id, state)` — SET + PUBLISH for DN state change
+- `publish_offline(node_type, id)` — DELETE + PUBLISH for offline event
+- `get_all_node_states()` / `get_all_dn_states()` — SCAN + MGET for bulk reads
+- `subscribe_state_changes()` — async iterator yielding pub/sub events
+
+**Data flow:**
+```
+Background poll loop → in-memory cache → state_manager.update_*() → Redis SET + PUBLISH
+                                                                          ↓
+SSE endpoint ← subscribe_state_changes() ← Redis pub/sub ← smp:node-updates channel
+```
 
 ---
 
