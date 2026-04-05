@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 
 SEEKER_POLL_INTERVAL_SECONDS = 1.0
 SITE_NAME_RESOLUTION_INTERVAL_SECONDS = 30.0
+SEEKER_POLL_CONCURRENCY = 20  # max simultaneous Seeker API sessions
 
 
 async def compute_node_status(ps: PollerState, node: Node) -> dict[str, object]:
@@ -214,7 +215,11 @@ async def refresh_seeker_detail_for_node(ps: PollerState, node: Node) -> dict[st
 
 
 async def seeker_polling_loop(ps: PollerState) -> None:
-    """Fast-path poller: config + stats every 5 s.  No remote site-name probes."""
+    """Fast-path poller: config + stats every cycle.  No remote site-name probes."""
+    logger.info(
+        "Seeker poller started: interval=%.0fs, concurrency=%d",
+        SEEKER_POLL_INTERVAL_SECONDS, SEEKER_POLL_CONCURRENCY,
+    )
     while True:
         t0 = time.monotonic()
         try:
@@ -226,9 +231,16 @@ async def seeker_polling_loop(ps: PollerState) -> None:
 
             enabled_nodes = [node for node in nodes if node.enabled and node.api_username and node.api_password]
             if enabled_nodes:
+                sem = asyncio.Semaphore(SEEKER_POLL_CONCURRENCY)
+
+                async def _poll_with_limit(node: Node) -> dict[str, object]:
+                    async with sem:
+                        return await asyncio.wait_for(
+                            refresh_seeker_detail_for_node(ps, node), timeout=30.0,
+                        )
+
                 results = await asyncio.gather(
-                    *(asyncio.wait_for(refresh_seeker_detail_for_node(ps, node), timeout=30.0)
-                      for node in enabled_nodes),
+                    *(_poll_with_limit(node) for node in enabled_nodes),
                     return_exceptions=True,
                 )
                 for node, result in zip(enabled_nodes, results):
