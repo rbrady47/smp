@@ -6,6 +6,10 @@ The format is intentionally simple so diffs stay readable in version control.
 
 ## Unreleased
 
+### Refactored
+
+- **Route extraction (Phase 1):** Extracted all 56 route handlers from `app/main.py` into 9 modular route files under `app/routes/`. Main.py reduced from 2,612 to ~1,250 lines. No behavior change — all API endpoints, URL paths, and response shapes remain identical.
+
 ### Added
 
 - **Redis integration** for real-time node state pub/sub (`app/redis_client.py`, `app/state_manager.py`). Redis is optional — app degrades gracefully to in-memory caching if unavailable.

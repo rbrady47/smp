@@ -8,6 +8,45 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-05 — Session: Modular Architecture Rebuild (Phase 1)
+
+### Branch / commit
+- Branch: `claude/ecstatic-hamilton-bTOp5`
+- All changes committed and pushed
+
+### What was built this session
+
+**Route extraction (Phase 1 of 5)**
+- Extracted all 56 route handlers from `app/main.py` into 9 route modules under `app/routes/`
+- `app/routes/pages.py` — 9 HTML page routes
+- `app/routes/system.py` — `/api/status`
+- `app/routes/nodes.py` — `/api/nodes` CRUD, detail, refresh, telemetry, bwvstats, flush-all
+- `app/routes/services.py` — `/api/services` CRUD, `/api/dashboard/services`
+- `app/routes/dashboard.py` — `/api/dashboard/nodes`, `/api/node-dashboard`
+- `app/routes/topology.py` — `/api/topology`, links CRUD, editor-state
+- `app/routes/maps.py` — `/api/topology/maps` CRUD, objects, links, bindings
+- `app/routes/discovery.py` — `/api/discovered-nodes`, submap discovery
+- `app/routes/stream.py` — SSE endpoints
+- `main.py` reduced from 2,612 → ~1,250 lines (non-route code: constants, globals, helpers, polling loops, startup/shutdown)
+- Route handlers use deferred imports (`from app.main import ...`) to access shared state — this is an intentional temporary pattern that Phase 2 will replace with PollerState injection
+
+### Verification
+- `python -m compileall app tests alembic` — all files compile clean
+- `python -m unittest discover -s tests` — same 3 pre-existing failures (not caused by this change)
+- All 56 route handlers verified to reference only names that exist in `main.py`
+
+### Architecture plan (remaining phases)
+- Phase 2: Extract pollers + services from main.py → `app/pollers/`, `app/services/`, `app/poller_state.py`
+- Phase 3: Multi-channel Redis pub/sub (services, discovery, topology-structure events)
+- Phase 4: Frontend SSE migration (eliminate all setInterval polling)
+- Phase 5: Move seeker cache to Redis (optional, deferred)
+
+### Known gaps
+- Route modules use deferred imports from `app.main` — Phase 2 will replace with proper dependency injection
+- Pre-existing test failures (3 failures, 4 errors) unrelated to this change
+
+---
+
 ## 2026-04-05 — Session: Backend rework — Redis cache + SSE real-time updates
 
 ### Branch / commit

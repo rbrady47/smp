@@ -1,18 +1,27 @@
 # SMP Code Documentation
 
-> Current state as of 2026-04-02 — branch `claude/update-smp-topology-tOXUn`
+> Current state as of 2026-04-05 — branch `claude/ecstatic-hamilton-bTOp5`
 
 ---
 
 ## Architecture Overview
 
-SMP is a FastAPI monolith with a vanilla JS frontend. All backend logic lives in `app/`, the single-page frontend is `static/js/app.js` + `static/css/style.css`, and HTML is served via Jinja2 templates.
+SMP is a FastAPI application with modular route modules and a vanilla JS frontend. Backend logic lives in `app/`, routes are split into `app/routes/`, the single-page frontend is `static/js/app.js` + `static/css/style.css`, and HTML is served via Jinja2 templates.
 
 ```
 Browser ──HTTP──> FastAPI (app/main.py)
-                    ├── REST API (/api/*)
-                    ├── HTML pages (Jinja2 templates)
+                    ├── Route modules (app/routes/*.py)
+                    │     ├── pages.py     — HTML page routes
+                    │     ├── nodes.py     — /api/nodes CRUD
+                    │     ├── services.py  — /api/services CRUD + dashboard
+                    │     ├── dashboard.py — /api/dashboard, /api/node-dashboard
+                    │     ├── topology.py  — /api/topology, links, editor-state
+                    │     ├── maps.py      — /api/topology/maps CRUD
+                    │     ├── discovery.py  — /api/discovered-nodes, submap discovery
+                    │     ├── stream.py    — SSE endpoints
+                    │     └── system.py    — /api/status
                     ├── Background tasks (ping, Seeker polling, service checks)
+                    ├── Redis pub/sub (state_manager.py)
                     └── SQLAlchemy ──> PostgreSQL
 ```
 
@@ -29,9 +38,25 @@ Browser ──HTTP──> FastAPI (app/main.py)
 
 ## Backend Files
 
-### `app/main.py` (~2500 lines)
+### `app/main.py` (~1250 lines)
 
-The FastAPI application. Contains routes, background tasks, and the core orchestration logic.
+The FastAPI application entry point. Contains background tasks, polling loops, helper functions, and core orchestration logic. Route handlers have been extracted into `app/routes/` modules.
+
+### `app/routes/` (10 files)
+
+Route modules split by domain. Each creates an `APIRouter` and is included in `main.py` via `app.include_router()`. Route handlers use deferred imports (`from app.main import ...`) to access shared state (caches, backend instances).
+
+| Module | Prefix | Routes |
+|--------|--------|--------|
+| `pages.py` | `/` | HTML page routes (9 routes) |
+| `system.py` | `/api` | `/api/status` |
+| `nodes.py` | `/api` | `/api/nodes` CRUD, detail, refresh, telemetry, bwvstats, flush-all |
+| `services.py` | `/api` | `/api/services` CRUD, `/api/dashboard/services` |
+| `dashboard.py` | `/api` | `/api/dashboard/nodes`, `/api/node-dashboard` |
+| `topology.py` | `/api` | `/api/topology`, links CRUD, editor-state |
+| `maps.py` | `/api` | `/api/topology/maps` CRUD, objects, links, bindings |
+| `discovery.py` | `/api` | `/api/discovered-nodes`, submap discovery |
+| `stream.py` | `/api` | SSE endpoints (`/api/stream/node-states`, `/api/node-dashboard/stream`) |
 
 **Constants (lines ~85-95):**
 - `PING_INTERVAL_SECONDS = 5.0` — ping burst cycle
