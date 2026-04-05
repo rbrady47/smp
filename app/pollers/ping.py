@@ -166,64 +166,67 @@ async def ping_monitor_loop(ps: PollerState) -> None:
     import time as _time
 
     while True:
-        now = _time.monotonic()
-        db = SessionLocal()
         try:
-            nodes = db.scalars(select(Node).order_by(Node.id)).all()
-        finally:
-            db.close()
+            now = _time.monotonic()
+            db = SessionLocal()
+            try:
+                nodes = db.scalars(select(Node).order_by(Node.id)).all()
+            finally:
+                db.close()
 
-        pingable = [n for n in nodes if n.enabled and n.ping_enabled]
+            pingable = [n for n in nodes if n.enabled and n.ping_enabled]
 
-        due_nodes = []
-        for node in pingable:
-            deadline = ps.next_ping_at_by_node.get(node.id, 0.0)
-            if now >= deadline:
-                due_nodes.append(node)
-
-        if due_nodes:
-            burst_results = await asyncio.gather(
-                *(ping_node_single(node.host) for node in due_nodes),
-                return_exceptions=True,
-            )
-            tick = _time.monotonic()
-            for node, result in zip(due_nodes, burst_results):
-                interval = max(node.ping_interval_seconds, 1)
-                ps.next_ping_at_by_node[node.id] = tick + interval
-                if isinstance(result, Exception):
-                    build_ping_snapshot(ps, node.id, {"reachable": False, "latency_ms": None})
-                else:
-                    build_ping_snapshot(ps, node.id, result)
-
-        db2 = SessionLocal()
-        try:
-            dns = db2.scalars(
-                select(DiscoveredNode).where(
-                    DiscoveredNode.host.isnot(None),
-                    DiscoveredNode.map_view_id.isnot(None),
-                )
-            ).all()
-            dn_due: list[tuple[str, str]] = []
-            for dn in dns:
-                if not dn.host:
-                    continue
-                deadline = ps.dn_next_ping_at.get(dn.site_id, 0.0)
+            due_nodes = []
+            for node in pingable:
+                deadline = ps.next_ping_at_by_node.get(node.id, 0.0)
                 if now >= deadline:
-                    dn_due.append((dn.site_id, dn.host))
-        finally:
-            db2.close()
+                    due_nodes.append(node)
 
-        if dn_due:
-            dn_results = await asyncio.gather(
-                *(ping_node_single(host) for _, host in dn_due),
-                return_exceptions=True,
-            )
-            tick = _time.monotonic()
-            for (site_id, _host), result in zip(dn_due, dn_results):
-                ps.dn_next_ping_at[site_id] = tick + PING_INTERVAL_SECONDS
-                if isinstance(result, Exception):
-                    build_dn_ping_snapshot(ps, site_id, {"reachable": False, "latency_ms": None})
-                else:
-                    build_dn_ping_snapshot(ps, site_id, result)
+            if due_nodes:
+                burst_results = await asyncio.gather(
+                    *(ping_node_single(node.host) for node in due_nodes),
+                    return_exceptions=True,
+                )
+                tick = _time.monotonic()
+                for node, result in zip(due_nodes, burst_results):
+                    interval = max(node.ping_interval_seconds, 1)
+                    ps.next_ping_at_by_node[node.id] = tick + interval
+                    if isinstance(result, Exception):
+                        build_ping_snapshot(ps, node.id, {"reachable": False, "latency_ms": None})
+                    else:
+                        build_ping_snapshot(ps, node.id, result)
+
+            db2 = SessionLocal()
+            try:
+                dns = db2.scalars(
+                    select(DiscoveredNode).where(
+                        DiscoveredNode.host.isnot(None),
+                        DiscoveredNode.map_view_id.isnot(None),
+                    )
+                ).all()
+                dn_due: list[tuple[str, str]] = []
+                for dn in dns:
+                    if not dn.host:
+                        continue
+                    deadline = ps.dn_next_ping_at.get(dn.site_id, 0.0)
+                    if now >= deadline:
+                        dn_due.append((dn.site_id, dn.host))
+            finally:
+                db2.close()
+
+            if dn_due:
+                dn_results = await asyncio.gather(
+                    *(ping_node_single(host) for _, host in dn_due),
+                    return_exceptions=True,
+                )
+                tick = _time.monotonic()
+                for (site_id, _host), result in zip(dn_due, dn_results):
+                    ps.dn_next_ping_at[site_id] = tick + PING_INTERVAL_SECONDS
+                    if isinstance(result, Exception):
+                        build_dn_ping_snapshot(ps, site_id, {"reachable": False, "latency_ms": None})
+                    else:
+                        build_dn_ping_snapshot(ps, site_id, result)
+        except Exception:
+            logging.getLogger(__name__).exception("Ping monitor loop iteration failed")
 
         await asyncio.sleep(1.0)

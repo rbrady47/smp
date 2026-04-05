@@ -175,74 +175,77 @@ async def refresh_seeker_detail_for_node(ps: PollerState, node: Node) -> dict[st
 
 async def seeker_polling_loop(ps: PollerState) -> None:
     while True:
-        db = SessionLocal()
         try:
-            nodes = db.scalars(select(Node).order_by(Node.id)).all()
-        finally:
-            db.close()
+            db = SessionLocal()
+            try:
+                nodes = db.scalars(select(Node).order_by(Node.id)).all()
+            finally:
+                db.close()
 
-        enabled_nodes = [node for node in nodes if node.enabled and node.api_username and node.api_password]
-        if enabled_nodes:
-            results = await asyncio.gather(
-                *(refresh_seeker_detail_for_node(ps, node) for node in enabled_nodes),
-                return_exceptions=True,
-            )
-            for node, result in zip(enabled_nodes, results):
-                if isinstance(result, Exception):
-                    cached = ps.seeker_detail_cache.get(node.id, {})
-                    ps.seeker_detail_cache[node.id] = {
-                        **cached,
-                        "node": {
-                            "id": node.id,
-                            "name": node.name,
-                            "host": node.host,
-                            "location": node.location,
-                            "status": "offline",
-                            "web_ok": False,
-                            "ssh_ok": False,
-                            "last_refresh": node.last_checked.isoformat() if node.last_checked else None,
-                            "last_telemetry_pull": None,
-                        },
-                        "node_summary": cached.get("node_summary", {}),
-                        "config_summary": cached.get("config_summary", {}),
-                        "mates": cached.get("mates", []),
-                        "tunnels": cached.get("tunnels", []),
-                        "channels": cached.get("channels", []),
-                        "static_routes": cached.get("static_routes", []),
-                        "learnt_routes": cached.get("learnt_routes", []),
-                        "errors": {
-                            "config": "Polling failed",
-                            "stats": "Polling failed",
-                            "routes": "Polling failed",
-                        },
-                        "raw": cached.get("raw", {}),
-                        "cached_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                    await state_manager.update_seeker_cache(node.id, ps.seeker_detail_cache[node.id])
+            enabled_nodes = [node for node in nodes if node.enabled and node.api_username and node.api_password]
+            if enabled_nodes:
+                results = await asyncio.gather(
+                    *(refresh_seeker_detail_for_node(ps, node) for node in enabled_nodes),
+                    return_exceptions=True,
+                )
+                for node, result in zip(enabled_nodes, results):
+                    if isinstance(result, Exception):
+                        cached = ps.seeker_detail_cache.get(node.id, {})
+                        ps.seeker_detail_cache[node.id] = {
+                            **cached,
+                            "node": {
+                                "id": node.id,
+                                "name": node.name,
+                                "host": node.host,
+                                "location": node.location,
+                                "status": "offline",
+                                "web_ok": False,
+                                "ssh_ok": False,
+                                "last_refresh": node.last_checked.isoformat() if node.last_checked else None,
+                                "last_telemetry_pull": None,
+                            },
+                            "node_summary": cached.get("node_summary", {}),
+                            "config_summary": cached.get("config_summary", {}),
+                            "mates": cached.get("mates", []),
+                            "tunnels": cached.get("tunnels", []),
+                            "channels": cached.get("channels", []),
+                            "static_routes": cached.get("static_routes", []),
+                            "learnt_routes": cached.get("learnt_routes", []),
+                            "errors": {
+                                "config": "Polling failed",
+                                "stats": "Polling failed",
+                                "routes": "Polling failed",
+                            },
+                            "raw": cached.get("raw", {}),
+                            "cached_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                        await state_manager.update_seeker_cache(node.id, ps.seeker_detail_cache[node.id])
 
-            backfill_needed = []
-            for node in enabled_nodes:
-                if node.node_id:
-                    continue
-                detail = ps.seeker_detail_cache.get(node.id) or {}
-                cfg = detail.get("config_summary") if isinstance(detail.get("config_summary"), dict) else {}
-                cfg_site_id = str(cfg.get("site_id") or "").strip()
-                if cfg_site_id and cfg_site_id != "--":
-                    backfill_needed.append((node.id, cfg_site_id))
+                backfill_needed = []
+                for node in enabled_nodes:
+                    if node.node_id:
+                        continue
+                    detail = ps.seeker_detail_cache.get(node.id) or {}
+                    cfg = detail.get("config_summary") if isinstance(detail.get("config_summary"), dict) else {}
+                    cfg_site_id = str(cfg.get("site_id") or "").strip()
+                    if cfg_site_id and cfg_site_id != "--":
+                        backfill_needed.append((node.id, cfg_site_id))
 
-            if backfill_needed:
-                bdb = SessionLocal()
-                try:
-                    for node_id_pk, site_id_val in backfill_needed:
-                        db_node = bdb.get(Node, node_id_pk)
-                        if db_node and not db_node.node_id:
-                            db_node.node_id = site_id_val
-                            logger.info("Backfilled node_id=%s for Node.id=%d", site_id_val, node_id_pk)
-                    bdb.commit()
-                except Exception:
-                    logger.exception("Failed to backfill node_id values")
-                    bdb.rollback()
-                finally:
-                    bdb.close()
+                if backfill_needed:
+                    bdb = SessionLocal()
+                    try:
+                        for node_id_pk, site_id_val in backfill_needed:
+                            db_node = bdb.get(Node, node_id_pk)
+                            if db_node and not db_node.node_id:
+                                db_node.node_id = site_id_val
+                                logger.info("Backfilled node_id=%s for Node.id=%d", site_id_val, node_id_pk)
+                        bdb.commit()
+                    except Exception:
+                        logger.exception("Failed to backfill node_id values")
+                        bdb.rollback()
+                    finally:
+                        bdb.close()
+        except Exception:
+            logger.exception("Seeker polling loop iteration failed")
 
         await asyncio.sleep(SEEKER_POLL_INTERVAL_SECONDS)

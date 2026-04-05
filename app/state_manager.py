@@ -58,7 +58,7 @@ async def update_node_state(node_id: int | str, state: dict[str, Any]) -> None:
             "id": str(node_id),
             "state": state,
         }, default=str))
-    except Exception:
+    except BaseException:
         logger.debug("Redis write failed for %s", key, exc_info=True)
 
 
@@ -76,7 +76,7 @@ async def update_dn_state(site_id: str, state: dict[str, Any]) -> None:
             "id": site_id,
             "state": state,
         }, default=str))
-    except Exception:
+    except BaseException:
         logger.debug("Redis write failed for %s", key, exc_info=True)
 
 
@@ -94,7 +94,7 @@ async def publish_offline(node_type: str, node_id: str) -> None:
             "id": str(node_id),
             "node_type": node_type,
         }))
-    except Exception:
+    except BaseException:
         logger.debug("Redis offline publish failed for %s", key, exc_info=True)
 
 
@@ -116,7 +116,7 @@ async def publish_service_state(service_id: int, state: dict[str, Any]) -> None:
             "id": service_id,
             "state": state,
         }, default=str))
-    except Exception:
+    except BaseException:
         logger.debug("Redis write failed for %s", key, exc_info=True)
 
 
@@ -138,7 +138,7 @@ async def get_all_service_states() -> dict[str, dict[str, Any]]:
                 svc_id = key.removeprefix(_SVC_KEY_PREFIX)
                 result[svc_id] = json.loads(val)
         return result
-    except Exception:
+    except BaseException:
         logger.debug("Redis scan failed for service states", exc_info=True)
         return {}
 
@@ -155,7 +155,7 @@ async def update_seeker_cache(node_id: int | str, detail: dict[str, Any]) -> Non
     key = f"{_SEEKER_KEY_PREFIX}{node_id}"
     try:
         await r.set(key, json.dumps(detail, default=str), ex=_SEEKER_CACHE_TTL_SECONDS)
-    except Exception:
+    except BaseException:
         logger.debug("Redis write failed for %s", key, exc_info=True)
 
 
@@ -177,7 +177,7 @@ async def get_all_seeker_cache() -> dict[str, dict[str, Any]]:
                 node_id = key.removeprefix(_SEEKER_KEY_PREFIX)
                 result[node_id] = json.loads(val)
         return result
-    except Exception:
+    except BaseException:
         logger.debug("Redis scan failed for seeker cache", exc_info=True)
         return {}
 
@@ -201,7 +201,7 @@ async def publish_discovery_event(
             "site_id": site_id,
             **extra,
         }, default=str))
-    except Exception:
+    except BaseException:
         logger.debug("Redis discovery publish failed for %s %s", event_type, site_id, exc_info=True)
 
 
@@ -220,7 +220,7 @@ async def publish_topology_change(reason: str, **extra: Any) -> None:
             "reason": reason,
             **extra,
         }, default=str))
-    except Exception:
+    except BaseException:
         logger.debug("Redis topology publish failed for %s", reason, exc_info=True)
 
 
@@ -235,7 +235,7 @@ async def get_node_state(node_id: int | str) -> dict[str, Any] | None:
     try:
         raw = await r.get(f"{_AN_KEY_PREFIX}{node_id}")
         return json.loads(raw) if raw else None
-    except Exception:
+    except BaseException:
         return None
 
 
@@ -246,7 +246,7 @@ async def get_dn_state(site_id: str) -> dict[str, Any] | None:
     try:
         raw = await r.get(f"{_DN_KEY_PREFIX}{site_id}")
         return json.loads(raw) if raw else None
-    except Exception:
+    except BaseException:
         return None
 
 
@@ -267,7 +267,7 @@ async def get_all_node_states() -> dict[str, dict[str, Any]]:
                 node_id = key.removeprefix(_AN_KEY_PREFIX)
                 result[node_id] = json.loads(val)
         return result
-    except Exception:
+    except BaseException:
         logger.debug("Redis scan failed for AN states", exc_info=True)
         return {}
 
@@ -289,7 +289,7 @@ async def get_all_dn_states() -> dict[str, dict[str, Any]]:
                 site_id = key.removeprefix(_DN_KEY_PREFIX)
                 result[site_id] = json.loads(val)
         return result
-    except Exception:
+    except BaseException:
         logger.debug("Redis scan failed for DN states", exc_info=True)
         return {}
 

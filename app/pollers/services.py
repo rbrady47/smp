@@ -175,25 +175,28 @@ async def check_service(service: ServiceCheck) -> dict[str, object]:
 
 async def service_polling_loop(ps: PollerState) -> None:
     while True:
-        db = SessionLocal()
         try:
-            services = db.scalars(select(ServiceCheck).order_by(ServiceCheck.service_type, ServiceCheck.name, ServiceCheck.id)).all()
-        finally:
-            db.close()
+            db = SessionLocal()
+            try:
+                services = db.scalars(select(ServiceCheck).order_by(ServiceCheck.service_type, ServiceCheck.name, ServiceCheck.id)).all()
+            finally:
+                db.close()
 
-        if services:
-            results = await asyncio.gather(*(check_service(service) for service in services), return_exceptions=True)
-            for service, result in zip(services, results):
-                if isinstance(result, Exception):
-                    snapshot = build_service_snapshot(
-                        service,
-                        status="failed",
-                        message="Service check failed",
-                    )
-                else:
-                    snapshot = result
-                ps.service_status_cache[service.id] = snapshot
-                await state_manager.publish_service_state(service.id, snapshot)
+            if services:
+                results = await asyncio.gather(*(check_service(service) for service in services), return_exceptions=True)
+                for service, result in zip(services, results):
+                    if isinstance(result, Exception):
+                        snapshot = build_service_snapshot(
+                            service,
+                            status="failed",
+                            message="Service check failed",
+                        )
+                    else:
+                        snapshot = result
+                    ps.service_status_cache[service.id] = snapshot
+                    await state_manager.publish_service_state(service.id, snapshot)
+        except Exception:
+            logger.exception("Service polling loop iteration failed")
 
         await asyncio.sleep(SERVICE_POLL_INTERVAL_SECONDS)
 
