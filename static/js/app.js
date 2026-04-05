@@ -2887,8 +2887,8 @@ function applyNodeUpdate(nodeId, state) {
             detectLinkStateChanges();
         }
 
-        // Invalidate link stats cache for this node so pinned tooltip gets fresh data
-        topologyLinkStatsCache.delete(String(nodeId));
+        // Invalidate all link stats so pinned tooltip gets fresh data on next fetch
+        topologyLinkStatsCache.clear();
         refreshPinnedLinkTooltip();
     }
 
