@@ -219,12 +219,15 @@ def _build_base_url(node: Node) -> str:
 
 
 def _build_candidate_base_urls(node: Node) -> list[str]:
-    preferred_scheme = "https" if node.api_use_https else "http"
-    alternate_scheme = "http" if preferred_scheme == "https" else "https"
-    return [
-        f"{preferred_scheme}://{node.host}:{node.web_port}",
-        f"{alternate_scheme}://{node.host}:{node.web_port}",
-    ]
+    """Build URL candidates for the Seeker API.
+
+    When the operator explicitly sets ``api_use_https``, only that scheme is
+    tried.  Falling back to the opposite scheme caused confusing errors
+    (e.g. ``http://host:443`` → ``RemoteProtocolError``) and wasted time on
+    a connection that could never succeed.
+    """
+    scheme = "https" if node.api_use_https else "http"
+    return [f"{scheme}://{node.host}:{node.web_port}"]
 
 
 def _build_candidate_login_paths() -> list[str]:
