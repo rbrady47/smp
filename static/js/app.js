@@ -2886,6 +2886,10 @@ function applyNodeUpdate(nodeId, state) {
             detectNodeStateChanges();
             detectLinkStateChanges();
         }
+
+        // Invalidate link stats cache for this node so pinned tooltip gets fresh data
+        topologyLinkStatsCache.delete(Number(nodeId));
+        refreshPinnedLinkTooltip();
     }
 
     // Update node dashboard row in-place
@@ -3088,6 +3092,59 @@ function _updateNodeDetailFromSSE(anchors, discovered) {
         rtt_state: state.rtt_state || state.ping_state,
     };
     renderNodeSummaryPanel("detail-summary-grid", summaryData, state);
+
+    // Re-fetch full detail to update tunnels/channels tables
+    if (detailKind === "anchor") {
+        _refreshNodeDetailTables(nodeId);
+    }
+}
+
+let _detailTableRefreshPending = false;
+async function _refreshNodeDetailTables(nodeId) {
+    // Debounce — skip if a refresh is already in flight
+    if (_detailTableRefreshPending) return;
+    _detailTableRefreshPending = true;
+    try {
+        const detailRoot = document.getElementById("node-detail-root");
+        const detailEndpoint = detailRoot?.getAttribute("data-detail-endpoint");
+        if (!detailEndpoint) return;
+        const detail = await apiRequest(buildNodeDashboardRequestUrl(detailEndpoint));
+        if (!detail) return;
+
+        renderDetailTableBody(
+            "detail-tunnels-body",
+            [...(detail.tunnels ?? [])].sort((left, right) => {
+                const leftPingUp = String(left?.ping ?? "").trim().toLowerCase() === "up";
+                const rightPingUp = String(right?.ping ?? "").trim().toLowerCase() === "up";
+                const leftIndex = Number(left?.mate_index);
+                const rightIndex = Number(right?.mate_index);
+                const leftPinned = leftPingUp && leftIndex === 0;
+                const rightPinned = rightPingUp && rightIndex === 0;
+                if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
+                if (leftPingUp !== rightPingUp) return leftPingUp ? -1 : 1;
+                return (Number.isFinite(leftIndex) ? leftIndex : 999999) - (Number.isFinite(rightIndex) ? rightIndex : 999999);
+            }),
+            ["mate_index", "site_name", "mate_site_id", "mate_ip", "tunnel_health", "tx_rate", "rx_rate", "rtt_ms", "ping"],
+            "No tunnel data available.",
+        );
+        renderDetailTableBody(
+            "detail-channels-body",
+            detail.channels ?? [],
+            ["channel", "wan_up", "wan_delay_ms", "public_ip", "tx_rate", "rx_rate", "link_state"],
+            "No channel data available.",
+        );
+
+        // Update timestamps
+        const node = detail.node ?? {};
+        const detailLastRefresh = document.getElementById("detail-last-refresh");
+        const detailLastTelemetry = document.getElementById("detail-last-telemetry");
+        if (detailLastRefresh) detailLastRefresh.textContent = formatDashboardTimestamp(node.last_refresh);
+        if (detailLastTelemetry) detailLastTelemetry.textContent = formatDashboardTimestamp(node.last_telemetry_pull);
+    } catch (e) {
+        // Silently ignore — next SSE event will retry
+    } finally {
+        _detailTableRefreshPending = false;
+    }
 }
 
 
