@@ -31,6 +31,7 @@ from app.seeker_api import (
     get_bwv_cfg,
     get_bwv_stats,
     resolve_site_name_map,
+    seeker_fetch_all,
 )
 from app import state_manager
 
@@ -153,11 +154,8 @@ async def load_node_detail(ps: PollerState, node: Node) -> dict[str, object]:
     node.latency_ms = health["latency_ms"]
     node.last_checked = health["last_checked"]
 
-    cfg_result, stats_result, learnt_routes_result = await asyncio.gather(
-        get_bwv_cfg(node),
-        get_bwv_stats(node),
-        get_bwv_stats(node, extra_args={"learntRoutes": "1"}),
-    )
+    # Single login session for all three data requests (was 3 separate logins)
+    cfg_result, stats_result, learnt_routes_result = await seeker_fetch_all(node)
 
     detail = build_detail_payload(
         node,

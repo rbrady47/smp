@@ -364,12 +364,89 @@ async def login_to_seeker(
             await request_client.aclose()
 
 
+def _make_bwv_request_body(
+    data0: Mapping[str, Any],
+    *,
+    username: str,
+    trans_id: str,
+    trans_id_refresh: str,
+) -> str:
+    """Build the URL-encoded POST body for a BV data request."""
+    serialized = json.dumps(dict(data0), separators=(",", ":"), ensure_ascii=True)
+    return urllib.parse.urlencode({
+        "userName": username,
+        "transId": trans_id,
+        "transIdRefresh": trans_id_refresh,
+        "isAjaxReq": "1",
+        "reqType": "bwv",
+        "data0": serialized,
+    })
+
+
+def _bwv_error(message: str, *, kind: str = "http_error", **extra: Any) -> dict[str, Any]:
+    return {
+        "status": "error",
+        "rc": None,
+        "message": message,
+        "error": {"kind": kind, **extra},
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+async def _post_one_bwv(
+    client: httpx.AsyncClient,
+    base_url: str,
+    data0: Mapping[str, Any],
+    *,
+    username: str,
+    trans_id: str,
+    trans_id_refresh: str,
+    emit_logs: bool = False,
+    node_name: str = "",
+) -> dict[str, Any]:
+    """Execute a single BV data request on an already-authenticated client."""
+    body = _make_bwv_request_body(
+        data0, username=username, trans_id=trans_id, trans_id_refresh=trans_id_refresh,
+    )
+    headers = {
+        "User-Agent": "curl/7.55.1",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+    for request_path in _build_candidate_request_paths():
+        try:
+            if emit_logs:
+                logger.warning("BV request URL for node %s: %s%s", node_name, base_url, request_path)
+            response = await client.post(request_path, headers=headers, content=body)
+            response.raise_for_status()
+            response_text = response.text
+            payload = _safe_json_loads(response_text)
+            if not isinstance(payload, dict):
+                continue
+            rc = payload.get("rc")
+            if rc not in (None, 0, "0"):
+                if emit_logs:
+                    logger.warning("BV raw response for node %s rc=%s: %s", node_name, rc, response_text)
+                continue
+            return {
+                "status": "ok",
+                "rc": 0,
+                "raw": payload,
+                "error": None,
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+            }
+        except httpx.HTTPError:
+            continue
+    return _bwv_error(f"Seeker data request failed at {base_url}")
+
+
 async def _seeker_post_bwv(
     node: Node,
     data0: Mapping[str, Any],
     *,
     emit_logs: bool = False,
 ) -> dict[str, Any]:
+    """Single-request convenience wrapper — login + one data fetch."""
     last_error: dict[str, Any] | None = None
     for base_url in _build_candidate_base_urls(node):
         async with httpx.AsyncClient(
@@ -382,94 +459,57 @@ async def _seeker_post_bwv(
             if login_result.get("status") != "ok":
                 last_error = login_result
                 continue
+            return await _post_one_bwv(
+                client, base_url, data0,
+                username=str(node.api_username),
+                trans_id=login_result["trans_id"],
+                trans_id_refresh=login_result["trans_id_refresh"],
+                emit_logs=emit_logs,
+                node_name=node.name,
+            )
+    return last_error or _bwv_error("Seeker request failed")
 
-            serialized_data0 = json.dumps(dict(data0), separators=(",", ":"), ensure_ascii=True)
-            form_fields = {
-                "userName": str(node.api_username),
-                "transId": str(login_result["trans_id"]),
-                "transIdRefresh": str(login_result["trans_id_refresh"]),
-                "isAjaxReq": "1",
-                "reqType": "bwv",
-                "data0": serialized_data0,
+
+async def seeker_fetch_all(
+    node: Node,
+    *,
+    emit_logs: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Fetch cfg, stats, and learnt-routes with **one login** session.
+
+    Returns (cfg_result, stats_result, learnt_routes_result).
+    Previously each call did its own login — 3 logins per poll.
+    Now it's 1 login + 3 sequential data requests on the same connection.
+    """
+    cfg_data = {"reqType": "bwvCfg"}
+    stats_data: dict[str, Any] = {"reqType": "bwvStats"}
+    routes_data: dict[str, Any] = {"reqType": "bwvStats", "learntRoutes": "1"}
+
+    for base_url in _build_candidate_base_urls(node):
+        async with httpx.AsyncClient(
+            base_url=base_url,
+            timeout=SEEKER_API_TIMEOUT_SECONDS,
+            verify=SEEKER_API_VERIFY_TLS,
+            follow_redirects=True,
+        ) as client:
+            login_result = await login_to_seeker(node, client=client, emit_logs=emit_logs, base_url_label=base_url)
+            if login_result.get("status") != "ok":
+                continue
+
+            common = {
+                "username": str(node.api_username),
+                "trans_id": login_result["trans_id"],
+                "trans_id_refresh": login_result["trans_id_refresh"],
+                "emit_logs": emit_logs,
+                "node_name": node.name,
             }
-            encoded_body = urllib.parse.urlencode(form_fields)
-            headers = {
-                "User-Agent": "curl/7.55.1",
-                "Content-Type": "application/x-www-form-urlencoded",
-                "X-Requested-With": "XMLHttpRequest",
-            }
+            cfg_result = await _post_one_bwv(client, base_url, cfg_data, **common)
+            stats_result = await _post_one_bwv(client, base_url, stats_data, **common)
+            routes_result = await _post_one_bwv(client, base_url, routes_data, **common)
+            return cfg_result, stats_result, routes_result
 
-            for request_path in _build_candidate_request_paths():
-                try:
-                    if emit_logs:
-                        safe_fields = {key: _mask_value(key, value) for key, value in form_fields.items() if key != "data0"}
-                        logger.warning("BV request URL for node %s: %s%s", node.name, base_url, request_path)
-                        logger.warning("BV request form fields for node %s: %s", node.name, safe_fields)
-                        logger.warning("BV request data0 for node %s: %s", node.name, serialized_data0)
-
-                    response = await client.post(request_path, headers=headers, content=encoded_body)
-                    response.raise_for_status()
-                    response_text = response.text
-                    payload = _safe_json_loads(response_text)
-                    if not isinstance(payload, dict):
-                        last_error = {
-                            "status": "error",
-                            "rc": None,
-                            "message": f"Seeker returned non-JSON from {base_url}{request_path}",
-                            "error": {
-                                "kind": "non_json",
-                                "raw_response": response_text,
-                                "attempted_url": f"{base_url}{request_path}",
-                            },
-                            "fetched_at": datetime.now(timezone.utc).isoformat(),
-                        }
-                        continue
-                    rc = payload.get("rc")
-                    if rc not in (None, 0, "0"):
-                        if emit_logs:
-                            logger.warning("BV raw response for node %s rc=%s: %s", node.name, rc, response_text)
-                        last_error = {
-                            "status": "error",
-                            "rc": _safe_int(rc) if _safe_int(rc) is not None else rc,
-                            "message": f"Seeker request failed (rc={rc}) at {base_url}{request_path}",
-                            "raw": payload,
-                            "error": {
-                                "kind": "rc_error",
-                                "raw_response": response_text,
-                                "attempted_url": f"{base_url}{request_path}",
-                            },
-                            "fetched_at": datetime.now(timezone.utc).isoformat(),
-                        }
-                        continue
-                    return {
-                        "status": "ok",
-                        "rc": 0,
-                        "raw": payload,
-                        "error": None,
-                        "fetched_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                except httpx.HTTPError as exc:
-                    last_error = {
-                        "status": "error",
-                        "rc": None,
-                        "message": f"Seeker request failed at {base_url}{request_path}: {exc!r}",
-                        "error": {
-                            "kind": "http_error",
-                            "raw_response": None,
-                            "attempted_url": f"{base_url}{request_path}",
-                        },
-                    }
-                    continue
-
-    return last_error or {
-        "status": "error",
-        "rc": None,
-        "message": "Seeker request failed",
-        "error": {
-            "kind": "http_error",
-            "raw_response": None,
-        },
-    }
+    err = _bwv_error("Seeker login failed — could not authenticate")
+    return err, err, err
 
 
 async def get_bwv_stats(
