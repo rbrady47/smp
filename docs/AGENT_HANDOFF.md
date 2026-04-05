@@ -8,10 +8,21 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
-## 2026-04-05 — Session: Modular Architecture Rebuild (Phase 1–3)
+## 2026-04-05 — Session: Modular Architecture Rebuild (Phases 1–4)
 
 ### Branch / commit
 - Branch: `claude/ecstatic-hamilton-bTOp5`
+
+### Phase 4: Frontend SSE Migration
+- Changed `connectNodeStateStream()` to connect to `/api/stream/events` (all channels) instead of `/api/stream/node-states`
+- Added SSE event handlers: `service_snapshot`, `service_update`, `dn_discovered`, `dn_removed`, `structure_changed`
+- Connected SSE from `DOMContentLoaded` on ALL pages (not just topology)
+- Removed `setInterval` polling for node dashboard, services dashboard, main dashboard, and node detail pages
+- Only topology structure refresh timer remains (safety net for submap/link/DN count re-fetch)
+- Added `_updateNodeDashboardFromSSE()` — updates `currentNodeDashboardPayload` rows in-place and re-renders
+- Added `_updateNodeDetailFromSSE()` — updates detail page summary gauges live from SSE node_update events
+- Added `_rerenderServicesIfVisible()` — re-renders services dashboard/main dashboard services from SSE service_update events
+- `loadServicesDashboard()` now saves payload to `topologyDashboardServicesPayload` for SSE to update
 
 ### Phase 3: Multi-Channel Redis Pub/Sub
 - Extended `app/state_manager.py` with 4 channels: `smp:node-updates`, `smp:services`, `smp:discovery`, `smp:topology-structure`
@@ -26,7 +37,7 @@ This file is the shared handoff log for agents working on SMP.
 - Service snapshot emitted as `service_snapshot` event on SSE connect
 
 ### Next steps
-- Phase 4: Frontend SSE migration — connect to `/api/stream/events`, eliminate all `setInterval` polling
+- Phase 5 (optional): Move seeker cache to Redis for restart recovery
 
 ---
 

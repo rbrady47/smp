@@ -2760,7 +2760,7 @@ function disconnectNodeStateStream() {
 
 function connectNodeStateStream() {
     disconnectNodeStateStream();
-    const es = new EventSource("/api/stream/node-states");
+    const es = new EventSource("/api/stream/events");
 
     es.addEventListener("snapshot", (e) => {
         try {
@@ -2790,8 +2790,48 @@ function connectNodeStateStream() {
         } catch (err) { /* non-fatal */ }
     });
 
+    // --- Service events (Phase 3 channels) ---
+
+    es.addEventListener("service_snapshot", (e) => {
+        try {
+            const data = JSON.parse(e.data);
+            applyServiceSnapshot(data);
+        } catch (err) { /* non-fatal */ }
+    });
+
+    es.addEventListener("service_update", (e) => {
+        try {
+            const { id, state } = JSON.parse(e.data);
+            applyServiceUpdate(id, state);
+        } catch (err) { /* non-fatal */ }
+    });
+
+    // --- Discovery events ---
+
+    es.addEventListener("dn_discovered", (e) => {
+        try {
+            const data = JSON.parse(e.data);
+            applyDnDiscovered(data);
+        } catch (err) { /* non-fatal */ }
+    });
+
+    es.addEventListener("dn_removed", (e) => {
+        try {
+            const { site_id } = JSON.parse(e.data);
+            applyDnRemoved(site_id);
+        } catch (err) { /* non-fatal */ }
+    });
+
+    // --- Topology structure events ---
+
+    es.addEventListener("structure_changed", (e) => {
+        try {
+            const data = JSON.parse(e.data);
+            applyStructureChanged(data);
+        } catch (err) { /* non-fatal */ }
+    });
+
     es.onerror = () => {
-        // EventSource auto-reconnects; show reconnecting indicator
         const ageEl = document.querySelector(".topology-updated-ago");
         if (ageEl) ageEl.textContent = "reconnecting\u2026";
     };
@@ -2822,6 +2862,13 @@ function applyFullSnapshot(data) {
         detectLinkStateChanges();
         renderTopologyStage();
     }
+
+    // Update node dashboard lists if on that page
+    _updateNodeDashboardFromSSE(anchors, discovered);
+
+    // Update node detail page gauges if on that page
+    _updateNodeDetailFromSSE(anchors, discovered);
+
     markTopologyLastUpdated();
 }
 
@@ -2834,13 +2881,19 @@ function applyNodeUpdate(nodeId, state) {
     _prevNodeStates[nodeId] = state;
 
     if (document.getElementById("topology-root")) {
-        // Targeted DOM update for this node
         _updateTopologyEntityDOM(`node-${nodeId}`, state);
         if (statusChanged) {
             detectNodeStateChanges();
             detectLinkStateChanges();
         }
     }
+
+    // Update node dashboard row in-place
+    _updateNodeDashboardFromSSE({ [nodeId]: state }, {});
+
+    // Update node detail page gauges
+    _updateNodeDetailFromSSE({ [nodeId]: state }, {});
+
     markTopologyLastUpdated();
 }
 
@@ -2858,6 +2911,10 @@ function applyDnUpdate(siteId, state) {
             detectLinkStateChanges();
         }
     }
+
+    // Update node dashboard DN row in-place
+    _updateNodeDashboardFromSSE({}, { [siteId]: state });
+
     markTopologyLastUpdated();
 }
 
@@ -2873,6 +2930,166 @@ function applyNodeOffline(nodeId) {
     }
     markTopologyLastUpdated();
 }
+
+
+// --- SSE handlers for service, discovery, and structure events ---
+
+function applyServiceSnapshot(data) {
+    // data is {service_id: state_dict, ...}
+    for (const [svcId, state] of Object.entries(data)) {
+        _applySingleServiceUpdate(svcId, state);
+    }
+    _rerenderServicesIfVisible();
+}
+
+function applyServiceUpdate(id, state) {
+    _applySingleServiceUpdate(id, state);
+    _rerenderServicesIfVisible();
+}
+
+function _applySingleServiceUpdate(id, state) {
+    // Update topologyDashboardServicesPayload.services in-place
+    if (Array.isArray(topologyDashboardServicesPayload?.services)) {
+        const existing = topologyDashboardServicesPayload.services.find(
+            (s) => String(s.id) === String(id),
+        );
+        if (existing) {
+            Object.assign(existing, state);
+        }
+    }
+    // Also update currentServices if loaded (services config page)
+    if (Array.isArray(currentServices)) {
+        const existing = currentServices.find((s) => String(s.id) === String(id));
+        if (existing) {
+            Object.assign(existing, state);
+        }
+    }
+}
+
+function _rerenderServicesIfVisible() {
+    // Services dashboard page
+    const svcBody = document.getElementById("dashboardServicesBody");
+    if (svcBody && !document.getElementById("service-form") && topologyDashboardServicesPayload) {
+        renderDashboardServices(topologyDashboardServicesPayload, { showPin: true });
+    }
+    // Main dashboard services section
+    const mainSvcBody = document.getElementById("mainDashboardServicesBody");
+    if (mainSvcBody && topologyDashboardServicesPayload) {
+        const pinnedIds = new Set(getPinnedServiceIds());
+        renderDashboardServices(topologyDashboardServicesPayload, {
+            bodyId: "mainDashboardServicesBody",
+            errorId: "main-dashboard-services-error",
+            totalId: "main-dashboard-services-total",
+            healthyId: "main-dashboard-services-healthy",
+            degradedId: "main-dashboard-services-degraded",
+            failedId: "main-dashboard-services-failed",
+            showPin: false,
+            filterPinned: true,
+            pinnedServiceIds: [...pinnedIds],
+        });
+    }
+}
+
+function applyDnDiscovered(data) {
+    // A new DN was discovered — if on topology/submap page, trigger a re-fetch
+    if (document.getElementById("topology-root")) {
+        refreshTopologyPage();
+    }
+}
+
+function applyDnRemoved(siteId) {
+    // A DN was removed — if on topology/submap page, trigger a re-fetch
+    if (document.getElementById("topology-root")) {
+        refreshTopologyPage();
+    }
+    // Also remove from node dashboard payload if visible
+    if (currentNodeDashboardPayload?.discovered) {
+        currentNodeDashboardPayload.discovered = currentNodeDashboardPayload.discovered.filter(
+            (d) => String(d.site_id) !== String(siteId),
+        );
+        if (document.getElementById("anchor-node-list") && document.getElementById("discovered-node-list")) {
+            renderNodeDashboardLists(currentNodeDashboardPayload);
+        }
+    }
+}
+
+function applyStructureChanged(data) {
+    // Topology structure changed (node/link/map CRUD) — re-fetch topology
+    if (document.getElementById("topology-root")) {
+        refreshTopologyPage();
+    }
+}
+
+
+function _updateNodeDashboardFromSSE(anchors, discovered) {
+    // Update currentNodeDashboardPayload in-place and re-render if visible
+    const anchorList = document.getElementById("anchor-node-list");
+    const discoveredList = document.getElementById("discovered-node-list");
+    if (!anchorList || !discoveredList) return;
+
+    let changed = false;
+    if (Array.isArray(currentNodeDashboardPayload?.anchors)) {
+        for (const row of currentNodeDashboardPayload.anchors) {
+            const state = anchors[String(row.id)];
+            if (state) {
+                for (const key of Object.keys(state)) {
+                    if (row[key] !== state[key]) {
+                        row[key] = state[key];
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+    if (Array.isArray(currentNodeDashboardPayload?.discovered)) {
+        for (const row of currentNodeDashboardPayload.discovered) {
+            const state = discovered[String(row.site_id)];
+            if (state) {
+                for (const key of Object.keys(state)) {
+                    if (row[key] !== state[key]) {
+                        row[key] = state[key];
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+    if (changed) {
+        renderNodeDashboardLists(currentNodeDashboardPayload);
+    }
+}
+
+function _updateNodeDetailFromSSE(anchors, discovered) {
+    const root = document.getElementById("node-detail-root");
+    if (!root) return;
+
+    const nodeId = root.getAttribute("data-node-id");
+    const detailKind = root.getAttribute("data-detail-kind") || "anchor";
+    if (!nodeId) return;
+
+    let state = null;
+    if (detailKind === "anchor") {
+        state = anchors[String(nodeId)];
+    } else {
+        state = discovered[String(nodeId)];
+    }
+    if (!state) return;
+
+    // Update the summary gauges if they exist
+    const summaryGrid = document.getElementById("detail-summary-grid");
+    if (!summaryGrid) return;
+
+    const summaryData = {
+        tx_bps: state.tx_bps,
+        rx_bps: state.rx_bps,
+        cpu_avg: state.cpu_avg,
+        latency_ms: state.latency_ms,
+        avg_latency_ms: state.avg_latency_ms,
+        rtt_state: state.rtt_state || state.ping_state,
+    };
+    renderNodeSummaryPanel("detail-summary-grid", summaryData, state);
+}
+
 
 function _applyAnchorStateToPayloads(nodeId, state) {
     // Update state in all cached topology payload lists
@@ -3007,46 +3224,14 @@ function applyDashboardRefreshInterval() {
     updateDashboardRefreshButton();
     setDashboardRefreshMenuOpen(false);
 
-    if (seconds > 0 && document.getElementById("anchor-node-list") && document.getElementById("discovered-node-list")) {
-        dashboardRefreshTimer = window.setInterval(() => {
-            loadNodeDashboard();
-        }, seconds * 1000);
-        return;
-    }
-
-    if (seconds > 0 && document.getElementById("nodeGrid")) {
-        dashboardRefreshTimer = window.setInterval(() => {
-            loadNodeDashboard();
-            loadMainDashboard();
-            loadServicesDashboard();
-        }, seconds * 1000);
-        return;
-    }
-
-    if (seconds > 0 && document.getElementById("mainNodeGrid")) {
-        dashboardRefreshTimer = window.setInterval(() => {
-            loadMainDashboard();
-        }, seconds * 1000);
-        return;
-    }
-
-    if (seconds > 0 && document.getElementById("dashboardServicesBody")) {
-        dashboardRefreshTimer = window.setInterval(() => {
-            loadServicesDashboard();
-        }, seconds * 1000);
-        return;
-    }
+    // SSE handles real-time updates for all pages.
+    // The refresh interval is now only used for topology structure
+    // (bulk re-fetch of submaps/links/DN counts) as a safety net.
+    // All other pages receive live updates via SSE events.
 
     if (seconds > 0 && document.getElementById("topology-root")) {
         dashboardRefreshTimer = window.setInterval(() => {
             refreshTopologyStructure();
-        }, seconds * 1000);
-        return;
-    }
-
-    if (seconds > 0 && document.getElementById("node-detail-root")) {
-        dashboardRefreshTimer = window.setInterval(() => {
-            loadNodeDetailPage();
         }, seconds * 1000);
     }
 }
@@ -7921,6 +8106,7 @@ async function loadServicesDashboard() {
 
     try {
         const payload = await apiRequest("/api/dashboard/services");
+        topologyDashboardServicesPayload = payload;
         renderDashboardServices(payload, { showPin: true });
         error.hidden = true;
     } catch (loadError) {
@@ -8383,6 +8569,9 @@ window.addEventListener("DOMContentLoaded", () => {
     safeStart(loadServices, "services");
     safeStart(loadTopologyPage, "topology");
     safeStart(loadNodeDetailPage, "node-detail");
+
+    // Connect SSE for real-time updates on all pages
+    connectNodeStateStream();
 
     const nodeForm = document.getElementById("node-form");
     const serviceForm = document.getElementById("service-form");
