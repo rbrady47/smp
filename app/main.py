@@ -203,7 +203,7 @@ async def _cancel_task(task: asyncio.Task | None) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from app.pollers.ping import ping_monitor_loop
-    from app.pollers.seeker import seeker_polling_loop
+    from app.pollers.seeker import seeker_polling_loop, site_name_resolution_loop
     from app.pollers.dn_seeker import dn_seeker_polling_loop
     from app.pollers.services import service_polling_loop
     from app.pollers.dashboard import node_dashboard_polling_loop
@@ -216,6 +216,7 @@ async def lifespan(app: FastAPI):
 
     _ps.ping_monitor_task = asyncio.create_task(ping_monitor_loop(_ps))
     _ps.seeker_poll_task = asyncio.create_task(seeker_polling_loop(_ps))
+    _ps.site_name_resolution_task = asyncio.create_task(site_name_resolution_loop(_ps))
     _ps.dn_seeker_poll_task = asyncio.create_task(dn_seeker_polling_loop(_ps))
     _ps.service_poll_task = asyncio.create_task(service_polling_loop(_ps))
     _ps.node_dashboard_poll_task = asyncio.create_task(node_dashboard_polling_loop(_ps))
@@ -224,6 +225,7 @@ async def lifespan(app: FastAPI):
 
     await _cancel_task(_ps.ping_monitor_task)
     await _cancel_task(_ps.seeker_poll_task)
+    await _cancel_task(_ps.site_name_resolution_task)
     await _cancel_task(_ps.dn_seeker_poll_task)
     await _cancel_task(_ps.service_poll_task)
     await _cancel_task(_ps.node_dashboard_poll_task)

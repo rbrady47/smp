@@ -59,7 +59,7 @@ async def update_node_state(node_id: int | str, state: dict[str, Any]) -> None:
             "state": state,
         }, default=str))
     except BaseException:
-        logger.debug("Redis write failed for %s", key, exc_info=True)
+        logger.warning("Redis write failed for %s", key, exc_info=True)
 
 
 async def update_dn_state(site_id: str, state: dict[str, Any]) -> None:
@@ -77,7 +77,7 @@ async def update_dn_state(site_id: str, state: dict[str, Any]) -> None:
             "state": state,
         }, default=str))
     except BaseException:
-        logger.debug("Redis write failed for %s", key, exc_info=True)
+        logger.warning("Redis write failed for %s", key, exc_info=True)
 
 
 async def publish_offline(node_type: str, node_id: str) -> None:
@@ -95,7 +95,7 @@ async def publish_offline(node_type: str, node_id: str) -> None:
             "node_type": node_type,
         }))
     except BaseException:
-        logger.debug("Redis offline publish failed for %s", key, exc_info=True)
+        logger.warning("Redis offline publish failed for %s", key, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +117,7 @@ async def publish_service_state(service_id: int, state: dict[str, Any]) -> None:
             "state": state,
         }, default=str))
     except BaseException:
-        logger.debug("Redis write failed for %s", key, exc_info=True)
+        logger.warning("Redis write failed for %s", key, exc_info=True)
 
 
 async def get_all_service_states() -> dict[str, dict[str, Any]]:
@@ -139,7 +139,7 @@ async def get_all_service_states() -> dict[str, dict[str, Any]]:
                 result[svc_id] = json.loads(val)
         return result
     except BaseException:
-        logger.debug("Redis scan failed for service states", exc_info=True)
+        logger.warning("Redis scan failed for service states", exc_info=True)
         return {}
 
 
@@ -156,7 +156,7 @@ async def update_seeker_cache(node_id: int | str, detail: dict[str, Any]) -> Non
     try:
         await r.set(key, json.dumps(detail, default=str), ex=_SEEKER_CACHE_TTL_SECONDS)
     except BaseException:
-        logger.debug("Redis write failed for %s", key, exc_info=True)
+        logger.warning("Redis write failed for %s", key, exc_info=True)
 
 
 async def get_all_seeker_cache() -> dict[str, dict[str, Any]]:
@@ -178,7 +178,7 @@ async def get_all_seeker_cache() -> dict[str, dict[str, Any]]:
                 result[node_id] = json.loads(val)
         return result
     except BaseException:
-        logger.debug("Redis scan failed for seeker cache", exc_info=True)
+        logger.warning("Redis scan failed for seeker cache", exc_info=True)
         return {}
 
 
@@ -202,7 +202,7 @@ async def publish_discovery_event(
             **extra,
         }, default=str))
     except BaseException:
-        logger.debug("Redis discovery publish failed for %s %s", event_type, site_id, exc_info=True)
+        logger.warning("Redis discovery publish failed for %s %s", event_type, site_id, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +221,7 @@ async def publish_topology_change(reason: str, **extra: Any) -> None:
             **extra,
         }, default=str))
     except BaseException:
-        logger.debug("Redis topology publish failed for %s", reason, exc_info=True)
+        logger.warning("Redis topology publish failed for %s", reason, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -268,7 +268,7 @@ async def get_all_node_states() -> dict[str, dict[str, Any]]:
                 result[node_id] = json.loads(val)
         return result
     except BaseException:
-        logger.debug("Redis scan failed for AN states", exc_info=True)
+        logger.warning("Redis scan failed for AN states", exc_info=True)
         return {}
 
 
@@ -290,7 +290,7 @@ async def get_all_dn_states() -> dict[str, dict[str, Any]]:
                 result[site_id] = json.loads(val)
         return result
     except BaseException:
-        logger.debug("Redis scan failed for DN states", exc_info=True)
+        logger.warning("Redis scan failed for DN states", exc_info=True)
         return {}
 
 

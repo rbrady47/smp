@@ -625,13 +625,24 @@ def normalize_bwv_stats(data: dict[str, Any]) -> dict[str, Any]:
     wan_tx_total = _sum_seeker_bytes_list(data.get("totChanBytesTx"))
     wan_rx_total = _sum_seeker_bytes_list(data.get("totChanBytesRx"))
 
+    # Per-channel rates — sum gives aggregate WAN throughput as shown in the
+    # Seeker UI channel table.  txTotRateIf includes all interface traffic
+    # (tunnel + overhead) and may read higher than the channel sum.
+    tx_chan_rates = _as_list(data.get("txChanRate"))
+    rx_chan_rates = _as_list(data.get("rxChanRate"))
+    wan_tx_bps_channels = sum((_safe_int(v) or 0) for v in tx_chan_rates)
+    wan_rx_bps_channels = sum((_safe_int(v) or 0) for v in rx_chan_rates)
+
     return {
         "latency_ms": _safe_int(_first_or_none(data.get("chanWanDelay", []))),
-        # WAN interface rates (txTotRateIf / rxTotRateIf)
+        # WAN interface rates (txTotRateIf / rxTotRateIf) — total including overhead
         "tx_bps": _safe_int(data.get("txTotRateIf")) or 0,
         "rx_bps": _safe_int(data.get("rxTotRateIf")) or 0,
         "wan_tx_bps": _safe_int(data.get("txTotRateIf")) or 0,
         "wan_rx_bps": _safe_int(data.get("rxTotRateIf")) or 0,
+        # WAN channel-sum rates (sum of txChanRate / rxChanRate) — tunnel payload only
+        "wan_tx_bps_channels": wan_tx_bps_channels,
+        "wan_rx_bps_channels": wan_rx_bps_channels,
         # LAN user rates (userRate[0] / userRate[1])
         "lan_tx_bps": lan_tx_bps,
         "lan_rx_bps": lan_rx_bps,

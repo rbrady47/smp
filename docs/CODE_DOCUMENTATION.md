@@ -27,7 +27,8 @@ Browser ──HTTP──> FastAPI (app/main.py)
 
 ### Data Flow
 
-1. **AN Seeker polling** (5s): `seeker_polling_loop()` → `refresh_seeker_detail_for_node()` → `seeker_detail_cache[node.id]`
+1. **AN Seeker polling** (5s, fast path): `seeker_polling_loop()` → `refresh_seeker_detail_for_node()` → `seeker_detail_cache[node.id]` — fetches config/stats/routes only; applies already-known site names from cache
+1b. **Site name resolution** (30s, slow path): `site_name_resolution_loop()` → `resolve_site_name_map()` — probes remote tunnel peers for their site names and patches cached detail in-place
 2. **DN Seeker polling** (5s): `dn_seeker_polling_loop()` → `probe_discovered_node_detail()` → `discovered_node_cache[site_id]`
 3. **Ping monitoring** (5s): `ping_monitor_loop()` → `ping_snapshots[node.id]` / `dn_ping_snapshots[site_id]`
 4. **Service checks** (30s): `service_polling_loop()` → DB updates
@@ -65,7 +66,7 @@ Key functions: `update_node_state()`, `update_dn_state()`, `publish_service_stat
 
 ### `app/poller_state.py`
 
-`PollerState` dataclass holding all mutable in-memory state: 11 cache dicts (ping, seeker, services, DN ping) + task handles + dashboard backend reference. A single instance (`_ps`) is created at module load in `main.py` and passed to every poller and service function.
+`PollerState` dataclass holding all mutable in-memory state: 11 cache dicts (ping, seeker, services, DN ping) + 6 task handles (including `site_name_resolution_task`) + dashboard backend reference. A single instance (`_ps`) is created at module load in `main.py` and passed to every poller and service function.
 
 ### `app/pollers/` (5 files)
 
@@ -74,7 +75,8 @@ Background polling loops, each receiving `PollerState` as first parameter:
 | Module | Loop function | Interval | Purpose |
 |--------|--------------|----------|---------|
 | `ping.py` | `ping_monitor_loop(ps)` | 1s tick | ICMP probes for ANs + DNs |
-| `seeker.py` | `seeker_polling_loop(ps)` | 5s | Seeker API polling per AN |
+| `seeker.py` | `seeker_polling_loop(ps)` | 5s | Seeker API polling per AN (fast path — config/stats only) |
+| `seeker.py` | `site_name_resolution_loop(ps)` | 30s (10s delay) | Remote site-name probes for unknown tunnel peers (slow path) |
 | `dn_seeker.py` | `dn_seeker_polling_loop(ps)` | 5s (10s delay) | DN Seeker API probing |
 | `services.py` | `service_polling_loop(ps)` | 30s | HTTP/DNS service checks |
 | `dashboard.py` | `node_dashboard_polling_loop(ps)` | 1s | Projection build + Redis publish |

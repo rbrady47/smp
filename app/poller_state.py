@@ -44,6 +44,7 @@ class PollerState:
     # --- Background task handles ---
     ping_monitor_task: asyncio.Task | None = field(default=None, repr=False)
     seeker_poll_task: asyncio.Task | None = field(default=None, repr=False)
+    site_name_resolution_task: asyncio.Task | None = field(default=None, repr=False)
     dn_seeker_poll_task: asyncio.Task | None = field(default=None, repr=False)
     service_poll_task: asyncio.Task | None = field(default=None, repr=False)
     node_dashboard_poll_task: asyncio.Task | None = field(default=None, repr=False)

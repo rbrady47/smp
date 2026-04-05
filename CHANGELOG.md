@@ -6,6 +6,15 @@ The format is intentionally simple so diffs stay readable in version control.
 
 ## Unreleased
 
+### Performance
+
+- **Seeker polling fast/slow split:** Moved `resolve_site_name_map` (remote HTTP probes for tunnel-peer site names) out of the 5s seeker polling loop into a separate `site_name_resolution_loop` running every 30s. Poll cycle drops from ~35s to <5s. Site names fill in progressively in the background.
+- **WAN throughput accuracy:** Added `wan_tx_bps_channels` / `wan_rx_bps_channels` (sum of per-channel `txChanRate` / `rxChanRate`) alongside existing `txTotRateIf`-based fields. Channel-sum rates match the Seeker UI; interface-total rates include overhead.
+
+### Fixed
+
+- **Redis logging visibility:** Promoted all Redis failure log messages from `debug` to `warning` in `state_manager.py` so connection/write failures are visible at the default log level.
+
 ### Added
 
 - **Redis cache warm-up (Phase 5):** Seeker detail cache and service status cache are now persisted to Redis with TTL and restored on process restart. Eliminates the ~15s cold-start delay — dashboard shows data immediately after restart instead of waiting for the first polling cycle.

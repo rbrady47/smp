@@ -8,6 +8,48 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-05 — Session: Optimize Seeker Polling Performance
+
+### Branch / commit
+- Branch: `claude/optimize-seeker-polling-jbU5K`
+
+### What was built this session
+
+**Seeker poller fast/slow split**
+- Moved `resolve_site_name_map()` out of the fast 5s `seeker_polling_loop` into a new `site_name_resolution_loop` (30s cadence, 10s startup delay)
+- Fast path: `load_node_detail()` now only applies already-known site names from `_collect_known_site_names()` — zero HTTP overhead
+- Slow path: `site_name_resolution_loop()` walks cached tunnel lists, finds unknown peer site names, probes them, and patches the cache in-place
+- Added timing logs: each poll cycle and resolution cycle logs elapsed time
+- Added `site_name_resolution_task` to `PollerState` and wired into lifespan start/stop
+
+**WAN throughput accuracy**
+- Added `wan_tx_bps_channels` / `wan_rx_bps_channels` to `normalize_bwv_stats()` — sum of per-channel `txChanRate` / `rxChanRate`
+- Existing `wan_tx_bps` / `wan_rx_bps` (from `txTotRateIf` / `rxTotRateIf`) retained — these include interface overhead
+- Channel-sum rates match what the Seeker UI shows per-channel
+
+**Redis logging visibility**
+- Promoted all Redis failure/error log messages in `state_manager.py` from `logger.debug()` to `logger.warning()`
+- Connection failures, write failures, scan failures now visible at default log level
+
+### Files touched
+- `app/pollers/seeker.py` — fast/slow split, `_collect_known_site_names`, `_apply_known_site_names`, `_sort_tunnels`, `site_name_resolution_loop`
+- `app/poller_state.py` — added `site_name_resolution_task`
+- `app/main.py` — wired `site_name_resolution_loop` into lifespan
+- `app/seeker_api.py` — added `wan_tx_bps_channels` / `wan_rx_bps_channels` to `normalize_bwv_stats()`
+- `app/state_manager.py` — promoted Redis failure logs to warning level
+- `docs/USER_GUIDE.md`, `docs/CODE_DOCUMENTATION.md`, `CHANGELOG.md`, `docs/AGENT_HANDOFF.md`
+
+### Verification
+- `python -m compileall app tests alembic` — clean
+- `python -m unittest discover -s tests` — same pre-existing failures (missing deps in env)
+
+### Known gaps / next steps
+- **Schema pass-through:** `wan_tx_bps_channels` / `wan_rx_bps_channels` are available in the normalized stats dict but not yet surfaced in `NodeDashboardAnchorRow` Pydantic schema or the frontend tooltip — add when UI comparison is needed
+- **Seeker UI field mapping:** The Seeker UI "Throughput" column appears to use `txChanRate[i]` per channel; the `txTotRateIf` value is the aggregate interface rate. Operators seeing a mismatch should compare against the channel-sum fields.
+- **Resolution cache persistence:** `REMOTE_SITE_CFG_CACHE` in `seeker_api.py` is in-memory only. Could be moved to Redis for cross-restart persistence.
+
+---
+
 ## 2026-04-05 — Session: Modular Architecture Rebuild (Phases 1–5)
 
 ### Branch / commit
