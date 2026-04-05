@@ -64,9 +64,10 @@ _ps = PollerState()
 
 def _init_dashboard_backend() -> None:
     """Wire the NodeDashboardBackend with callbacks into the poller state."""
+    from app.pollers.dashboard import summarize_dashboard_node as _summarize
     backend = NodeDashboardBackend(
         seeker_detail_cache=_ps.seeker_detail_cache,
-        summarize_dashboard_node=lambda node: summarize_dashboard_node(_ps, node),
+        summarize_dashboard_node=lambda node: _summarize(_ps, node),
         ping_host=ping_host,
         check_tcp_port=check_tcp_port,
         get_bwv_cfg=get_bwv_cfg,
