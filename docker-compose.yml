@@ -3,6 +3,8 @@ services:
     build: .
     ports:
       - "8000:8000"
+    cap_add:
+      - NET_RAW
     environment:
       - DATABASE_URL=postgresql+psycopg://smp:smp@postgres:5432/smp
       - REDIS_URL=redis://redis:6379/0
