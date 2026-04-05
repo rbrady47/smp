@@ -2888,7 +2888,7 @@ function applyNodeUpdate(nodeId, state) {
         }
 
         // Invalidate link stats cache for this node so pinned tooltip gets fresh data
-        topologyLinkStatsCache.delete(Number(nodeId));
+        topologyLinkStatsCache.delete(String(nodeId));
         refreshPinnedLinkTooltip();
     }
 
@@ -6315,14 +6315,15 @@ function flashDiscoveryLinksForEntity(entityId) {
 // --- End discovery link visibility helpers ---
 
 async function fetchTopologyLinkStats(inventoryNodeId) {
-    const cached = topologyLinkStatsCache.get(inventoryNodeId);
-    if (cached && Date.now() - cached.fetchedAt < 10000) {
+    const key = String(inventoryNodeId);
+    const cached = topologyLinkStatsCache.get(key);
+    if (cached && Date.now() - cached.fetchedAt < 4000) {
         return cached.data;
     }
     try {
         const data = await apiRequest(`/api/nodes/${inventoryNodeId}/stats`);
         if (data?.status === "ok") {
-            topologyLinkStatsCache.set(inventoryNodeId, { data, fetchedAt: Date.now() });
+            topologyLinkStatsCache.set(key, { data, fetchedAt: Date.now() });
             return data;
         }
     } catch (error) {
