@@ -18,6 +18,7 @@ from app.models import (
 )
 from app.bwvstats_ingest import collect_bwvstats_phase1, get_raw_bwvstats_snapshots
 from app.schemas import NodeCreate, NodeUpdate
+from app import state_manager
 
 router = APIRouter(prefix="/api")
 
@@ -257,7 +258,9 @@ async def create_node(node_data: NodeCreate, db: Session = Depends(get_db)) -> d
         "ping_state": "unknown",
         "ping_avg_ms": None,
     }
-    return serialize_node(node, pending_health)
+    result = serialize_node(node, pending_health)
+    await state_manager.publish_topology_change("node_created", id=node.id)
+    return result
 
 
 @router.put("/nodes/{node_id}")
@@ -310,4 +313,5 @@ async def delete_node(node_id: int, db: Session = Depends(get_db)) -> Response:
     ping_snapshot_by_node.pop(deleted_node_id, None)
     remaining_nodes = db.scalars(select(Node).order_by(Node.name)).all()
     await node_dashboard_backend.refresh_cache(db, remaining_nodes)
+    await state_manager.publish_topology_change("node_deleted", id=deleted_node_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

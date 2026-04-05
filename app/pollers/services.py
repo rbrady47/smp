@@ -15,6 +15,7 @@ from sqlalchemy import select
 
 from app.db import SessionLocal
 from app.models import ServiceCheck
+from app import state_manager
 
 if TYPE_CHECKING:
     from app.poller_state import PollerState
@@ -184,13 +185,15 @@ async def service_polling_loop(ps: PollerState) -> None:
             results = await asyncio.gather(*(check_service(service) for service in services), return_exceptions=True)
             for service, result in zip(services, results):
                 if isinstance(result, Exception):
-                    ps.service_status_cache[service.id] = build_service_snapshot(
+                    snapshot = build_service_snapshot(
                         service,
                         status="failed",
                         message="Service check failed",
                     )
                 else:
-                    ps.service_status_cache[service.id] = result
+                    snapshot = result
+                ps.service_status_cache[service.id] = snapshot
+                await state_manager.publish_service_state(service.id, snapshot)
 
         await asyncio.sleep(SERVICE_POLL_INTERVAL_SECONDS)
 

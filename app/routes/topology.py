@@ -16,6 +16,7 @@ from app.models import (
 from app.schemas import TopologyEditorStateUpdate, TopologyLinkCreate, TopologyLinkUpdate
 from app.topology import build_mock_topology_payload, build_topology_discovery_payload
 from app.topology_editor_state_service import get_topology_editor_state_payload, upsert_topology_editor_state
+from app import state_manager
 
 router = APIRouter(prefix="/api")
 
@@ -79,6 +80,7 @@ async def create_topology_link(
     db.add(link)
     db.commit()
     db.refresh(link)
+    await state_manager.publish_topology_change("link_created", id=link.id)
     return {
         "id": link.id,
         "source_entity_id": link.source_entity_id,
@@ -104,6 +106,7 @@ async def update_topology_link(
         setattr(link, key, value)
     db.commit()
     db.refresh(link)
+    await state_manager.publish_topology_change("link_updated", id=link.id)
     return {
         "id": link.id,
         "source_entity_id": link.source_entity_id,
@@ -123,8 +126,10 @@ async def delete_topology_link(
     link = db.get(TopologyLink, link_id)
     if not link:
         raise HTTPException(status_code=404, detail="Link not found")
+    deleted_id = link.id
     db.delete(link)
     db.commit()
+    await state_manager.publish_topology_change("link_deleted", id=deleted_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

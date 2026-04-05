@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import DiscoveredNode, DiscoveredNodeObservation, Node, OperationalMapObject, OperationalMapView
 from app.node_discovery_service import _tunnel_row_is_eligible, _tunnel_row_exists
+from app import state_manager
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,7 @@ async def discovered_node_detail(
 async def delete_discovered_node(site_id: str, db: Session = Depends(get_db)) -> Response:
     from app.main import node_dashboard_backend
     node_dashboard_backend.delete_discovered_node(db, site_id)
+    await state_manager.publish_discovery_event("dn_removed", site_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -100,6 +102,8 @@ async def flush_unreachable_discovered_nodes(
         and str(row.get("ping") or "").strip().lower() != "up"
     ]
     deleted_site_ids = node_dashboard_backend.delete_discovered_nodes(db, unreachable_site_ids)
+    for sid in deleted_site_ids:
+        await state_manager.publish_discovery_event("dn_removed", sid)
     return {
         "deleted_site_ids": deleted_site_ids,
         "deleted_count": len(deleted_site_ids),
@@ -409,6 +413,16 @@ async def get_submap_discovery(
             db.add(obs)
 
     db.commit()
+
+    # Publish discovery events for newly-discovered peers
+    for peer in discovered_peers:
+        await state_manager.publish_discovery_event(
+            "dn_discovered",
+            str(peer["site_id"]),
+            name=str(peer.get("name") or ""),
+            host=str(peer.get("host") or ""),
+            map_view_id=map_view_id,
+        )
 
     persisted_dns = db.scalars(
         select(DiscoveredNode).where(DiscoveredNode.map_view_id == map_view_id)

@@ -42,6 +42,27 @@ Browser ──HTTP──> FastAPI (app/main.py)
 
 Thin application entry point. Creates a `PollerState` instance, initializes the `NodeDashboardBackend`, starts/stops background polling loops via a FastAPI lifespan context manager, and mounts route modules. Also exports backward-compatible wrapper functions so route modules can import directly from `app.main`.
 
+### `app/state_manager.py`
+
+Multi-channel Redis pub/sub layer. Publishes state changes to 4 channels:
+
+| Channel | Events | Publishers |
+|---------|--------|-----------|
+| `smp:node-updates` | `node_update`, `dn_update`, `node_offline` | Dashboard poller |
+| `smp:services` | `service_update` | Service poller |
+| `smp:discovery` | `dn_discovered`, `dn_removed` | Discovery routes |
+| `smp:topology-structure` | `structure_changed` | Node/link/map CRUD routes |
+
+Key functions: `update_node_state()`, `update_dn_state()`, `publish_service_state()`, `publish_discovery_event()`, `publish_topology_change()`, `subscribe_channels()`.
+
+### SSE Endpoints
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/stream/events?channels=...` | Unified SSE — subscribes to specified channels (defaults to all) |
+| `GET /api/stream/node-states` | Legacy — node state changes only |
+| `GET /api/node-dashboard/stream` | Legacy — poll-based dashboard snapshot |
+
 ### `app/poller_state.py`
 
 `PollerState` dataclass holding all mutable in-memory state: 11 cache dicts (ping, seeker, services, DN ping) + task handles + dashboard backend reference. A single instance (`_ps`) is created at module load in `main.py` and passed to every poller and service function.

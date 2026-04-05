@@ -8,6 +8,28 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-05 — Session: Modular Architecture Rebuild (Phase 1–3)
+
+### Branch / commit
+- Branch: `claude/ecstatic-hamilton-bTOp5`
+
+### Phase 3: Multi-Channel Redis Pub/Sub
+- Extended `app/state_manager.py` with 4 channels: `smp:node-updates`, `smp:services`, `smp:discovery`, `smp:topology-structure`
+- Added `publish_service_state()`, `publish_discovery_event()`, `publish_topology_change()`
+- Added `subscribe_channels()` for multi-channel pub/sub subscription
+- Added `get_all_service_states()` for service snapshot on SSE connect
+- Wired service poller (`app/pollers/services.py`) to publish after each check
+- Wired discovery routes to publish `dn_discovered`/`dn_removed`
+- Wired topology link CRUD + map CRUD + node create/delete to publish `structure_changed`
+- Created unified SSE endpoint `GET /api/stream/events?channels=node-states,services,discovery,topology-structure`
+- Kept legacy `/api/stream/node-states` as backward-compatible alias
+- Service snapshot emitted as `service_snapshot` event on SSE connect
+
+### Next steps
+- Phase 4: Frontend SSE migration — connect to `/api/stream/events`, eliminate all `setInterval` polling
+
+---
+
 ## 2026-04-05 — Session: Modular Architecture Rebuild (Phase 1 + Phase 2)
 
 ### Branch / commit

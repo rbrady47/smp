@@ -16,6 +16,7 @@ from app.schemas import (
     OperationalMapViewUpdate,
 )
 import app.operational_map_service as operational_map_service
+from app import state_manager
 
 router = APIRouter(prefix="/api")
 
@@ -30,7 +31,9 @@ async def create_map_view(
     payload: OperationalMapViewCreate,
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    return operational_map_service.create_map_view(payload, db)
+    result = operational_map_service.create_map_view(payload, db)
+    await state_manager.publish_topology_change("map_created", id=result.get("id"))
+    return result
 
 
 @router.get("/topology/maps/{map_view_id}")
@@ -56,6 +59,7 @@ async def delete_map_view(
     db: Session = Depends(get_db),
 ) -> Response:
     operational_map_service.delete_map_view(map_view_id, db)
+    await state_manager.publish_topology_change("map_deleted", id=map_view_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

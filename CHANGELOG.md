@@ -6,6 +6,10 @@ The format is intentionally simple so diffs stay readable in version control.
 
 ## Unreleased
 
+### Added
+
+- **Multi-channel Redis pub/sub (Phase 3):** Extended `state_manager.py` with 3 new channels (`smp:services`, `smp:discovery`, `smp:topology-structure`) and corresponding publish functions. Service poller now publishes after each check cycle. Discovery routes publish `dn_discovered`/`dn_removed` events. Topology/node/map CRUD routes publish `structure_changed` events. New unified SSE endpoint `GET /api/stream/events?channels=...` subscribes to any combination of channels. Legacy `/api/stream/node-states` preserved as alias.
+
 ### Refactored
 
 - **Poller + service extraction (Phase 2):** Extracted all 5 polling loops, health/service functions, and dashboard logic from `app/main.py` into `app/pollers/` (5 files) and `app/services/node_health.py`. Introduced `app/poller_state.py` — a PollerState dataclass that owns all mutable in-memory state. Converted startup/shutdown to FastAPI lifespan context manager. Main.py reduced from ~1,250 to 221 lines.

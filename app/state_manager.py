@@ -1,8 +1,14 @@
 """Dual-write state manager: in-memory caches + optional Redis pub/sub.
 
-Publishes node state changes to a Redis channel so SSE endpoints can push
+Publishes state changes to Redis channels so SSE endpoints can push
 updates without polling.  If Redis is unavailable, all operations are no-ops
 and the in-memory path continues unaffected.
+
+Channels:
+  smp:node-updates        — AN/DN state changes (status, RTT, bandwidth)
+  smp:services            — service check result changes
+  smp:discovery           — DN discovered/removed events
+  smp:topology-structure  — structural changes (node/link/map CRUD)
 """
 
 from __future__ import annotations
@@ -18,9 +24,23 @@ logger = logging.getLogger(__name__)
 # Redis key patterns and configuration
 _AN_KEY_PREFIX = "smp:node:"
 _DN_KEY_PREFIX = "smp:dn:"
-_CHANNEL = "smp:node-updates"
-_DEFAULT_TTL_SECONDS = 30  # 2x the 15s poll interval
+_SVC_KEY_PREFIX = "smp:service:"
 
+# Channel names
+CHANNEL_NODE_STATES = "smp:node-updates"
+CHANNEL_SERVICES = "smp:services"
+CHANNEL_DISCOVERY = "smp:discovery"
+CHANNEL_TOPOLOGY_STRUCTURE = "smp:topology-structure"
+
+ALL_CHANNELS = [CHANNEL_NODE_STATES, CHANNEL_SERVICES, CHANNEL_DISCOVERY, CHANNEL_TOPOLOGY_STRUCTURE]
+
+_DEFAULT_TTL_SECONDS = 30  # 2x the 15s poll interval
+_SERVICE_TTL_SECONDS = 60  # 2x the 30s service check interval
+
+
+# ---------------------------------------------------------------------------
+# Node state (AN + DN) — existing
+# ---------------------------------------------------------------------------
 
 async def update_node_state(node_id: int | str, state: dict[str, Any]) -> None:
     """Write AN state to Redis with TTL and publish a change event."""
@@ -31,7 +51,7 @@ async def update_node_state(node_id: int | str, state: dict[str, Any]) -> None:
     payload = json.dumps(state, default=str)
     try:
         await r.set(key, payload, ex=_DEFAULT_TTL_SECONDS)
-        await r.publish(_CHANNEL, json.dumps({
+        await r.publish(CHANNEL_NODE_STATES, json.dumps({
             "type": "node_update",
             "id": str(node_id),
             "state": state,
@@ -49,7 +69,7 @@ async def update_dn_state(site_id: str, state: dict[str, Any]) -> None:
     payload = json.dumps(state, default=str)
     try:
         await r.set(key, payload, ex=_DEFAULT_TTL_SECONDS)
-        await r.publish(_CHANNEL, json.dumps({
+        await r.publish(CHANNEL_NODE_STATES, json.dumps({
             "type": "dn_update",
             "id": site_id,
             "state": state,
@@ -67,7 +87,7 @@ async def publish_offline(node_type: str, node_id: str) -> None:
     key = f"{prefix}{node_id}"
     try:
         await r.delete(key)
-        await r.publish(_CHANNEL, json.dumps({
+        await r.publish(CHANNEL_NODE_STATES, json.dumps({
             "type": "node_offline",
             "id": str(node_id),
             "node_type": node_type,
@@ -76,8 +96,98 @@ async def publish_offline(node_type: str, node_id: str) -> None:
         logger.debug("Redis offline publish failed for %s", key, exc_info=True)
 
 
+# ---------------------------------------------------------------------------
+# Service state — new
+# ---------------------------------------------------------------------------
+
+async def publish_service_state(service_id: int, state: dict[str, Any]) -> None:
+    """Write service check state to Redis and publish a change event."""
+    r = await get_redis()
+    if r is None:
+        return
+    key = f"{_SVC_KEY_PREFIX}{service_id}"
+    payload = json.dumps(state, default=str)
+    try:
+        await r.set(key, payload, ex=_SERVICE_TTL_SECONDS)
+        await r.publish(CHANNEL_SERVICES, json.dumps({
+            "type": "service_update",
+            "id": service_id,
+            "state": state,
+        }, default=str))
+    except Exception:
+        logger.debug("Redis write failed for %s", key, exc_info=True)
+
+
+async def get_all_service_states() -> dict[str, dict[str, Any]]:
+    """Read all service states from Redis. Returns {service_id: state_dict}."""
+    r = await get_redis()
+    if r is None:
+        return {}
+    try:
+        keys: list[str] = []
+        async for key in r.scan_iter(match=f"{_SVC_KEY_PREFIX}*", count=500):
+            keys.append(key)
+        if not keys:
+            return {}
+        values = await r.mget(keys)
+        result: dict[str, dict[str, Any]] = {}
+        for key, val in zip(keys, values):
+            if val is not None:
+                svc_id = key.removeprefix(_SVC_KEY_PREFIX)
+                result[svc_id] = json.loads(val)
+        return result
+    except Exception:
+        logger.debug("Redis scan failed for service states", exc_info=True)
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# Discovery events — new
+# ---------------------------------------------------------------------------
+
+async def publish_discovery_event(
+    event_type: str,
+    site_id: str,
+    **extra: Any,
+) -> None:
+    """Publish a discovery event (dn_discovered, dn_removed)."""
+    r = await get_redis()
+    if r is None:
+        return
+    try:
+        await r.publish(CHANNEL_DISCOVERY, json.dumps({
+            "type": event_type,
+            "site_id": site_id,
+            **extra,
+        }, default=str))
+    except Exception:
+        logger.debug("Redis discovery publish failed for %s %s", event_type, site_id, exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# Topology structure events — new
+# ---------------------------------------------------------------------------
+
+async def publish_topology_change(reason: str, **extra: Any) -> None:
+    """Publish a topology structure change event."""
+    r = await get_redis()
+    if r is None:
+        return
+    try:
+        await r.publish(CHANNEL_TOPOLOGY_STRUCTURE, json.dumps({
+            "type": "structure_changed",
+            "reason": reason,
+            **extra,
+        }, default=str))
+    except Exception:
+        logger.debug("Redis topology publish failed for %s", reason, exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# Read helpers — existing
+# ---------------------------------------------------------------------------
+
 async def get_node_state(node_id: int | str) -> dict[str, Any] | None:
-    """Read a single AN state from Redis."""
     r = await get_redis()
     if r is None:
         return None
@@ -89,7 +199,6 @@ async def get_node_state(node_id: int | str) -> dict[str, Any] | None:
 
 
 async def get_dn_state(site_id: str) -> dict[str, Any] | None:
-    """Read a single DN state from Redis."""
     r = await get_redis()
     if r is None:
         return None
@@ -101,7 +210,6 @@ async def get_dn_state(site_id: str) -> dict[str, Any] | None:
 
 
 async def get_all_node_states() -> dict[str, dict[str, Any]]:
-    """Read all AN states from Redis.  Returns {node_id: state_dict}."""
     r = await get_redis()
     if r is None:
         return {}
@@ -124,7 +232,6 @@ async def get_all_node_states() -> dict[str, dict[str, Any]]:
 
 
 async def get_all_dn_states() -> dict[str, dict[str, Any]]:
-    """Read all DN states from Redis.  Returns {site_id: state_dict}."""
     r = await get_redis()
     if r is None:
         return {}
@@ -146,18 +253,34 @@ async def get_all_dn_states() -> dict[str, dict[str, Any]]:
         return {}
 
 
-async def subscribe_state_changes() -> AsyncIterator[dict[str, Any]]:
-    """Yield state change events from Redis pub/sub.
+# ---------------------------------------------------------------------------
+# Subscriptions
+# ---------------------------------------------------------------------------
 
-    Each yielded dict has keys: type, id, state (or node_type for offline).
-    Raises if Redis is unavailable.
+async def subscribe_state_changes() -> AsyncIterator[dict[str, Any]]:
+    """Yield state change events from the node-updates channel.
+
+    Kept for backward compatibility with /api/stream/node-states.
+    """
+    async for event in subscribe_channels([CHANNEL_NODE_STATES]):
+        yield event
+
+
+async def subscribe_channels(
+    channels: list[str] | None = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Yield events from one or more Redis pub/sub channels.
+
+    If channels is None, subscribes to ALL_CHANNELS.
+    Each yielded dict includes the decoded JSON payload from the channel.
     """
     r = await get_redis()
     if r is None:
         raise RuntimeError("Redis unavailable for pub/sub subscription")
+    target_channels = channels or ALL_CHANNELS
     pubsub = r.pubsub()
     try:
-        await pubsub.subscribe(_CHANNEL)
+        await pubsub.subscribe(*target_channels)
         async for message in pubsub.listen():
             if message["type"] != "message":
                 continue
@@ -166,5 +289,5 @@ async def subscribe_state_changes() -> AsyncIterator[dict[str, Any]]:
             except (json.JSONDecodeError, TypeError):
                 continue
     finally:
-        await pubsub.unsubscribe(_CHANNEL)
+        await pubsub.unsubscribe(*target_channels)
         await pubsub.aclose()
