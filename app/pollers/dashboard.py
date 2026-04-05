@@ -209,11 +209,18 @@ async def refresh_node_dashboard_cache_once(ps: PollerState) -> None:
 
 
 async def _publish_dashboard_to_redis(ps: PollerState) -> None:
-    cache = ps.dashboard_backend.node_dashboard_cache
-    for anchor in cache.get("anchors") or []:
+    """Publish windowed dashboard rows to Redis for SSE delivery.
+
+    Uses ``get_cached_payload()`` so that ``rtt_state`` and other
+    windowed metrics are recomputed before publishing.  Previously
+    we published the raw cache rows, which had stale ``rtt_state``
+    values that caused nodes to stay yellow after RTT recovered.
+    """
+    payload = ps.dashboard_backend.get_cached_payload()
+    for anchor in payload.get("anchors") or []:
         if isinstance(anchor, dict) and anchor.get("id"):
             await state_manager.update_node_state(anchor["id"], anchor)
-    for dn in cache.get("discovered") or []:
+    for dn in payload.get("discovered") or []:
         if isinstance(dn, dict) and dn.get("site_id"):
             await state_manager.update_dn_state(dn["site_id"], dn)
 
