@@ -87,14 +87,17 @@ def _stringify(value: Any) -> str:
 
 
 def _format_rate(value: Any) -> str:
+    """Format a Seeker rate value (in kbps) as a human-readable string."""
     parsed = _safe_float(value)
     if parsed is None:
         return "--"
-    if parsed >= 1_000_000:
-        return f"{parsed / 1_000_000:.1f} Mbps"
-    if parsed >= 1_000:
-        return f"{parsed / 1_000:.1f} Kbps"
-    return f"{parsed:.0f} bps"
+    # Seeker rate fields are in kbps — convert to bps for display
+    bps = parsed * 1000
+    if bps >= 1_000_000:
+        return f"{bps / 1_000_000:.1f} Mbps"
+    if bps >= 1_000:
+        return f"{bps / 1_000:.1f} Kbps"
+    return f"{bps:.0f} bps"
 
 
 def _format_bitmap(value: Any) -> str:
@@ -647,6 +650,14 @@ def _sum_seeker_bytes_list(values: Any) -> str:
 
 
 def normalize_bwv_stats(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize raw bwvStats into a standard dict.
+
+    All Seeker rate fields (txTotRateIf, rxTotRateIf, txChanRate,
+    rxChanRate, userRate) are in **kbps**.  We multiply by 1000 to
+    convert to bps so the frontend ``formatRate()`` displays correctly.
+    """
+    KBPS = 1000  # Seeker rate fields are in kbps; multiply to get bps
+
     cpu = data.get("cpuCoreUtil", [])
     cpu_values = []
     if isinstance(cpu, list):
@@ -658,8 +669,8 @@ def normalize_bwv_stats(data: dict[str, Any]) -> dict[str, Any]:
     cpu_avg = sum(cpu_values) / len(cpu_values) if cpu_values else None
 
     user_rate = data.get("userRate", [])
-    lan_tx_bps = _safe_int(user_rate[0]) or 0 if isinstance(user_rate, list) and len(user_rate) > 0 else 0
-    lan_rx_bps = _safe_int(user_rate[1]) or 0 if isinstance(user_rate, list) and len(user_rate) > 1 else 0
+    lan_tx_bps = ((_safe_int(user_rate[0]) or 0) * KBPS) if isinstance(user_rate, list) and len(user_rate) > 0 else 0
+    lan_rx_bps = ((_safe_int(user_rate[1]) or 0) * KBPS) if isinstance(user_rate, list) and len(user_rate) > 1 else 0
 
     tot_user = data.get("totUserBytes", [])
     lan_tx_total = str(tot_user[0]).strip() if isinstance(tot_user, list) and len(tot_user) > 0 else "--"
@@ -673,16 +684,16 @@ def normalize_bwv_stats(data: dict[str, Any]) -> dict[str, Any]:
     # (tunnel + overhead) and may read higher than the channel sum.
     tx_chan_rates = _as_list(data.get("txChanRate"))
     rx_chan_rates = _as_list(data.get("rxChanRate"))
-    wan_tx_bps_channels = sum((_safe_int(v) or 0) for v in tx_chan_rates)
-    wan_rx_bps_channels = sum((_safe_int(v) or 0) for v in rx_chan_rates)
+    wan_tx_bps_channels = sum((_safe_int(v) or 0) for v in tx_chan_rates) * KBPS
+    wan_rx_bps_channels = sum((_safe_int(v) or 0) for v in rx_chan_rates) * KBPS
 
     return {
         "latency_ms": _safe_int(_first_or_none(data.get("chanWanDelay", []))),
         # WAN interface rates (txTotRateIf / rxTotRateIf) — total including overhead
-        "tx_bps": _safe_int(data.get("txTotRateIf")) or 0,
-        "rx_bps": _safe_int(data.get("rxTotRateIf")) or 0,
-        "wan_tx_bps": _safe_int(data.get("txTotRateIf")) or 0,
-        "wan_rx_bps": _safe_int(data.get("rxTotRateIf")) or 0,
+        "tx_bps": (_safe_int(data.get("txTotRateIf")) or 0) * KBPS,
+        "rx_bps": (_safe_int(data.get("rxTotRateIf")) or 0) * KBPS,
+        "wan_tx_bps": (_safe_int(data.get("txTotRateIf")) or 0) * KBPS,
+        "wan_rx_bps": (_safe_int(data.get("rxTotRateIf")) or 0) * KBPS,
         # WAN channel-sum rates (sum of txChanRate / rxChanRate) — tunnel payload only
         "wan_tx_bps_channels": wan_tx_bps_channels,
         "wan_rx_bps_channels": wan_rx_bps_channels,
