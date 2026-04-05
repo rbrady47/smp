@@ -1310,17 +1310,17 @@ function getTopologyAnchorTooltipMarkup(entity) {
                 <span class="topology-node-tooltip-label">RTT</span>
                 <span class="topology-node-tooltip-value" data-tooltip-rtt>${escapeHtml(rttText)}</span>
                 <span class="topology-node-tooltip-label">WAN TX / RX</span>
-                <span class="topology-node-tooltip-value">${escapeHtml(`${wanTxText} / ${wanRxText}`)}</span>
+                <span class="topology-node-tooltip-value" data-tooltip-wan-txrx>${escapeHtml(`${wanTxText} / ${wanRxText}`)}</span>
                 <span class="topology-node-tooltip-label">LAN TX / RX</span>
-                <span class="topology-node-tooltip-value">${escapeHtml(`${lanTxText} / ${lanRxText}`)}</span>
+                <span class="topology-node-tooltip-value" data-tooltip-lan-txrx>${escapeHtml(`${lanTxText} / ${lanRxText}`)}</span>
                 <span class="topology-node-tooltip-label">WAN Total</span>
-                <span class="topology-node-tooltip-value">${escapeHtml(`↑${wanTxTotal} / ↓${wanRxTotal}`)}</span>
+                <span class="topology-node-tooltip-value" data-tooltip-wan-total>${escapeHtml(`↑${wanTxTotal} / ↓${wanRxTotal}`)}</span>
                 <span class="topology-node-tooltip-label">LAN Total</span>
-                <span class="topology-node-tooltip-value">${escapeHtml(`↑${lanTxTotal} / ↓${lanRxTotal}`)}</span>
+                <span class="topology-node-tooltip-value" data-tooltip-lan-total>${escapeHtml(`↑${lanTxTotal} / ↓${lanRxTotal}`)}</span>
                 <span class="topology-node-tooltip-label">CPU</span>
-                <span class="topology-node-tooltip-value">${escapeHtml(cpuText)}</span>
+                <span class="topology-node-tooltip-value" data-tooltip-cpu>${escapeHtml(cpuText)}</span>
                 <span class="topology-node-tooltip-label">Version</span>
-                <span class="topology-node-tooltip-value">${escapeHtml(versionText)}</span>
+                <span class="topology-node-tooltip-value" data-tooltip-version>${escapeHtml(versionText)}</span>
             </span>
         </span>
     `;
@@ -1373,7 +1373,7 @@ function getTopologyDiscoveredTooltipMarkup(entity) {
                 <span class="topology-node-tooltip-label">Avg RTT</span>
                 <span class="topology-node-tooltip-value">${escapeHtml(avgRttText)}</span>
                 <span class="topology-node-tooltip-label">TX / RX</span>
-                <span class="topology-node-tooltip-value">${escapeHtml(`${txText} / ${rxText}`)}</span>
+                <span class="topology-node-tooltip-value" data-tooltip-txrx>${escapeHtml(`${txText} / ${rxText}`)}</span>
                 <span class="topology-node-tooltip-label">Owner AN</span>
                 <span class="topology-node-tooltip-value">${escapeHtml(sourceName)}</span>
             </span>
@@ -2902,6 +2902,11 @@ function _applyAnchorStateToPayloads(nodeId, state) {
                 if (state.web_ok !== undefined) node.web_ok = state.web_ok;
                 if (state.ssh_ok !== undefined) node.ssh_ok = state.ssh_ok;
                 if (state.ping_ok !== undefined) node.ping_ok = state.ping_ok;
+                if (state.wan_tx_total !== undefined) node.wan_tx_total = state.wan_tx_total;
+                if (state.wan_rx_total !== undefined) node.wan_rx_total = state.wan_rx_total;
+                if (state.lan_tx_total !== undefined) node.lan_tx_total = state.lan_tx_total;
+                if (state.lan_rx_total !== undefined) node.lan_rx_total = state.lan_rx_total;
+                if (state.version !== undefined) node.version = state.version;
             }
         }
     }
@@ -2947,6 +2952,49 @@ function _updateTopologyEntityDOM(entityId, state) {
         badge.className = `topology-status-badge ${state.status}`;
         badge.textContent = state.status;
     }
+
+    // Update WAN TX/RX
+    const wanTxRx = el.querySelector("[data-tooltip-wan-txrx]");
+    if (wanTxRx && (state.wan_tx_bps !== undefined || state.wan_rx_bps !== undefined)) {
+        wanTxRx.textContent = `${formatRate(state.wan_tx_bps || 0)} / ${formatRate(state.wan_rx_bps || 0)}`;
+    }
+
+    // Update LAN TX/RX
+    const lanTxRx = el.querySelector("[data-tooltip-lan-txrx]");
+    if (lanTxRx && (state.lan_tx_bps !== undefined || state.lan_rx_bps !== undefined)) {
+        lanTxRx.textContent = `${formatRate(state.lan_tx_bps || 0)} / ${formatRate(state.lan_rx_bps || 0)}`;
+    }
+
+    // Update WAN Total
+    const wanTotal = el.querySelector("[data-tooltip-wan-total]");
+    if (wanTotal && (state.wan_tx_total !== undefined || state.wan_rx_total !== undefined)) {
+        wanTotal.textContent = `↑${state.wan_tx_total || "--"} / ↓${state.wan_rx_total || "--"}`;
+    }
+
+    // Update LAN Total
+    const lanTotal = el.querySelector("[data-tooltip-lan-total]");
+    if (lanTotal && (state.lan_tx_total !== undefined || state.lan_rx_total !== undefined)) {
+        lanTotal.textContent = `↑${state.lan_tx_total || "--"} / ↓${state.lan_rx_total || "--"}`;
+    }
+
+    // Update CPU
+    const cpu = el.querySelector("[data-tooltip-cpu]");
+    if (cpu && state.cpu_avg !== undefined) {
+        cpu.textContent = typeof state.cpu_avg === "number" && Number.isFinite(state.cpu_avg)
+            ? `${Math.round(state.cpu_avg)}%` : "--";
+    }
+
+    // Update Version
+    const version = el.querySelector("[data-tooltip-version]");
+    if (version && state.version !== undefined) {
+        version.textContent = String(state.version || "--").trim() || "--";
+    }
+
+    // Update DN TX/RX
+    const txrx = el.querySelector("[data-tooltip-txrx]");
+    if (txrx && (state.tx_display !== undefined || state.rx_display !== undefined)) {
+        txrx.textContent = `${state.tx_display || "--"} / ${state.rx_display || "--"}`;
+    }
 }
 
 function applyDashboardRefreshInterval() {
@@ -2991,7 +3039,7 @@ function applyDashboardRefreshInterval() {
 
     if (seconds > 0 && document.getElementById("topology-root")) {
         dashboardRefreshTimer = window.setInterval(() => {
-            refreshTopologyPage();
+            refreshTopologyStructure();
         }, seconds * 1000);
         return;
     }
@@ -7298,6 +7346,81 @@ async function refreshTopologyPage() {
         markTopologyLastUpdated();
     } catch (error) {
         console.error("Unable to refresh topology", error);
+    }
+}
+
+async function refreshTopologyStructure() {
+    const root = document.getElementById("topology-root");
+    if (!root) return;
+    if (topologyState.dragging) return;
+
+    const submapId = root.getAttribute("data-map-view-id");
+    if (submapId) {
+        await refreshSubmapDiscovery(submapId);
+        if (topologyPayload) renderTopologyStage();
+        return;
+    }
+
+    try {
+        const [topologyResult, discoveryResult, dashboardServicesResult] = await Promise.allSettled([
+            apiRequest(buildNodeDashboardRequestUrl("/api/topology")),
+            apiRequest(buildNodeDashboardRequestUrl("/api/topology/discovery")),
+            apiRequest("/api/dashboard/services"),
+        ]);
+
+        if (topologyResult.status === "fulfilled") {
+            topologyPayload = topologyResult.value;
+        }
+        if (discoveryResult.status === "fulfilled") {
+            topologyDiscoveryPayload = discoveryResult.value;
+        }
+        if (dashboardServicesResult.status === "fulfilled") {
+            topologyDashboardServicesPayload = dashboardServicesResult.value;
+        }
+
+        if (topologyState.demoMode !== "off") {
+            topologyState.demoSnapshot = buildTopologyDemoSnapshot(topologyState.demoMode);
+        }
+
+        if (topologyPayload) {
+            renderTopologyControls();
+            renderTopologyStage();
+
+            const submaps = topologyPayload.submaps ?? [];
+            if (submaps.length > 0) {
+                const countPromises = submaps.map(async (sm) => {
+                    try {
+                        const disc = await apiRequest(`/api/topology/maps/${encodeURIComponent(sm.map_view_id)}/discovery`);
+                        const peers = disc?.discovered_peers ?? [];
+                        const placedSiteIds = new Set(
+                            (topologyPayload.lvl0_nodes ?? []).map((e) => e.site_id).filter(Boolean)
+                        );
+                        const upNames = [];
+                        const downNames = [];
+                        for (const p of peers) {
+                            if (placedSiteIds.has(p.site_id)) continue;
+                            if ((p.ping || "").toLowerCase() === "up") {
+                                upNames.push(p.site_id);
+                            } else {
+                                downNames.push(p.site_id);
+                            }
+                        }
+                        sm.dn_up = upNames.length;
+                        sm.dn_down = downNames.length;
+                        sm.dn_up_names = upNames;
+                        sm.dn_down_names = downNames;
+                        _submapDnCountCache.set(sm.map_view_id, {
+                            dn_up: sm.dn_up, dn_down: sm.dn_down,
+                            dn_up_names: upNames, dn_down_names: downNames,
+                        });
+                    } catch (_e) { /* keep backend counts as fallback */ }
+                });
+                await Promise.allSettled(countPromises);
+                renderTopologyStage();
+            }
+        }
+    } catch (error) {
+        console.error("Unable to refresh topology structure", error);
     }
 }
 
