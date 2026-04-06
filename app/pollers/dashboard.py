@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import logging
 from typing import TYPE_CHECKING
 
@@ -208,32 +209,62 @@ async def refresh_node_dashboard_cache_once(ps: PollerState) -> None:
         db.close()
 
 
-async def _publish_dashboard_to_redis(ps: PollerState) -> None:
-    """Publish windowed dashboard rows to Redis for SSE delivery.
+_SSE_AN_FIELDS = (
+    "status", "ping_state", "rtt_state", "latency_ms", "avg_latency_ms",
+    "tx_bps", "rx_bps", "wan_tx_bps", "wan_rx_bps", "lan_tx_bps", "lan_rx_bps",
+    "cpu_avg", "web_ok", "ssh_ok", "ping_ok", "version",
+)
+_SSE_DN_FIELDS = (
+    "ping", "ping_state", "rtt_state", "latency_ms", "avg_latency_ms",
+    "tx_bps", "rx_bps",
+)
 
-    Uses ``get_cached_payload()`` so that ``rtt_state`` and other
-    windowed metrics are recomputed before publishing.  Previously
-    we published the raw cache rows, which had stale ``rtt_state``
-    values that caused nodes to stay yellow after RTT recovered.
+
+def _slim_anchor(row: dict) -> dict:
+    return {k: row[k] for k in _SSE_AN_FIELDS if k in row}
+
+
+def _slim_dn(row: dict) -> dict:
+    return {k: row[k] for k in _SSE_DN_FIELDS if k in row}
+
+
+async def _publish_dashboard_to_redis(ps: PollerState) -> None:
+    """Publish slimmed dashboard snapshot to Redis for SSE delivery.
+
+    Only includes the dynamic fields the frontend needs for real-time
+    topology/dashboard updates.  Static fields (name, host, location,
+    etc.) are fetched once on page load via the REST API.
     """
     payload = ps.dashboard_backend.get_cached_payload()
-    for anchor in payload.get("anchors") or []:
-        if isinstance(anchor, dict) and anchor.get("id"):
-            await state_manager.update_node_state(anchor["id"], anchor)
-    for dn in payload.get("discovered") or []:
-        if isinstance(dn, dict) and dn.get("site_id"):
-            await state_manager.update_dn_state(dn["site_id"], dn)
+    anchors = {
+        str(a["id"]): _slim_anchor(a) for a in (payload.get("anchors") or [])
+        if isinstance(a, dict) and a.get("id")
+    }
+    discovered = {
+        str(d["site_id"]): _slim_dn(d) for d in (payload.get("discovered") or [])
+        if isinstance(d, dict) and d.get("site_id")
+    }
+    await state_manager.publish_dashboard_snapshot(anchors, discovered)
 
 
 def get_serialized_node_dashboard_cache(ps: PollerState, window_seconds: int | None = None) -> dict[str, object]:
     return ps.dashboard_backend.get_serialized_cache(normalize_node_dashboard_window(window_seconds))
 
 
+_DASHBOARD_SSE_PUBLISH_INTERVAL = 10.0  # Publish SSE snapshot every 10s (matches seeker poll)
+_last_sse_publish_at: float = 0.0
+
+
 async def node_dashboard_polling_loop(ps: PollerState) -> None:
+    global _last_sse_publish_at
     while True:
         try:
             await refresh_node_dashboard_cache_once(ps)
-            await _publish_dashboard_to_redis(ps)
+            # Publish SSE snapshot at a fixed interval, not every cycle
+            now = time.monotonic()
+            if now - _last_sse_publish_at >= _DASHBOARD_SSE_PUBLISH_INTERVAL:
+                _last_sse_publish_at = now
+                await _publish_dashboard_to_redis(ps)
         except Exception:
             logger.exception("Node dashboard cache refresh failed")
             ps.dashboard_backend.mark_cache_refresh_failed()

@@ -75,6 +75,17 @@ let topologyEditorStateLoaded = false;
 let topologyEditorStateSaveTimer = null;
 let topologyRefreshTimer = null;
 const topologyLinkStatsCache = new Map();
+
+// Throttle link tooltip refresh to avoid flooding the browser with HTTP requests
+let _linkTooltipRefreshTimer = null;
+function _throttledLinkTooltipRefresh() {
+    if (_linkTooltipRefreshTimer) return;
+    _linkTooltipRefreshTimer = setTimeout(() => {
+        _linkTooltipRefreshTimer = null;
+        refreshPinnedLinkTooltip();
+    }, 5000);
+}
+
 const topologyNetworkStateLog = (() => {
     try {
         const raw = localStorage.getItem("smp-topology-state-log");
@@ -2782,6 +2793,10 @@ function disconnectNodeStateStream() {
 }
 
 function connectNodeStateStream() {
+    // Guard: only one SSE connection at a time
+    if (nodeStateEventSource && nodeStateEventSource.readyState !== EventSource.CLOSED) {
+        return;
+    }
     disconnectNodeStateStream();
     const es = new EventSource("/api/stream/events");
 
@@ -2857,6 +2872,11 @@ function connectNodeStateStream() {
     es.onerror = () => {
         const ageEl = document.querySelector(".topology-updated-ago");
         if (ageEl) ageEl.textContent = "reconnecting\u2026";
+        // Close and reconnect manually with a delay to prevent rapid reconnect loops.
+        // The default EventSource auto-reconnect can flood the connection pool.
+        es.close();
+        nodeStateEventSource = null;
+        setTimeout(() => connectNodeStateStream(), 10000);
     };
 
     es.onopen = () => {
@@ -2910,15 +2930,17 @@ function applyNodeUpdate(nodeId, state) {
             detectLinkStateChanges();
         }
 
-        // Invalidate all link stats so pinned tooltip gets fresh data on next fetch
-        topologyLinkStatsCache.clear();
-        refreshPinnedLinkTooltip();
+        // Only refresh link tooltip if one is actually pinned
+        if (topologyState.pinnedLinkTooltipId) {
+            topologyLinkStatsCache.clear();
+            _throttledLinkTooltipRefresh();
+        }
     }
 
     // Update node dashboard row in-place
     _updateNodeDashboardFromSSE({ [nodeId]: state }, {});
 
-    // Update node detail page gauges
+    // Update node detail page gauges (no HTTP fetch — just DOM updates)
     _updateNodeDetailFromSSE({ [nodeId]: state }, {});
 
     markTopologyLastUpdated();
@@ -7711,40 +7733,6 @@ async function refreshTopologyPage() {
         if (topologyPayload) {
             renderTopologyControls();
             renderTopologyStage();
-
-            // Fetch accurate DN counts from discovery endpoints for each submap
-            const submaps = topologyPayload.submaps ?? [];
-            if (submaps.length > 0) {
-                const countPromises = submaps.map(async (sm) => {
-                    try {
-                        const disc = await apiRequest(`/api/topology/maps/${encodeURIComponent(sm.map_view_id)}/discovery`);
-                        const peers = disc?.discovered_peers ?? [];
-                        const placedSiteIds = new Set(
-                            (topologyPayload.lvl0_nodes ?? []).map((e) => e.site_id).filter(Boolean)
-                        );
-                        const upNames = [];
-                        const downNames = [];
-                        for (const p of peers) {
-                            if (placedSiteIds.has(p.site_id)) continue;
-                            if ((p.ping || "").toLowerCase() === "up") {
-                                upNames.push(p.site_id);
-                            } else {
-                                downNames.push(p.site_id);
-                            }
-                        }
-                        sm.dn_up = upNames.length;
-                        sm.dn_down = downNames.length;
-                        sm.dn_up_names = upNames;
-                        sm.dn_down_names = downNames;
-                        _submapDnCountCache.set(sm.map_view_id, {
-                            dn_up: sm.dn_up, dn_down: sm.dn_down,
-                            dn_up_names: upNames, dn_down_names: downNames,
-                        });
-                    } catch (_e) { /* keep backend counts as fallback */ }
-                });
-                await Promise.allSettled(countPromises);
-                renderTopologyStage();
-            }
         }
         markTopologyLastUpdated();
     } catch (error) {
@@ -7759,7 +7747,7 @@ async function refreshTopologyStructure() {
 
     const submapId = root.getAttribute("data-map-view-id");
     if (submapId) {
-        await refreshSubmapDiscovery(submapId);
+        // Submap discovery is loaded once on page load — don't re-fetch on timer
         if (topologyPayload) renderTopologyStage();
         return;
     }
@@ -7788,39 +7776,7 @@ async function refreshTopologyStructure() {
         if (topologyPayload) {
             renderTopologyControls();
             renderTopologyStage();
-
-            const submaps = topologyPayload.submaps ?? [];
-            if (submaps.length > 0) {
-                const countPromises = submaps.map(async (sm) => {
-                    try {
-                        const disc = await apiRequest(`/api/topology/maps/${encodeURIComponent(sm.map_view_id)}/discovery`);
-                        const peers = disc?.discovered_peers ?? [];
-                        const placedSiteIds = new Set(
-                            (topologyPayload.lvl0_nodes ?? []).map((e) => e.site_id).filter(Boolean)
-                        );
-                        const upNames = [];
-                        const downNames = [];
-                        for (const p of peers) {
-                            if (placedSiteIds.has(p.site_id)) continue;
-                            if ((p.ping || "").toLowerCase() === "up") {
-                                upNames.push(p.site_id);
-                            } else {
-                                downNames.push(p.site_id);
-                            }
-                        }
-                        sm.dn_up = upNames.length;
-                        sm.dn_down = downNames.length;
-                        sm.dn_up_names = upNames;
-                        sm.dn_down_names = downNames;
-                        _submapDnCountCache.set(sm.map_view_id, {
-                            dn_up: sm.dn_up, dn_down: sm.dn_down,
-                            dn_up_names: upNames, dn_down_names: downNames,
-                        });
-                    } catch (_e) { /* keep backend counts as fallback */ }
-                });
-                await Promise.allSettled(countPromises);
-                renderTopologyStage();
-            }
+            // Submap DN counts use localStorage cache — no per-submap fetch here
         }
     } catch (error) {
         console.error("Unable to refresh topology structure", error);
@@ -7919,8 +7875,7 @@ function startTopologyTimers() {
     // Structure refresh — user-selected interval (new nodes, links, submaps)
     applyDashboardRefreshInterval();
 
-    // Real-time node status — SSE stream (replaces 2s ping polling)
-    connectNodeStateStream();
+    // SSE is connected once at DOMContentLoaded for ALL pages — don't reconnect here
 
     // "Updated X ago" counter — ticks every second (local clock, no fetch)
     if (topologyLastUpdatedTimer) clearInterval(topologyLastUpdatedTimer);
