@@ -209,20 +209,23 @@ async def refresh_node_dashboard_cache_once(ps: PollerState) -> None:
 
 
 async def _publish_dashboard_to_redis(ps: PollerState) -> None:
-    """Publish windowed dashboard rows to Redis for SSE delivery.
+    """Publish windowed dashboard state to Redis for SSE delivery.
 
-    Uses ``get_cached_payload()`` so that ``rtt_state`` and other
-    windowed metrics are recomputed before publishing.  Previously
-    we published the raw cache rows, which had stale ``rtt_state``
-    values that caused nodes to stay yellow after RTT recovered.
+    Publishes a single batched snapshot instead of per-node events.
+    With N anchors + M discovered nodes, per-node publishing generated
+    N+M SSE events every second — overwhelming the browser.  A single
+    snapshot event keeps the SSE stream lean regardless of node count.
     """
     payload = ps.dashboard_backend.get_cached_payload()
-    for anchor in payload.get("anchors") or []:
-        if isinstance(anchor, dict) and anchor.get("id"):
-            await state_manager.update_node_state(anchor["id"], anchor)
-    for dn in payload.get("discovered") or []:
-        if isinstance(dn, dict) and dn.get("site_id"):
-            await state_manager.update_dn_state(dn["site_id"], dn)
+    anchors = {
+        str(a["id"]): a for a in (payload.get("anchors") or [])
+        if isinstance(a, dict) and a.get("id")
+    }
+    discovered = {
+        str(d["site_id"]): d for d in (payload.get("discovered") or [])
+        if isinstance(d, dict) and d.get("site_id")
+    }
+    await state_manager.publish_dashboard_snapshot(anchors, discovered)
 
 
 def get_serialized_node_dashboard_cache(ps: PollerState, window_seconds: int | None = None) -> dict[str, object]:

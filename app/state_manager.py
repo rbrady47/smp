@@ -99,6 +99,32 @@ async def publish_offline(node_type: str, node_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Dashboard snapshot — batched publish (replaces per-node events)
+# ---------------------------------------------------------------------------
+
+async def publish_dashboard_snapshot(
+    anchors: dict[str, Any],
+    discovered: dict[str, Any],
+) -> None:
+    """Publish the full dashboard state as a single event.
+
+    This replaces the per-node update_node_state/update_dn_state calls
+    that were generating N+M events per second.
+    """
+    r = await get_redis()
+    if r is None:
+        return
+    try:
+        await r.publish(CHANNEL_NODE_STATES, json.dumps({
+            "type": "snapshot",
+            "anchors": anchors,
+            "discovered": discovered,
+        }, default=str))
+    except BaseException:
+        logger.warning("Redis dashboard snapshot publish failed", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
 # Service state — new
 # ---------------------------------------------------------------------------
 
