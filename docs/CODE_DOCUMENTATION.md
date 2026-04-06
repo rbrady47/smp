@@ -33,7 +33,59 @@ Browser ──HTTP──> FastAPI (app/main.py)
 3. **Ping monitoring** (5s): `ping_monitor_loop()` → `ping_snapshots[node.id]` / `dn_ping_snapshots[site_id]`
 4. **Service checks** (30s): `service_polling_loop()` → DB updates
 5. **Dashboard projection** (5s): `node_dashboard_polling_loop()` → combines caches into dashboard payload
-6. **Frontend refresh** (user-selected): polls `/api/topology/maps/{id}/discovery` → renders topology + discovery links
+6. **Frontend refresh** (user-selected): topology structure + ping status via timer; submap discovery loaded once on page load only (cached in localStorage)
+
+---
+
+## Performance Anti-Patterns (CRITICAL)
+
+These patterns caused severe production performance problems. They are documented here as mandatory constraints for all future development.
+
+### 1. NEVER publish per-node SSE events in a loop
+
+**Wrong:** Iterating over N nodes and calling `publish_node_state()` for each one in the dashboard poller.
+
+**Right:** Build a single batched snapshot and publish it once via `publish_dashboard_snapshot()`. Per-node publishing with N nodes generates N events/second per connected browser, exhausting EventSource connections and flooding the frontend.
+
+**Where enforced:** `app/pollers/dashboard.py` — `_publish_dashboard_to_redis()` publishes a single snapshot via `publish_dashboard_snapshot()`. The `_DASHBOARD_SSE_PUBLISH_INTERVAL = 10.0` constant ensures publishing only happens every 10s, not on every 1s poller tick.
+
+### 2. NEVER fetch per-submap endpoints on a timer
+
+**Wrong:** Calling `/api/topology/maps/{id}/discovery` for every submap inside `refreshTopologyStructure()` or `refreshTopologyPage()` timer callbacks.
+
+**Right:** Fetch submap discovery once on page load, cache the results in `_submapDnCountCache` (localStorage). Timer/SSE callbacks must not re-fetch per-submap endpoints. With S submaps and a T-second timer, this creates O(S/T) requests per second — scaling linearly with both submap count and timer frequency.
+
+**Where enforced:** `static/js/app.js` — submap discovery fetched once at page load only.
+
+### 3. NEVER publish SSE events from a GET endpoint
+
+**Wrong:** Publishing `dn_discovered` events for ALL peers inside the `GET /api/discovered-nodes` or `GET /api/topology/maps/{id}/discovery` handler.
+
+**Right:** Only publish events for genuinely new data (e.g., `newly_created_site_ids` set). When a GET endpoint publishes events, the frontend receives the event, re-fetches the same endpoint, which publishes more events — creating an infinite feedback loop.
+
+**Where enforced:** `app/routes/discovery.py` — `dn_discovered` events only fire for peers in `newly_created_site_ids`.
+
+### 4. SSE connections must be guarded
+
+**Wrong:** Relying on the browser's built-in EventSource auto-reconnect (retries immediately, no backoff, no duplicate guard).
+
+**Right:** Guard `connectNodeStateStream()` with a `readyState !== CLOSED` check before opening. On `onerror`, explicitly close the connection and reconnect manually after a delay (currently 10s). Never call `connectNodeStateStream()` from timer callbacks — connect once at `DOMContentLoaded`.
+
+**Where enforced:** `static/js/app.js` — `connectNodeStateStream()` has readyState guard and manual 10s reconnect.
+
+### 5. Seeker rate fields are Bytes/s
+
+All Seeker API rate fields (`txChanRate`, `rxChanRate`, `txTotRateIf`, `rxTotRateIf`) return values in **Bytes per second**. The `netIfSpeed` field confirms this (100000 = 100 Mbps = 12500000 Bytes/s when the unit is Bytes). Multiply by 8 to convert to bits/s for display.
+
+**Where enforced:** `app/seeker_api.py` — `normalize_bwv_stats()` and `_format_rate()` apply the x8 conversion.
+
+### 6. Seeker API: use single-session login
+
+**Wrong:** Making 3 separate `seeker_post_bwv()` calls per node per cycle (each one logs in independently). With 20+ concurrent polls, this triggers Seeker rate limiting on the login endpoint.
+
+**Right:** Use `seeker_fetch_all(node)` which performs 1 login + 3 sequential data requests on the same httpx session. The old `_seeker_post_bwv()` is kept only for single-request use cases (site-name resolution, DN probing).
+
+**Where enforced:** `app/pollers/seeker.py` — `refresh_seeker_detail_for_node()` calls `seeker_fetch_all()`.
 
 ---
 
@@ -83,7 +135,13 @@ Background polling loops, each receiving `PollerState` as first parameter:
 | `seeker.py` | `site_name_resolution_loop(ps)` | 30s (10s delay) | Remote site-name probes for unknown tunnel peers (slow path) |
 | `dn_seeker.py` | `dn_seeker_polling_loop(ps)` | 5s (10s delay) | DN Seeker API probing |
 | `services.py` | `service_polling_loop(ps)` | 30s | HTTP/DNS service checks |
-| `dashboard.py` | `node_dashboard_polling_loop(ps)` | 1s | Projection build + Redis publish (SSE snapshot every 10s) |
+| `dashboard.py` | `node_dashboard_polling_loop(ps)` | 1s | Projection build + Redis publish (SSE snapshot every 10s via slim payload) |
+
+`dashboard.py` details:
+- `_publish_dashboard_to_redis()` uses `get_cached_payload()` (windowed) instead of raw cache, so `rtt_state` recovers correctly from yellow
+- Publishes a single batched snapshot via `publish_dashboard_snapshot()` — NOT per-node events (see Anti-Pattern #1)
+- `_DASHBOARD_SSE_PUBLISH_INTERVAL = 10.0` — only publishes when 10s have elapsed since last publish
+- `_slim_anchor()` / `_slim_dn()` strip payloads to ~16 dynamic fields for SSE (was 50+)
 
 Also contains stateless helpers: `ping_host`, `check_tcp_port`, `compute_node_status`, `summarize_dashboard_node`, `merge_service_payload`, etc.
 
@@ -104,7 +162,7 @@ Route modules split by domain. Each creates an `APIRouter` and is included in `m
 | `dashboard.py` | `/api` | `/api/dashboard/nodes`, `/api/node-dashboard` |
 | `topology.py` | `/api` | `/api/topology`, links CRUD, editor-state |
 | `maps.py` | `/api` | `/api/topology/maps` CRUD, objects, links, bindings |
-| `discovery.py` | `/api` | `/api/discovered-nodes`, submap discovery |
+| `discovery.py` | `/api` | `/api/discovered-nodes`, submap discovery (events only for new peers — see Anti-Pattern #3) |
 | `stream.py` | `/api` | SSE endpoints (`/api/stream/node-states`, `/api/node-dashboard/stream`) |
 
 **Constants (lines ~85-95):**
@@ -216,11 +274,14 @@ Key schemas:
 Seeker device API integration over HTTPS.
 
 Key functions:
-- `get_bwv_cfg(node)` — async, fetches config from Seeker API
-- `get_bwv_stats(node)` — async, fetches stats (tunnels, channels, bandwidth)
-- `normalize_bwv_stats(raw)` — extracts WAN/LAN tx/rx rates, CPU, site count
+- `seeker_fetch_all(node)` — **primary entry point for polling**: 1 login + 3 sequential data requests (config, stats, routes) on a single httpx session. See Anti-Pattern #6.
+- `_build_candidate_base_urls(node)` — returns only the operator-configured scheme (no scheme fallback — previously tried both http/https, causing `http://host:443` errors)
+- `normalize_bwv_stats(raw)` — extracts WAN/LAN tx/rx rates, CPU, site count. Rate fields are Bytes/s; applies x8 conversion for bits/s (see Anti-Pattern #5). Produces `wan_tx_bps_channels` / `wan_rx_bps_channels` (sum of per-channel rates).
+- `_format_rate(value)` — formats rate with x8 Bytes-to-bits conversion
 - `build_detail_payload(node, ...)` — assembles full node detail from config + stats + routes
 - `build_dashboard_link_status(tunnels)` — computes link health from tunnel data
+- `_seeker_post_bwv(node, body)` — single-request convenience wrapper, kept for site-name resolution and DN probing only
+- Helper functions: `_make_bwv_request_body()`, `_bwv_error()`, `_post_one_bwv()`
 
 ---
 
@@ -330,6 +391,16 @@ Single monolithic JS file. No build system, no modules, vanilla JS.
 - `topologyNodeDashboardPayload` — current node dashboard data
 - `_submapDnCountCache` — localStorage-backed cache for per-submap DN counts (keyed by `map_view_id`, stores `{dn_up, dn_down, dn_up_names, dn_down_names}`). Survives page refreshes. Populated by discovery endpoint fetches, read at render time.
 
+**SSE connection management:**
+- `connectNodeStateStream()` — connects to `/api/stream/events` (all channels) once at `DOMContentLoaded` for all pages
+- Guarded: checks `readyState !== CLOSED` before opening a new EventSource to prevent duplicate connections
+- Manual reconnect: `onerror` handler closes the connection and reconnects after 10s delay (does NOT rely on EventSource auto-reconnect, which retries immediately and floods the server)
+- NOT called from `startTopologyTimers()` — SSE is a one-time connection, not per-timer
+- `_updateNodeDetailFromSSE()` — re-fetches full detail and re-renders tunnels/channels tables (debounced via `_detailTableRefreshPending`)
+- `applyNodeUpdate()` — clears link stats cache and calls `_throttledLinkTooltipRefresh()` for pinned tooltips
+- `_throttledLinkTooltipRefresh()` — setTimeout(5000) gate; only fires when a tooltip is actually pinned, prevents rapid HTTP requests during SSE bursts
+- Link stats cache key normalized to String, TTL reduced from 10s to 4s
+
 **Discovery link visibility system (~lines 5500-5600):**
 
 Links are SVG `<line>` elements rebuilt every render cycle. Visibility is managed via CSS classes:
@@ -361,7 +432,7 @@ When SVG links are created in `drawTopologyLinks()`, links for pinned nodes or e
 - Cluster scales via `scaleFactor = min(1, 0.35 + (total / 20) * 0.65)` — small counts cluster tight, large counts fill the viewBox
 - Radial SVG glow behind mesh scales with cluster dimensions
 - DN data read from `_submapDnCountCache` (localStorage), falling back to backend payload
-- Per-refresh cycle: `refreshTopologyPage()` fetches `/api/topology/maps/{id}/discovery` per submap in parallel, counts peers by ping status, updates localStorage cache
+- Submap discovery fetched once on page load only (not on timer/SSE cycles — see Performance Anti-Patterns #2); results cached in `_submapDnCountCache` (localStorage)
 - `renameTopologySubmap(entity)` — right-click rename handler (edit mode only), calls `PUT /api/topology/maps/{id}` with new name
 
 **DN hover tooltip:**
@@ -400,7 +471,7 @@ When SVG links are created in `drawTopologyLinks()`, links for pinned nodes or e
 **AN tooltips:** Hidden inside submap views; only DN tooltips are shown.
 
 **`refreshSubmapDiscovery(submapViewId)`:**
-Called on every frontend refresh cycle. Fetches discovery data, builds DN entities, auto-places new DNs using radial spiral, builds discovery link objects (AN→DN and DN→DN with geometry-based AP assignment and deduplication), detects state changes, and triggers flash animations.
+Called once on page load (not on timer/SSE cycles — see Anti-Pattern #2). Fetches discovery data, builds DN entities, auto-places new DNs using radial spiral, builds discovery link objects (AN→DN and DN→DN with geometry-based AP assignment and deduplication), detects state changes, and triggers flash animations.
 
 ---
 
@@ -474,4 +545,4 @@ Three themes: light, dark, vader. All CSS variables.
 
 ---
 
-*Last updated: 2026-04-01*
+*Last updated: 2026-04-06*

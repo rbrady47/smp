@@ -8,6 +8,36 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-06 — Session: Final Documentation Pass (Both PRs Merged to Main)
+
+### Branch / commit
+- Branch: `main` (both PRs merged)
+- PR #1: `claude/optimize-seeker-polling-jbU5K` — Seeker Polling Optimization
+- PR #2: `bugfix/session-fixes` — SSE Connection Flood & Feedback Loop Fixes
+
+### What was done
+Documentation-only session. Updated `docs/CODE_DOCUMENTATION.md` with a **Performance Anti-Patterns** warnings section codifying the six patterns that caused severe production problems across both PRs. These warnings are intended to prevent regressions by future developers or agents. Also updated SSE and dashboard poller documentation to reflect batched publishing and 10s publish interval.
+
+### Files touched
+- `docs/AGENT_HANDOFF.md` — this consolidated entry
+- `docs/CODE_DOCUMENTATION.md` — added Performance Anti-Patterns section; updated SSE/dashboard docs
+- `CHANGELOG.md` — verified complete (both PRs already documented under Unreleased)
+- `docs/USER_GUIDE.md` — verified complete (no operator-visible changes needed)
+
+### Summary of both PRs (for future reference)
+
+**PR #1 (Seeker Polling Optimization)** touched: `app/pollers/seeker.py`, `app/seeker_api.py`, `app/state_manager.py`, `app/main.py`, `app/poller_state.py`, `app/pollers/dashboard.py`, `static/js/app.js`, `app/routes/pages.py`, `docker-compose.yml`
+
+**PR #2 (SSE Connection Flood & Feedback Loop Fixes)** touched: `static/js/app.js`, `app/routes/discovery.py`
+
+### Known gaps / next steps
+- SSE reconnect uses fixed 10s delay — could add exponential backoff for prolonged outages
+- Submap discovery is loaded once on page load; if a submap is created mid-session, its discovery data won't appear until next page load
+- `wan_tx_bps_channels` / `wan_rx_bps_channels` not yet surfaced in Pydantic schema or frontend tooltip
+- `REMOTE_SITE_CFG_CACHE` in `seeker_api.py` is in-memory only — could be moved to Redis for cross-restart persistence
+
+---
+
 ## 2026-04-06 — Session: SSE Connection Flood & Feedback Loop Fixes
 
 ### Branch / commit
