@@ -8,6 +8,54 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-06 — Session: SSE Connection Flood & Feedback Loop Fixes
+
+### Branch / commit
+- Branch: `bugfix/session-fixes` (merged to `main`)
+
+### What was built this session
+
+**SSE connection flood fix (static/js/app.js)**
+- `connectNodeStateStream()` now checks `readyState !== CLOSED` before opening a new EventSource — prevents duplicate connections
+- SSE `onerror` handler closes the connection and manually reconnects after 10s instead of relying on EventSource auto-reconnect (which retries immediately and floods the server)
+- Removed `connectNodeStateStream()` call from `startTopologyTimers()` — SSE is connected once at DOMContentLoaded for all pages, not re-opened per timer start
+
+**Per-submap fetch storm fix (static/js/app.js)**
+- Removed per-submap `/api/topology/maps/{id}/discovery` fetch from `refreshTopologyStructure()` — was firing on every timer tick
+- Removed per-submap `/api/topology/maps/{id}/discovery` fetch from `refreshTopologyPage()` — same issue on both main map and submap paths
+- Submap discovery data is now loaded once on page load only, not re-fetched on timer/SSE cycles
+
+**Discovery feedback loop fix (app/routes/discovery.py)**
+- `dn_discovered` events now only published for genuinely new peers (tracked via `newly_created_site_ids` set)
+- Previously, the GET endpoint published events for ALL peers on every request, creating an infinite fetch-event-fetch loop
+
+**Link tooltip throttling (static/js/app.js)**
+- `_throttledLinkTooltipRefresh()` uses setTimeout(5000) — only refreshes when a tooltip is actually pinned
+- Prevents rapid-fire tooltip HTTP requests during SSE update bursts
+
+### Files touched
+- `static/js/app.js` — SSE guard, manual reconnect, removed per-submap fetches from timers, throttled link tooltip
+- `app/routes/discovery.py` — feedback loop fix (only publish for new peers)
+
+### Verification
+- `python -m compileall app tests alembic` — clean
+- `python -m unittest discover -s tests` — same pre-existing state
+
+### Performance warnings documented
+These patterns caused severe production problems and must not be reintroduced:
+1. **NEVER publish per-node SSE events in a loop** — use batched snapshots
+2. **NEVER fetch per-submap endpoints on a timer** — fetch once on page load, cache results
+3. **NEVER publish SSE events from a GET endpoint** — creates feedback loops
+4. **SSE connections must be guarded** — EventSource auto-reconnects aggressively; use manual reconnect with backoff
+5. **Seeker rate fields are Bytes/s** — multiply by 8 for bits/s display
+6. **Seeker API: use single-session login** — concurrent logins trigger rate limiting
+
+### Known gaps / next steps
+- SSE reconnect uses fixed 10s delay — could add exponential backoff for prolonged outages
+- Submap discovery is loaded once on page load; if a submap is created mid-session, its discovery data won't appear until next page load
+
+---
+
 ## 2026-04-05 — Session: Optimize Seeker Polling Performance
 
 ### Branch / commit

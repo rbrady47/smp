@@ -6,6 +6,14 @@ The format is intentionally simple so diffs stay readable in version control.
 
 ## Unreleased
 
+### Fixed
+
+- **SSE connection flood:** `connectNodeStateStream()` now guards against duplicate connections and uses manual reconnect with 10s delay instead of EventSource auto-reconnect (which retries immediately).
+- **Per-submap fetch storm:** Removed per-submap `/api/topology/maps/{id}/discovery` fetches from `refreshTopologyStructure()` and `refreshTopologyPage()` timer callbacks. Submap discovery is loaded once on page load only.
+- **Discovery feedback loop:** `dn_discovered` events in `discovery.py` now only fire for genuinely new peers, not all peers on every GET request. Eliminates infinite fetch-event-fetch cycle.
+- **Link tooltip flood:** Added `_throttledLinkTooltipRefresh()` with 5s setTimeout so pinned link tooltips don't fire rapid HTTP requests during SSE update bursts.
+- **SSE reconnect from topology timers:** Removed `connectNodeStateStream()` from `startTopologyTimers()` — SSE connects once at DOMContentLoaded, not on every timer start.
+
 ### Performance
 
 - **Seeker polling fast/slow split:** Moved `resolve_site_name_map` (remote HTTP probes for tunnel-peer site names) out of the 5s seeker polling loop into a separate `site_name_resolution_loop` running every 30s. Poll cycle drops from ~35s to <5s. Site names fill in progressively in the background.

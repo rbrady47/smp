@@ -1,6 +1,6 @@
 # SMP Code Documentation
 
-> Current state as of 2026-04-05 — branch `claude/ecstatic-hamilton-bTOp5`
+> Current state as of 2026-04-06 — branch `main`
 
 ---
 
@@ -54,7 +54,11 @@ Multi-channel Redis pub/sub layer. Publishes state changes to 4 channels:
 | `smp:discovery` | `dn_discovered`, `dn_removed` | Discovery routes |
 | `smp:topology-structure` | `structure_changed` | Node/link/map CRUD routes |
 
-Key functions: `update_node_state()`, `update_dn_state()`, `publish_service_state()`, `publish_discovery_event()`, `publish_topology_change()`, `subscribe_channels()`.
+Key functions: `update_node_state()`, `update_dn_state()`, `publish_service_state()`, `publish_discovery_event()`, `publish_topology_change()`, `publish_dashboard_snapshot()`, `subscribe_channels()`.
+
+**`publish_dashboard_snapshot(payload)`** — publishes a single batched SSE event containing the full dashboard state. Used by `_publish_dashboard_to_redis()` instead of per-node events.
+
+**Logging:** All Redis failure logs use `logger.warning()` (not debug) so connection/write problems are visible at the default log level.
 
 ### SSE Endpoints
 
@@ -79,7 +83,7 @@ Background polling loops, each receiving `PollerState` as first parameter:
 | `seeker.py` | `site_name_resolution_loop(ps)` | 30s (10s delay) | Remote site-name probes for unknown tunnel peers (slow path) |
 | `dn_seeker.py` | `dn_seeker_polling_loop(ps)` | 5s (10s delay) | DN Seeker API probing |
 | `services.py` | `service_polling_loop(ps)` | 30s | HTTP/DNS service checks |
-| `dashboard.py` | `node_dashboard_polling_loop(ps)` | 1s | Projection build + Redis publish |
+| `dashboard.py` | `node_dashboard_polling_loop(ps)` | 1s | Projection build + Redis publish (SSE snapshot every 10s) |
 
 Also contains stateless helpers: `ping_host`, `check_tcp_port`, `compute_node_status`, `summarize_dashboard_node`, `merge_service_payload`, etc.
 
