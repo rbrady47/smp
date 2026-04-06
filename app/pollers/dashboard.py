@@ -232,11 +232,29 @@ def get_serialized_node_dashboard_cache(ps: PollerState, window_seconds: int | N
     return ps.dashboard_backend.get_serialized_cache(normalize_node_dashboard_window(window_seconds))
 
 
+_last_published_snapshot: str | None = None
+
+
 async def node_dashboard_polling_loop(ps: PollerState) -> None:
+    global _last_published_snapshot
     while True:
         try:
             await refresh_node_dashboard_cache_once(ps)
-            await _publish_dashboard_to_redis(ps)
+            # Only publish when the snapshot actually changes
+            payload = ps.dashboard_backend.get_cached_payload()
+            anchors = {
+                str(a["id"]): a for a in (payload.get("anchors") or [])
+                if isinstance(a, dict) and a.get("id")
+            }
+            discovered = {
+                str(d["site_id"]): d for d in (payload.get("discovered") or [])
+                if isinstance(d, dict) and d.get("site_id")
+            }
+            import json
+            snapshot_key = json.dumps({"a": anchors, "d": discovered}, default=str, sort_keys=True)
+            if snapshot_key != _last_published_snapshot:
+                _last_published_snapshot = snapshot_key
+                await state_manager.publish_dashboard_snapshot(anchors, discovered)
         except Exception:
             logger.exception("Node dashboard cache refresh failed")
             ps.dashboard_backend.mark_cache_refresh_failed()

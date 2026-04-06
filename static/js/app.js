@@ -7932,8 +7932,7 @@ function startTopologyTimers() {
     // Structure refresh — user-selected interval (new nodes, links, submaps)
     applyDashboardRefreshInterval();
 
-    // Real-time node status — SSE stream (replaces 2s ping polling)
-    connectNodeStateStream();
+    // SSE is connected once at DOMContentLoaded for ALL pages — don't reconnect here
 
     // "Updated X ago" counter — ticks every second (local clock, no fetch)
     if (topologyLastUpdatedTimer) clearInterval(topologyLastUpdatedTimer);
