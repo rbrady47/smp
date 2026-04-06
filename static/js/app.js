@@ -2793,6 +2793,10 @@ function disconnectNodeStateStream() {
 }
 
 function connectNodeStateStream() {
+    // Guard: only one SSE connection at a time
+    if (nodeStateEventSource && nodeStateEventSource.readyState !== EventSource.CLOSED) {
+        return;
+    }
     disconnectNodeStateStream();
     const es = new EventSource("/api/stream/events");
 
@@ -2868,6 +2872,11 @@ function connectNodeStateStream() {
     es.onerror = () => {
         const ageEl = document.querySelector(".topology-updated-ago");
         if (ageEl) ageEl.textContent = "reconnecting\u2026";
+        // Close and reconnect manually with a delay to prevent rapid reconnect loops.
+        // The default EventSource auto-reconnect can flood the connection pool.
+        es.close();
+        nodeStateEventSource = null;
+        setTimeout(() => connectNodeStateStream(), 10000);
     };
 
     es.onopen = () => {
