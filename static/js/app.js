@@ -7747,7 +7747,7 @@ async function refreshTopologyStructure() {
 
     const submapId = root.getAttribute("data-map-view-id");
     if (submapId) {
-        await refreshSubmapDiscovery(submapId);
+        // Submap discovery is loaded once on page load — don't re-fetch on timer
         if (topologyPayload) renderTopologyStage();
         return;
     }
