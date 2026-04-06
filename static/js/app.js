@@ -75,6 +75,17 @@ let topologyEditorStateLoaded = false;
 let topologyEditorStateSaveTimer = null;
 let topologyRefreshTimer = null;
 const topologyLinkStatsCache = new Map();
+
+// Throttle link tooltip refresh to avoid flooding the browser with HTTP requests
+let _linkTooltipRefreshTimer = null;
+function _throttledLinkTooltipRefresh() {
+    if (_linkTooltipRefreshTimer) return;
+    _linkTooltipRefreshTimer = setTimeout(() => {
+        _linkTooltipRefreshTimer = null;
+        refreshPinnedLinkTooltip();
+    }, 5000);
+}
+
 const topologyNetworkStateLog = (() => {
     try {
         const raw = localStorage.getItem("smp-topology-state-log");
@@ -2910,15 +2921,17 @@ function applyNodeUpdate(nodeId, state) {
             detectLinkStateChanges();
         }
 
-        // Invalidate all link stats so pinned tooltip gets fresh data on next fetch
-        topologyLinkStatsCache.clear();
-        refreshPinnedLinkTooltip();
+        // Only refresh link tooltip if one is actually pinned
+        if (topologyState.pinnedLinkTooltipId) {
+            topologyLinkStatsCache.clear();
+            _throttledLinkTooltipRefresh();
+        }
     }
 
     // Update node dashboard row in-place
     _updateNodeDashboardFromSSE({ [nodeId]: state }, {});
 
-    // Update node detail page gauges
+    // Update node detail page gauges (no HTTP fetch — just DOM updates)
     _updateNodeDetailFromSSE({ [nodeId]: state }, {});
 
     markTopologyLastUpdated();
