@@ -365,6 +365,7 @@ async def get_submap_discovery(
 
     # Persist discovered nodes to database
     now = datetime.now(timezone.utc)
+    newly_created_site_ids: set[str] = set()
     for peer in discovered_peers:
         site_id = str(peer["site_id"])
         existing = db.get(DiscoveredNode, site_id)
@@ -387,6 +388,7 @@ async def get_submap_discovery(
                 updated_at=now,
             )
             db.add(dn)
+            newly_created_site_ids.add(site_id)
 
         obs = db.get(DiscoveredNodeObservation, site_id)
         ping_up = str(peer.get("ping") or "").strip().lower() == "up"
@@ -414,15 +416,17 @@ async def get_submap_discovery(
 
     db.commit()
 
-    # Publish discovery events for newly-discovered peers
+    # Publish discovery events only for genuinely new peers (not updates)
     for peer in discovered_peers:
-        await state_manager.publish_discovery_event(
-            "dn_discovered",
-            str(peer["site_id"]),
-            name=str(peer.get("name") or ""),
-            host=str(peer.get("host") or ""),
-            map_view_id=map_view_id,
-        )
+        site_id = str(peer["site_id"])
+        if site_id in newly_created_site_ids:
+            await state_manager.publish_discovery_event(
+                "dn_discovered",
+                site_id,
+                name=str(peer.get("name") or ""),
+                host=str(peer.get("host") or ""),
+                map_view_id=map_view_id,
+            )
 
     persisted_dns = db.scalars(
         select(DiscoveredNode).where(DiscoveredNode.map_view_id == map_view_id)
