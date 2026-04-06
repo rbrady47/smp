@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import logging
 from typing import TYPE_CHECKING
 
@@ -232,29 +233,20 @@ def get_serialized_node_dashboard_cache(ps: PollerState, window_seconds: int | N
     return ps.dashboard_backend.get_serialized_cache(normalize_node_dashboard_window(window_seconds))
 
 
-_last_published_snapshot: str | None = None
+_DASHBOARD_SSE_PUBLISH_INTERVAL = 10.0  # Publish SSE snapshot every 10s (matches seeker poll)
+_last_sse_publish_at: float = 0.0
 
 
 async def node_dashboard_polling_loop(ps: PollerState) -> None:
-    global _last_published_snapshot
+    global _last_sse_publish_at
     while True:
         try:
             await refresh_node_dashboard_cache_once(ps)
-            # Only publish when the snapshot actually changes
-            payload = ps.dashboard_backend.get_cached_payload()
-            anchors = {
-                str(a["id"]): a for a in (payload.get("anchors") or [])
-                if isinstance(a, dict) and a.get("id")
-            }
-            discovered = {
-                str(d["site_id"]): d for d in (payload.get("discovered") or [])
-                if isinstance(d, dict) and d.get("site_id")
-            }
-            import json
-            snapshot_key = json.dumps({"a": anchors, "d": discovered}, default=str, sort_keys=True)
-            if snapshot_key != _last_published_snapshot:
-                _last_published_snapshot = snapshot_key
-                await state_manager.publish_dashboard_snapshot(anchors, discovered)
+            # Publish SSE snapshot at a fixed interval, not every cycle
+            now = time.monotonic()
+            if now - _last_sse_publish_at >= _DASHBOARD_SSE_PUBLISH_INTERVAL:
+                _last_sse_publish_at = now
+                await _publish_dashboard_to_redis(ps)
         except Exception:
             logger.exception("Node dashboard cache refresh failed")
             ps.dashboard_backend.mark_cache_refresh_failed()
