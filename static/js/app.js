@@ -9715,25 +9715,6 @@ function _arrStats(arr) {
     };
 }
 
-function _makePeakLine(arr, color, label) {
-    const { max } = _arrStats(arr);
-    return {
-        label, data: arr.map(() => max),
-        borderColor: color, borderDash: [3, 3], borderWidth: 1.5,
-        pointRadius: 0, tension: 0, fill: false, yAxisID: "y",
-        _isStat: true, hidden: true,
-    };
-}
-
-function _makeMinLine(arr, color, label) {
-    const { min } = _arrStats(arr);
-    return {
-        label, data: arr.map(() => min),
-        borderColor: color, borderDash: [2, 4], borderWidth: 1,
-        pointRadius: 0, tension: 0, fill: false, yAxisID: "y",
-        _isStat: true, hidden: true,
-    };
-}
 
 /**
  * Build clickable stat badges and wire them to toggle datasets.
@@ -9753,14 +9734,20 @@ function _buildStatBadges(container, chart, stats) {
         badge.innerHTML = `<span class="charts-stat-badge-dot" style="background:${stat.color}"></span>`
             + `<span class="charts-stat-badge-label">${stat.label}</span>`
             + `<span class="charts-stat-badge-value">${stat.value}</span>`;
-        badge.addEventListener("click", () => {
-            const ds = chart.data.datasets.find(d => d.label === stat.datasetLabel);
-            if (!ds) return;
-            ds.hidden = !ds.hidden;
-            badge.classList.toggle("active", !ds.hidden);
-            badge.classList.toggle("inactive", ds.hidden);
-            chart.update("none");
-        });
+        if (stat.datasetLabel) {
+            badge.style.cursor = "pointer";
+            badge.addEventListener("click", () => {
+                const ds = chart.data.datasets.find(d => d.label === stat.datasetLabel);
+                if (!ds) return;
+                ds.hidden = !ds.hidden;
+                badge.classList.toggle("active", !ds.hidden);
+                badge.classList.toggle("inactive", ds.hidden);
+                chart.update("none");
+            });
+        } else {
+            badge.style.cursor = "default";
+            badge.classList.remove("inactive");
+        }
         row.appendChild(badge);
     }
     // Insert before the button (last child) so layout is: h2 | badges | button
@@ -9795,15 +9782,12 @@ function renderThroughputChart(samples) {
 
     const avgTxDs = _makeAvgLine(txData, "#3B82F6", "Avg TX"); delete avgTxDs.yAxisID;
     const avgRxDs = _makeAvgLine(rxData, "#22C55E", "Avg RX"); delete avgRxDs.yAxisID;
-    const peakTxDs = _makePeakLine(txData, "#3B82F6", "Peak TX"); delete peakTxDs.yAxisID;
-    const peakRxDs = _makePeakLine(rxData, "#22C55E", "Peak RX"); delete peakRxDs.yAxisID;
-
     _chartThroughput = new Chart(ctx, {
         type: "line",
         data: {
             labels,
             datasets: [
-                avgTxDs, avgRxDs, peakTxDs, peakRxDs,
+                avgTxDs, avgRxDs,
                 {
                     label: "TX", data: txData, _isDetail: true,
                     borderColor: "#3B82F666", backgroundColor: "#3B82F614",
@@ -9827,8 +9811,8 @@ function renderThroughputChart(samples) {
         _buildStatBadges(headerEl, _chartThroughput, [
             { label: "Avg TX", value: _formatBps(txStats.avg), color: "#3B82F6", datasetLabel: "Avg TX" },
             { label: "Avg RX", value: _formatBps(rxStats.avg), color: "#22C55E", datasetLabel: "Avg RX" },
-            { label: "Peak TX", value: _formatBps(txStats.max), color: "#3B82F6", datasetLabel: "Peak TX" },
-            { label: "Peak RX", value: _formatBps(rxStats.max), color: "#22C55E", datasetLabel: "Peak RX" },
+            { label: "Peak TX", value: _formatBps(txStats.max), color: "#3B82F6" },
+            { label: "Peak RX", value: _formatBps(rxStats.max), color: "#22C55E" },
         ]);
     }
 
@@ -9850,15 +9834,12 @@ function renderPacketsChart(samples) {
 
     const avgTxDs = _makeAvgLine(txData, "#A855F7", "Avg TX Pkts"); delete avgTxDs.yAxisID;
     const avgRxDs = _makeAvgLine(rxData, "#FB923C", "Avg RX Pkts"); delete avgRxDs.yAxisID;
-    const peakTxDs = _makePeakLine(txData, "#A855F7", "Peak TX Pkts"); delete peakTxDs.yAxisID;
-    const peakRxDs = _makePeakLine(rxData, "#FB923C", "Peak RX Pkts"); delete peakRxDs.yAxisID;
-
     _chartPackets = new Chart(ctx, {
         type: "line",
         data: {
             labels,
             datasets: [
-                avgTxDs, avgRxDs, peakTxDs, peakRxDs,
+                avgTxDs, avgRxDs,
                 {
                     label: "TX Packets", data: txData, _isDetail: true,
                     borderColor: "#A855F766", backgroundColor: "#A855F714",
@@ -9881,8 +9862,8 @@ function renderPacketsChart(samples) {
         _buildStatBadges(headerEl, _chartPackets, [
             { label: "Avg TX", value: _formatNumber(txStats.avg.toFixed(0)), color: "#A855F7", datasetLabel: "Avg TX Pkts" },
             { label: "Avg RX", value: _formatNumber(rxStats.avg.toFixed(0)), color: "#FB923C", datasetLabel: "Avg RX Pkts" },
-            { label: "Peak TX", value: _formatNumber(txStats.max), color: "#A855F7", datasetLabel: "Peak TX Pkts" },
-            { label: "Peak RX", value: _formatNumber(rxStats.max), color: "#FB923C", datasetLabel: "Peak RX Pkts" },
+            { label: "Peak TX", value: _formatNumber(txStats.max), color: "#A855F7" },
+            { label: "Peak RX", value: _formatNumber(rxStats.max), color: "#FB923C" },
         ]);
     }
 
@@ -10080,17 +10061,6 @@ function renderSiteCharts(samples, mateMap) {
                 pointRadius: 0, tension: 0.3, fill: false, yAxisID: "yDelay",
             });
 
-            // Peak lines (hidden, togglable via badges)
-            datasets.push(_makePeakLine(txArr, txCol, `Peak TX${tunSfx}`));
-            datasets.push(_makePeakLine(rxArr, rxCol, `Peak RX${tunSfx}`));
-            const peakLat = _arrStats(delayArr);
-            datasets.push({
-                label: `Peak Lat${tunSfx}`, data: delayArr.map(() => peakLat.max),
-                borderColor: latCol, borderDash: [3, 3], borderWidth: 1.5,
-                pointRadius: 0, tension: 0, fill: false, yAxisID: "yDelay",
-                _isStat: true, hidden: true,
-            });
-
             // Detail TX/RX (visible by default)
             datasets.push({
                 label: `TX${tunSfx}`, data: txArr, _isDetail: true,
@@ -10106,9 +10076,9 @@ function renderSiteCharts(samples, mateMap) {
             // Stat badge data
             badgeStats.push({ label: `Avg TX${tunSfx}`, value: _formatBps(txS.avg), color: txCol, datasetLabel: `Avg TX${tunSfx}` });
             badgeStats.push({ label: `Avg RX${tunSfx}`, value: _formatBps(rxS.avg), color: rxCol, datasetLabel: `Avg RX${tunSfx}` });
-            badgeStats.push({ label: `Peak TX${tunSfx}`, value: _formatBps(txS.max), color: txCol, datasetLabel: `Peak TX${tunSfx}` });
+            badgeStats.push({ label: `Peak TX${tunSfx}`, value: _formatBps(txS.max), color: txCol });
             badgeStats.push({ label: `Avg Lat${tunSfx}`, value: dlS.avg.toFixed(1) + " ms", color: latCol, datasetLabel: `Latency${tunSfx}` });
-            badgeStats.push({ label: `Peak Lat${tunSfx}`, value: dlS.max.toFixed(1) + " ms", color: latCol, datasetLabel: `Peak Lat${tunSfx}` });
+            badgeStats.push({ label: `Peak Lat${tunSfx}`, value: dlS.max.toFixed(1) + " ms", color: latCol });
         }
 
         const chart = new Chart(canvas.getContext("2d"), {
