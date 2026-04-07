@@ -5403,23 +5403,21 @@ body.modal-open {
     font-variant-numeric: tabular-nums;
 }
 
-/* Per-site chart layout — two charts side by side */
-.charts-site-row {
+/* Chart card header with detail toggle */
+.charts-card-header {
     display: flex;
-    gap: 1rem;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
 }
 
-.charts-site-half {
-    flex: 1;
-    min-width: 0;
-    height: 250px;
+.charts-card-header h2 {
+    margin: 0;
 }
 
-.charts-site-half h3 {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--muted);
-    margin: 0 0 0.25rem 0;
+.charts-detail-btn {
+    font-size: 0.78rem;
+    padding: 0.3rem 0.7rem;
 }
 
 /* Per-site tunnel summary table */

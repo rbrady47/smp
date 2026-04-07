@@ -9624,35 +9624,121 @@ function _delayChartOptions(theme) {
     });
 }
 
+function _dualAxisChartOptions(theme) {
+    const useDecimation = _chartsDecimationThreshold > 0 && _chartsSelectedRange > 3600;
+    return {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+            legend: { labels: { color: theme.text, usePointStyle: true, pointStyle: "circle" } },
+            decimation: useDecimation ? { enabled: true, algorithm: "lttb", threshold: _chartsDecimationThreshold } : { enabled: false },
+            tooltip: {
+                callbacks: {
+                    label: (ctx) => {
+                        const v = ctx.parsed.y;
+                        if (v == null) return "";
+                        if (ctx.dataset.yAxisID === "yDelay") {
+                            return ctx.dataset.label + ": " + v.toFixed(1) + " ms";
+                        }
+                        return ctx.dataset.label + ": " + _formatBps(v);
+                    },
+                },
+            },
+        },
+        scales: {
+            x: {
+                type: "time",
+                ticks: { color: theme.muted, maxTicksLimit: 12 },
+                grid: { color: theme.border + "40" },
+            },
+            y: {
+                position: "left",
+                beginAtZero: true,
+                ticks: { color: theme.muted, callback: _bpsTickCallback },
+                grid: { color: theme.border + "40" },
+            },
+            yDelay: {
+                position: "right",
+                beginAtZero: true,
+                ticks: { color: "rgba(239, 68, 68, 0.7)", callback: (v) => v.toFixed(0) + " ms" },
+                grid: { drawOnChartArea: false },
+            },
+        },
+    };
+}
+
+function _computeAvg(arr) {
+    let sum = 0, count = 0;
+    for (const v of arr) { if (v != null) { sum += v; count++; } }
+    return count > 0 ? sum / count : 0;
+}
+
+function _makeAvgLine(arr, color, label) {
+    const avg = _computeAvg(arr);
+    return {
+        label,
+        data: arr.map(() => avg),
+        borderColor: color,
+        borderDash: [8, 4],
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0,
+        fill: false,
+        yAxisID: "y",
+    };
+}
+
+// Toggle detail datasets on/off. Detail datasets have _isDetail=true.
+function _toggleChartDetail(chart, btn) {
+    const showing = btn.dataset.showing === "true";
+    for (const ds of chart.data.datasets) {
+        if (ds._isDetail) {
+            ds.hidden = showing; // toggle
+        }
+    }
+    btn.dataset.showing = showing ? "false" : "true";
+    btn.textContent = showing ? "Show Detail" : "Hide Detail";
+    chart.update("none");
+}
+
 function renderThroughputChart(samples) {
     if (_chartThroughput) { _chartThroughput.destroy(); _chartThroughput = null; }
     const ctx = document.getElementById("charts-throughput-canvas").getContext("2d");
     const theme = _getThemeColors();
     const labels = _chartTimestamps(samples);
+    const txData = samples.map(s => s.user_tx_bytes);
+    const rxData = samples.map(s => s.user_rx_bytes);
 
     _chartThroughput = new Chart(ctx, {
         type: "line",
         data: {
             labels,
             datasets: [
+                _makeAvgLine(txData, "rgba(59, 130, 246, 0.95)", "Avg TX"),
+                _makeAvgLine(rxData, "rgba(34, 197, 94, 0.95)", "Avg RX"),
                 {
-                    label: "User TX",
-                    data: samples.map(s => s.user_tx_bytes),
-                    borderColor: "rgba(59, 130, 246, 0.9)",
-                    backgroundColor: "rgba(59, 130, 246, 0.15)",
-                    fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1.5,
+                    label: "TX", data: txData, _isDetail: true, hidden: true,
+                    borderColor: "rgba(59, 130, 246, 0.5)", backgroundColor: "rgba(59, 130, 246, 0.08)",
+                    fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1, yAxisID: "y",
                 },
                 {
-                    label: "User RX",
-                    data: samples.map(s => s.user_rx_bytes),
-                    borderColor: "rgba(34, 197, 94, 0.9)",
-                    backgroundColor: "rgba(34, 197, 94, 0.15)",
-                    fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1.5,
+                    label: "RX", data: rxData, _isDetail: true, hidden: true,
+                    borderColor: "rgba(34, 197, 94, 0.5)", backgroundColor: "rgba(34, 197, 94, 0.08)",
+                    fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1, yAxisID: "y",
                 },
             ],
         },
-        options: _bpsChartOptions(theme),
+        options: _dualAxisChartOptions(theme),
     });
+
+    // Wire detail toggle button
+    const btn = document.getElementById("charts-throughput-detail-btn");
+    if (btn) {
+        btn.dataset.showing = "false";
+        btn.textContent = "Show Detail";
+        btn.onclick = () => _toggleChartDetail(_chartThroughput, btn);
+    }
 }
 
 function renderPacketsChart(samples) {
@@ -9660,6 +9746,10 @@ function renderPacketsChart(samples) {
     const ctx = document.getElementById("charts-packets-canvas").getContext("2d");
     const theme = _getThemeColors();
     const labels = _chartTimestamps(samples);
+    const txData = samples.map(s => s.user_tx_pkts);
+    const rxData = samples.map(s => s.user_rx_pkts);
+    const txAvg = _computeAvg(txData);
+    const rxAvg = _computeAvg(rxData);
 
     _chartPackets = new Chart(ctx, {
         type: "line",
@@ -9667,23 +9757,38 @@ function renderPacketsChart(samples) {
             labels,
             datasets: [
                 {
-                    label: "TX Packets",
-                    data: samples.map(s => s.user_tx_pkts),
-                    borderColor: "rgba(168, 85, 247, 0.9)",
-                    backgroundColor: "rgba(168, 85, 247, 0.15)",
-                    fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1.5,
+                    label: "Avg TX Pkts",
+                    data: txData.map(() => txAvg),
+                    borderColor: "rgba(168, 85, 247, 0.95)", borderDash: [8, 4], borderWidth: 2,
+                    pointRadius: 0, tension: 0, fill: false,
                 },
                 {
-                    label: "RX Packets",
-                    data: samples.map(s => s.user_rx_pkts),
-                    borderColor: "rgba(251, 146, 60, 0.9)",
-                    backgroundColor: "rgba(251, 146, 60, 0.15)",
-                    fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1.5,
+                    label: "Avg RX Pkts",
+                    data: rxData.map(() => rxAvg),
+                    borderColor: "rgba(251, 146, 60, 0.95)", borderDash: [8, 4], borderWidth: 2,
+                    pointRadius: 0, tension: 0, fill: false,
+                },
+                {
+                    label: "TX Packets", data: txData, _isDetail: true, hidden: true,
+                    borderColor: "rgba(168, 85, 247, 0.5)", backgroundColor: "rgba(168, 85, 247, 0.08)",
+                    fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1,
+                },
+                {
+                    label: "RX Packets", data: rxData, _isDetail: true, hidden: true,
+                    borderColor: "rgba(251, 146, 60, 0.5)", backgroundColor: "rgba(251, 146, 60, 0.08)",
+                    fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1,
                 },
             ],
         },
         options: _commonChartOptions(theme),
     });
+
+    const btn = document.getElementById("charts-packets-detail-btn");
+    if (btn) {
+        btn.dataset.showing = "false";
+        btn.textContent = "Show Detail";
+        btn.onclick = () => _toggleChartDetail(_chartPackets, btn);
+    }
 }
 
 function renderChannelChart(samples) {
@@ -9692,70 +9797,58 @@ function renderChannelChart(samples) {
     const theme = _getThemeColors();
     const labels = _chartTimestamps(samples);
 
-    // Collect all channel indexes across samples
     const channelIndexes = new Set();
     samples.forEach(s => {
         if (!s.channel_data) return;
-        try {
-            const chs = JSON.parse(s.channel_data);
-            chs.forEach(c => channelIndexes.add(c.ch));
-        } catch (e) { /* skip */ }
+        try { JSON.parse(s.channel_data).forEach(c => channelIndexes.add(c.ch)); } catch (e) {}
     });
 
-    const channelColors = [
-        ["rgba(59, 130, 246, 0.8)", "rgba(59, 130, 246, 0.1)"],
-        ["rgba(34, 197, 94, 0.8)", "rgba(34, 197, 94, 0.1)"],
-        ["rgba(168, 85, 247, 0.8)", "rgba(168, 85, 247, 0.1)"],
-        ["rgba(251, 146, 60, 0.8)", "rgba(251, 146, 60, 0.1)"],
+    const chColors = [
+        ["rgba(59, 130, 246, 0.95)", "rgba(251, 146, 60, 0.95)"],
+        ["rgba(34, 197, 94, 0.95)", "rgba(236, 72, 153, 0.95)"],
+        ["rgba(168, 85, 247, 0.95)", "rgba(250, 204, 21, 0.95)"],
     ];
 
     const datasets = [];
-    const sortedIndexes = [...channelIndexes].sort((a, b) => a - b);
-    sortedIndexes.forEach((chIdx, i) => {
-        const colors = channelColors[i % channelColors.length];
-        // TX dataset
-        datasets.push({
-            label: `Ch${chIdx} TX`,
-            data: samples.map(s => {
-                if (!s.channel_data) return null;
-                try {
-                    const chs = JSON.parse(s.channel_data);
-                    const ch = chs.find(c => c.ch === chIdx);
-                    return ch ? ch.tx : null;
-                } catch (e) { return null; }
-            }),
-            borderColor: colors[0],
-            backgroundColor: colors[1],
-            fill: false,
-            tension: 0.2,
-            pointRadius: 0,
-            borderWidth: 1.5,
+    const sorted = [...channelIndexes].sort((a, b) => a - b);
+    sorted.forEach((chIdx, i) => {
+        const [txCol, rxCol] = chColors[i % chColors.length];
+        const txArr = samples.map(s => {
+            if (!s.channel_data) return null;
+            try { const c = JSON.parse(s.channel_data).find(c => c.ch === chIdx); return c ? c.tx : null; } catch (e) { return null; }
         });
-        // RX dataset
+        const rxArr = samples.map(s => {
+            if (!s.channel_data) return null;
+            try { const c = JSON.parse(s.channel_data).find(c => c.ch === chIdx); return c ? c.rx : null; } catch (e) { return null; }
+        });
+        // Avg lines (visible by default)
+        datasets.push(_makeAvgLine(txArr, txCol, `Ch${chIdx} Avg TX`));
+        datasets.push(_makeAvgLine(rxArr, rxCol, `Ch${chIdx} Avg RX`));
+        // Detail (hidden by default)
         datasets.push({
-            label: `Ch${chIdx} RX`,
-            data: samples.map(s => {
-                if (!s.channel_data) return null;
-                try {
-                    const chs = JSON.parse(s.channel_data);
-                    const ch = chs.find(c => c.ch === chIdx);
-                    return ch ? ch.rx : null;
-                } catch (e) { return null; }
-            }),
-            borderColor: colors[0].replace("0.8", "0.5"),
-            borderDash: [4, 2],
-            fill: false,
-            tension: 0.2,
-            pointRadius: 0,
-            borderWidth: 1.5,
+            label: `Ch${chIdx} TX`, data: txArr, _isDetail: true, hidden: true,
+            borderColor: txCol.replace("0.95", "0.4"), fill: false,
+            tension: 0.2, pointRadius: 0, borderWidth: 1, yAxisID: "y",
+        });
+        datasets.push({
+            label: `Ch${chIdx} RX`, data: rxArr, _isDetail: true, hidden: true,
+            borderColor: rxCol.replace("0.95", "0.4"), borderDash: [4, 2], fill: false,
+            tension: 0.2, pointRadius: 0, borderWidth: 1, yAxisID: "y",
         });
     });
 
     _chartChannel = new Chart(ctx, {
         type: "line",
         data: { labels, datasets },
-        options: _bpsChartOptions(theme),
+        options: _dualAxisChartOptions(theme),
     });
+
+    const btn = document.getElementById("charts-channel-detail-btn");
+    if (btn) {
+        btn.dataset.showing = "false";
+        btn.textContent = "Show Detail";
+        btn.onclick = () => _toggleChartDetail(_chartChannel, btn);
+    }
 }
 
 // --- Per-site tunnel charts ---
@@ -9779,146 +9872,110 @@ const _tunnelLatencyColors = [
 ];
 
 function renderSiteCharts(samples, mateMap) {
-    // Destroy previous site charts
-    for (const inst of _chartSiteInstances) {
-        inst.chart.destroy();
-    }
+    for (const inst of _chartSiteInstances) inst.chart.destroy();
     _chartSiteInstances = [];
 
     const container = document.getElementById("charts-site-container");
     container.innerHTML = "";
 
-    // Collect all (site, tunnel) pairs across all samples
-    const siteTunnels = new Map(); // siteIdx → Set of tunnelIdx
+    const siteTunnels = new Map();
     for (const s of samples) {
         if (!s.tunnel_data) continue;
         try {
-            const tunnels = JSON.parse(s.tunnel_data);
-            for (const t of tunnels) {
+            for (const t of JSON.parse(s.tunnel_data)) {
                 if (!siteTunnels.has(t.site)) siteTunnels.set(t.site, new Set());
                 siteTunnels.get(t.site).add(t.tunnel);
             }
-        } catch (e) { /* skip */ }
+        } catch (e) {}
     }
-
     if (siteTunnels.size === 0) return;
 
     const theme = _getThemeColors();
     const labels = _chartTimestamps(samples);
-    const sortedSites = [...siteTunnels.keys()].sort((a, b) => a - b);
 
-    for (const siteIdx of sortedSites) {
+    for (const siteIdx of [...siteTunnels.keys()].sort((a, b) => a - b)) {
         const tunnelIdxs = [...siteTunnels.get(siteIdx)].sort((a, b) => a - b);
         const mate = mateMap[siteIdx] || {};
         const siteLabel = mate.mate_site_id || `Site ${siteIdx}`;
         const siteName = mate.site_name ? ` (${mate.site_name})` : "";
         const title = `Node ${siteLabel}${siteName}`;
 
-        // Create card HTML
+        // Card with header row containing title + detail button
         const card = document.createElement("section");
         card.className = "card charts-card";
+        const header = document.createElement("div");
+        header.className = "charts-card-header";
         const h2 = document.createElement("h2");
         h2.textContent = title;
-        card.appendChild(h2);
+        const detailBtn = document.createElement("button");
+        detailBtn.className = "button-secondary charts-detail-btn";
+        detailBtn.textContent = "Show Detail";
+        detailBtn.dataset.showing = "false";
+        header.appendChild(h2);
+        header.appendChild(detailBtn);
+        card.appendChild(header);
 
-        // Two charts side-by-side: throughput and delay
-        const row = document.createElement("div");
-        row.className = "charts-site-row";
-
-        // Throughput chart
-        const throughputWrap = document.createElement("div");
-        throughputWrap.className = "charts-canvas-wrap charts-site-half";
-        const throughputLabel = document.createElement("h3");
-        throughputLabel.textContent = "Throughput";
-        const canvasTp = document.createElement("canvas");
-        throughputWrap.appendChild(throughputLabel);
-        throughputWrap.appendChild(canvasTp);
-
-        // Delay chart
-        const delayWrap = document.createElement("div");
-        delayWrap.className = "charts-canvas-wrap charts-site-half";
-        const delayLabel = document.createElement("h3");
-        delayLabel.textContent = "Latency";
-        const canvasDl = document.createElement("canvas");
-        delayWrap.appendChild(delayLabel);
-        delayWrap.appendChild(canvasDl);
-
-        row.appendChild(throughputWrap);
-        row.appendChild(delayWrap);
-        card.appendChild(row);
+        const wrap = document.createElement("div");
+        wrap.className = "charts-canvas-wrap";
+        const canvas = document.createElement("canvas");
+        wrap.appendChild(canvas);
+        card.appendChild(wrap);
         container.appendChild(card);
 
-        // Build datasets
-        const tpDatasets = [];
-        const dlDatasets = [];
+        // Build datasets — avg lines (default visible) + detail (hidden) + latency on right axis
+        const datasets = [];
 
         for (let ti = 0; ti < tunnelIdxs.length; ti++) {
             const tunIdx = tunnelIdxs[ti];
-            const [txColor, rxColor] = _tunnelColorPairs[ti % _tunnelColorPairs.length];
-            const latColor = _tunnelLatencyColors[ti % _tunnelLatencyColors.length];
-            const tunLabel = tunnelIdxs.length === 1 ? "" : ` T${tunIdx}`;
+            const [txCol, rxCol] = _tunnelColorPairs[ti % _tunnelColorPairs.length];
+            const latCol = _tunnelLatencyColors[ti % _tunnelLatencyColors.length];
+            const tunSfx = tunnelIdxs.length === 1 ? "" : ` T${tunIdx}`;
 
-            // TX (solid)
-            tpDatasets.push({
-                label: `TX${tunLabel}`,
-                data: samples.map(s => {
-                    if (!s.tunnel_data) return null;
-                    try {
-                        const ts = JSON.parse(s.tunnel_data);
-                        const t = ts.find(x => x.site === siteIdx && x.tunnel === tunIdx);
-                        return t ? t.tx : null;
-                    } catch (e) { return null; }
-                }),
-                borderColor: txColor,
-                borderWidth: 2,
-                fill: false, tension: 0.2, pointRadius: 0,
+            const txArr = samples.map(s => {
+                if (!s.tunnel_data) return null;
+                try { const t = JSON.parse(s.tunnel_data).find(x => x.site === siteIdx && x.tunnel === tunIdx); return t ? t.tx : null; } catch (e) { return null; }
             });
-            // RX (dashed, different color)
-            tpDatasets.push({
-                label: `RX${tunLabel}`,
-                data: samples.map(s => {
-                    if (!s.tunnel_data) return null;
-                    try {
-                        const ts = JSON.parse(s.tunnel_data);
-                        const t = ts.find(x => x.site === siteIdx && x.tunnel === tunIdx);
-                        return t ? t.rx : null;
-                    } catch (e) { return null; }
-                }),
-                borderColor: rxColor,
-                borderDash: [6, 3],
-                borderWidth: 2,
-                fill: false, tension: 0.2, pointRadius: 0,
+            const rxArr = samples.map(s => {
+                if (!s.tunnel_data) return null;
+                try { const t = JSON.parse(s.tunnel_data).find(x => x.site === siteIdx && x.tunnel === tunIdx); return t ? t.rx : null; } catch (e) { return null; }
             });
-            // Delay
-            dlDatasets.push({
-                label: `Tunnel ${tunIdx}`,
-                data: samples.map(s => {
-                    if (!s.tunnel_data) return null;
-                    try {
-                        const ts = JSON.parse(s.tunnel_data);
-                        const t = ts.find(x => x.site === siteIdx && x.tunnel === tunIdx);
-                        return t && t.delay_us ? t.delay_us / 1000.0 : null;
-                    } catch (e) { return null; }
-                }),
-                borderColor: latColor,
-                borderWidth: 2,
-                fill: false, tension: 0.2, pointRadius: 0,
+            const delayArr = samples.map(s => {
+                if (!s.tunnel_data) return null;
+                try { const t = JSON.parse(s.tunnel_data).find(x => x.site === siteIdx && x.tunnel === tunIdx); return t && t.delay_us ? t.delay_us / 1000.0 : null; } catch (e) { return null; }
+            });
+
+            // Avg TX/RX (visible by default)
+            datasets.push(Object.assign(_makeAvgLine(txArr, txCol, `Avg TX${tunSfx}`)));
+            datasets.push(Object.assign(_makeAvgLine(rxArr, rxCol, `Avg RX${tunSfx}`)));
+
+            // Latency (visible by default, right axis)
+            datasets.push({
+                label: `Latency${tunSfx}`, data: delayArr,
+                borderColor: latCol, borderWidth: 1.5, borderDash: [2, 2],
+                pointRadius: 0, tension: 0.2, fill: false, yAxisID: "yDelay",
+            });
+
+            // Detail TX/RX (hidden)
+            datasets.push({
+                label: `TX${tunSfx}`, data: txArr, _isDetail: true, hidden: true,
+                borderColor: txCol.replace("0.95", "0.4"), fill: false,
+                tension: 0.2, pointRadius: 0, borderWidth: 1, yAxisID: "y",
+            });
+            datasets.push({
+                label: `RX${tunSfx}`, data: rxArr, _isDetail: true, hidden: true,
+                borderColor: rxCol.replace("0.95", "0.4"), borderDash: [4, 2], fill: false,
+                tension: 0.2, pointRadius: 0, borderWidth: 1, yAxisID: "y",
             });
         }
 
-        const tpChart = new Chart(canvasTp.getContext("2d"), {
+        const chart = new Chart(canvas.getContext("2d"), {
             type: "line",
-            data: { labels, datasets: tpDatasets },
-            options: _bpsChartOptions(theme),
+            data: { labels, datasets },
+            options: _dualAxisChartOptions(theme),
         });
-        _chartSiteInstances.push({ chart: tpChart, siteId: siteLabel, title: title + " — Throughput" });
+        _chartSiteInstances.push({ chart, siteId: siteLabel, title });
 
-        const dlChart = new Chart(canvasDl.getContext("2d"), {
-            type: "line",
-            data: { labels, datasets: dlDatasets },
-            options: _delayChartOptions(theme),
-        });
-        _chartSiteInstances.push({ chart: dlChart, siteId: siteLabel, title: title + " — Latency" });
+        detailBtn.onclick = () => _toggleChartDetail(chart, detailBtn);
     }
 }
 
