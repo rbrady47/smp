@@ -45,6 +45,21 @@
                     <button data-range="86400" class="button-secondary">24 Hours</button>
                     <button data-range="604800" class="button-secondary">7 Days</button>
                 </div>
+
+                <label for="charts-decimation-select">Detail</label>
+                <select id="charts-decimation-select" class="charts-select charts-select-sm">
+                    <option value="0">Full (raw)</option>
+                    <option value="400">Low (400 pts)</option>
+                    <option value="800" selected>Medium (800 pts)</option>
+                    <option value="1600">High (1600 pts)</option>
+                    <option value="3200">Very High (3200 pts)</option>
+                </select>
+            </div>
+            <div class="charts-loading-bar" id="charts-loading-bar" hidden>
+                <div class="charts-loading-bar-track">
+                    <div class="charts-loading-bar-fill" id="charts-loading-fill"></div>
+                </div>
+                <span class="charts-loading-bar-text" id="charts-loading-text">Loading...</span>
             </div>
         </section>
 

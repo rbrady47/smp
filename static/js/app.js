@@ -9365,6 +9365,7 @@ let _chartChannel = null;
 let _chartSiteInstances = [];  // Array of {chart, siteId, title} for per-site charts
 let _chartsSelectedNodeId = null;
 let _chartsSelectedRange = 3600;
+let _chartsDecimationThreshold = 800;
 let _chartsNodeName = "";
 
 function loadChartsPage() {
@@ -9405,6 +9406,14 @@ function loadChartsPage() {
         }
     });
 
+    const decimationSelect = document.getElementById("charts-decimation-select");
+    decimationSelect.addEventListener("change", () => {
+        _chartsDecimationThreshold = parseInt(decimationSelect.value, 10);
+        if (_chartsSelectedNodeId) {
+            fetchAndRenderCharts();
+        }
+    });
+
     exportBtn.addEventListener("click", exportChartsPDF);
 }
 
@@ -9420,6 +9429,24 @@ function _formatBps(bytesPerSec) {
 function _formatNumber(n) {
     if (n == null || isNaN(n)) return "--";
     return Number(n).toLocaleString();
+}
+
+function _chartsSetLoading(show, text, pct) {
+    const bar = document.getElementById("charts-loading-bar");
+    const fill = document.getElementById("charts-loading-fill");
+    const label = document.getElementById("charts-loading-text");
+    if (!bar) return;
+    bar.hidden = !show;
+    if (show) {
+        label.textContent = text || "Loading...";
+        if (pct == null) {
+            fill.className = "charts-loading-bar-fill indeterminate";
+            fill.style.width = "";
+        } else {
+            fill.className = "charts-loading-bar-fill";
+            fill.style.width = Math.min(100, Math.max(0, pct)) + "%";
+        }
+    }
 }
 
 async function fetchAndRenderCharts() {
@@ -9451,45 +9478,49 @@ async function fetchAndRenderCharts() {
     const start = now - _chartsSelectedRange;
     const limit = Math.min(_chartsSelectedRange, 604800);
 
+    _chartsSetLoading(true, "Fetching chart data...", null);
+
     try {
         const data = await apiRequest(
             `/api/nodes/${nodeId}/chart-stats?start=${start}&end=${now}&limit=${limit}`
         );
 
         if (!data.samples || data.samples.length === 0) {
+            _chartsSetLoading(false);
             emptyState.textContent = "No chart data available for the selected time range.";
             emptyState.hidden = false;
             exportBtn.disabled = true;
             return;
         }
 
+        _chartsSetLoading(true, `Rendering throughput (${data.samples.length.toLocaleString()} samples)...`, 15);
+        await new Promise(r => setTimeout(r, 0)); // yield to paint
+
         renderThroughputChart(data.samples);
         throughputCard.hidden = false;
+
+        _chartsSetLoading(true, "Rendering packets...", 30);
+        await new Promise(r => setTimeout(r, 0));
 
         renderPacketsChart(data.samples);
         packetsCard.hidden = false;
 
         const hasChannels = data.samples.some(s => s.channel_data);
         if (hasChannels) {
+            _chartsSetLoading(true, "Rendering channels...", 40);
+            await new Promise(r => setTimeout(r, 0));
             renderChannelChart(data.samples);
             channelCard.hidden = false;
         }
 
         // Fetch summary (also provides mate map for site charts)
-        let mateMap = {};
+        _chartsSetLoading(true, "Loading summary...", 50);
         try {
             const summary = await apiRequest(
                 `/api/nodes/${nodeId}/chart-summary?start=${start}&end=${now}`
             );
             renderChartsSummaryTable(summary);
             summaryCard.hidden = false;
-
-            // Build mate map from tunnel_summary for site chart labels
-            for (const t of summary.tunnel_summary || []) {
-                if (t.mate_site_id) {
-                    mateMap[t.mate_site_id] = mateMap[t.mate_site_id] || t;
-                }
-            }
         } catch (summaryErr) {
             summaryCard.hidden = true;
         }
@@ -9497,6 +9528,8 @@ async function fetchAndRenderCharts() {
         // Per-site tunnel charts
         const hasTunnels = data.samples.some(s => s.tunnel_data);
         if (hasTunnels) {
+            _chartsSetLoading(true, "Rendering site charts...", 65);
+            await new Promise(r => setTimeout(r, 0));
             const siteMap = {};
             if (_lastSummaryData) {
                 for (const t of _lastSummaryData.tunnel_summary || []) {
@@ -9508,8 +9541,12 @@ async function fetchAndRenderCharts() {
             renderSiteCharts(data.samples, siteMap);
         }
 
+        _chartsSetLoading(true, "Done", 100);
+        await new Promise(r => setTimeout(r, 300));
+        _chartsSetLoading(false);
         exportBtn.disabled = false;
     } catch (err) {
+        _chartsSetLoading(false);
         errorEl.textContent = `Failed to load chart data: ${err.message}`;
         errorEl.hidden = false;
         exportBtn.disabled = true;
@@ -9545,14 +9582,14 @@ function _bpsTooltipCallback(context) {
 }
 
 function _commonChartOptions(theme, { yTickCallback, tooltipCallback } = {}) {
-    const useDecimation = _chartsSelectedRange > 3600;
+    const useDecimation = _chartsDecimationThreshold > 0 && _chartsSelectedRange > 3600;
     const opts = {
         responsive: true,
         maintainAspectRatio: false,
         interaction: { mode: "index", intersect: false },
         plugins: {
             legend: { labels: { color: theme.text, usePointStyle: true, pointStyle: "circle" } },
-            decimation: useDecimation ? { enabled: true, algorithm: "lttb", threshold: 800 } : { enabled: false },
+            decimation: useDecimation ? { enabled: true, algorithm: "lttb", threshold: _chartsDecimationThreshold } : { enabled: false },
         },
         scales: {
             x: {
