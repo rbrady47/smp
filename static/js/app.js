@@ -9702,16 +9702,78 @@ function _makeAvgLine(arr, color, label) {
     };
 }
 
-// Toggle detail datasets on/off. Detail datasets have _isDetail=true.
-function _toggleChartDetail(chart, btn) {
-    const showing = btn.dataset.showing === "true";
+function _arrStats(arr) {
+    let sum = 0, count = 0, min = Infinity, max = -Infinity;
+    for (const v of arr) {
+        if (v != null && !isNaN(v)) { sum += v; count++; if (v < min) min = v; if (v > max) max = v; }
+    }
+    return {
+        avg: count > 0 ? sum / count : 0,
+        min: count > 0 ? min : 0,
+        max: count > 0 ? max : 0,
+        count,
+    };
+}
+
+function _makePeakLine(arr, color, label) {
+    const { max } = _arrStats(arr);
+    return {
+        label, data: arr.map(() => max),
+        borderColor: color, borderDash: [3, 3], borderWidth: 1.5,
+        pointRadius: 0, tension: 0, fill: false, yAxisID: "y",
+        _isStat: true, hidden: true,
+    };
+}
+
+function _makeMinLine(arr, color, label) {
+    const { min } = _arrStats(arr);
+    return {
+        label, data: arr.map(() => min),
+        borderColor: color, borderDash: [2, 4], borderWidth: 1,
+        pointRadius: 0, tension: 0, fill: false, yAxisID: "y",
+        _isStat: true, hidden: true,
+    };
+}
+
+/**
+ * Build clickable stat badges and wire them to toggle datasets.
+ * @param {HTMLElement} container - Element to append badges into
+ * @param {Chart} chart - Chart.js instance
+ * @param {Array} stats - [{label, value, color, datasetLabel}]
+ *   datasetLabel matches the dataset.label in the chart to toggle
+ */
+function _buildStatBadges(container, chart, stats) {
+    const row = document.createElement("div");
+    row.className = "charts-stats-row";
+    for (const stat of stats) {
+        const badge = document.createElement("span");
+        badge.className = "charts-stat-badge inactive";
+        badge.innerHTML = `<span class="charts-stat-badge-dot" style="background:${stat.color}"></span>`
+            + `<span class="charts-stat-badge-label">${stat.label}</span>`
+            + `<span class="charts-stat-badge-value">${stat.value}</span>`;
+        badge.addEventListener("click", () => {
+            const ds = chart.data.datasets.find(d => d.label === stat.datasetLabel);
+            if (!ds) return;
+            ds.hidden = !ds.hidden;
+            badge.classList.toggle("active", !ds.hidden);
+            badge.classList.toggle("inactive", ds.hidden);
+            chart.update("none");
+        });
+        row.appendChild(badge);
+    }
+    container.appendChild(row);
+}
+
+// Toggle detail (raw per-second) datasets on/off
+function _toggleAvgOnly(chart, btn) {
+    const isAvgOnly = btn.dataset.avgOnly === "true";
     for (const ds of chart.data.datasets) {
         if (ds._isDetail) {
-            ds.hidden = showing; // toggle
+            ds.hidden = !isAvgOnly; // if toggling OFF avg-only, show detail
         }
     }
-    btn.dataset.showing = showing ? "false" : "true";
-    btn.textContent = showing ? "Show Detail" : "Hide Detail";
+    btn.dataset.avgOnly = isAvgOnly ? "false" : "true";
+    btn.textContent = isAvgOnly ? "Avg Only" : "Show Detail";
     chart.update("none");
 }
 
@@ -9723,23 +9785,25 @@ function renderThroughputChart(samples) {
     const txData = samples.map(s => s.user_tx_bytes);
     const rxData = samples.map(s => s.user_rx_bytes);
 
-    const avgTx = _makeAvgLine(txData, "#3B82F6", "Avg TX"); delete avgTx.yAxisID;
-    const avgRx = _makeAvgLine(rxData, "#22C55E", "Avg RX"); delete avgRx.yAxisID;
+    const avgTxDs = _makeAvgLine(txData, "#3B82F6", "Avg TX"); delete avgTxDs.yAxisID;
+    const avgRxDs = _makeAvgLine(rxData, "#22C55E", "Avg RX"); delete avgRxDs.yAxisID;
+    const peakTxDs = _makePeakLine(txData, "#3B82F6", "Peak TX"); delete peakTxDs.yAxisID;
+    const peakRxDs = _makePeakLine(rxData, "#22C55E", "Peak RX"); delete peakRxDs.yAxisID;
 
     _chartThroughput = new Chart(ctx, {
         type: "line",
         data: {
             labels,
             datasets: [
-                avgTx, avgRx,
+                avgTxDs, avgRxDs, peakTxDs, peakRxDs,
                 {
-                    label: "TX", data: txData, _isDetail: true, hidden: true,
-                    borderColor: "rgba(59, 130, 246, 0.4)", backgroundColor: "rgba(59, 130, 246, 0.08)",
+                    label: "TX", data: txData, _isDetail: true,
+                    borderColor: "#3B82F666", backgroundColor: "#3B82F614",
                     fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1,
                 },
                 {
-                    label: "RX", data: rxData, _isDetail: true, hidden: true,
-                    borderColor: "rgba(34, 197, 94, 0.4)", backgroundColor: "rgba(34, 197, 94, 0.08)",
+                    label: "RX", data: rxData, _isDetail: true,
+                    borderColor: "#22C55E66", backgroundColor: "#22C55E14",
                     fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1,
                 },
             ],
@@ -9747,12 +9811,25 @@ function renderThroughputChart(samples) {
         options: _bpsChartOptions(theme),
     });
 
-    // Wire detail toggle button
+    const txStats = _arrStats(txData);
+    const rxStats = _arrStats(rxData);
+    const headerEl = document.getElementById("charts-throughput-card")?.querySelector(".charts-card-header");
+    if (headerEl) {
+        // Remove old badges
+        headerEl.querySelectorAll(".charts-stats-row").forEach(el => el.remove());
+        _buildStatBadges(headerEl, _chartThroughput, [
+            { label: "Avg TX", value: _formatBps(txStats.avg), color: "#3B82F6", datasetLabel: "Avg TX" },
+            { label: "Avg RX", value: _formatBps(rxStats.avg), color: "#22C55E", datasetLabel: "Avg RX" },
+            { label: "Peak TX", value: _formatBps(txStats.max), color: "#3B82F6", datasetLabel: "Peak TX" },
+            { label: "Peak RX", value: _formatBps(rxStats.max), color: "#22C55E", datasetLabel: "Peak RX" },
+        ]);
+    }
+
     const btn = document.getElementById("charts-throughput-detail-btn");
     if (btn) {
-        btn.dataset.showing = "false";
-        btn.textContent = "Show Detail";
-        btn.onclick = () => _toggleChartDetail(_chartThroughput, btn);
+        btn.dataset.avgOnly = "false";
+        btn.textContent = "Avg Only";
+        btn.onclick = () => _toggleAvgOnly(_chartThroughput, btn);
     }
 }
 
@@ -9764,25 +9841,25 @@ function renderPacketsChart(samples) {
     const txData = samples.map(s => s.user_tx_pkts);
     const rxData = samples.map(s => s.user_rx_pkts);
 
-    const avgTx = Object.assign(_makeAvgLine(txData, "rgba(168, 85, 247, 0.95)", "Avg TX Pkts"));
-    delete avgTx.yAxisID; // packets chart has no dual axis
-    const avgRx = Object.assign(_makeAvgLine(rxData, "rgba(251, 146, 60, 0.95)", "Avg RX Pkts"));
-    delete avgRx.yAxisID;
+    const avgTxDs = _makeAvgLine(txData, "#A855F7", "Avg TX Pkts"); delete avgTxDs.yAxisID;
+    const avgRxDs = _makeAvgLine(rxData, "#FB923C", "Avg RX Pkts"); delete avgRxDs.yAxisID;
+    const peakTxDs = _makePeakLine(txData, "#A855F7", "Peak TX Pkts"); delete peakTxDs.yAxisID;
+    const peakRxDs = _makePeakLine(rxData, "#FB923C", "Peak RX Pkts"); delete peakRxDs.yAxisID;
 
     _chartPackets = new Chart(ctx, {
         type: "line",
         data: {
             labels,
             datasets: [
-                avgTx, avgRx,
+                avgTxDs, avgRxDs, peakTxDs, peakRxDs,
                 {
-                    label: "TX Packets", data: txData, _isDetail: true, hidden: true,
-                    borderColor: "rgba(168, 85, 247, 0.4)", backgroundColor: "rgba(168, 85, 247, 0.08)",
+                    label: "TX Packets", data: txData, _isDetail: true,
+                    borderColor: "#A855F766", backgroundColor: "#A855F714",
                     fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1,
                 },
                 {
-                    label: "RX Packets", data: rxData, _isDetail: true, hidden: true,
-                    borderColor: "rgba(251, 146, 60, 0.4)", backgroundColor: "rgba(251, 146, 60, 0.08)",
+                    label: "RX Packets", data: rxData, _isDetail: true,
+                    borderColor: "#FB923C66", backgroundColor: "#FB923C14",
                     fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1,
                 },
             ],
@@ -9790,11 +9867,24 @@ function renderPacketsChart(samples) {
         options: _commonChartOptions(theme),
     });
 
+    const txStats = _arrStats(txData);
+    const rxStats = _arrStats(rxData);
+    const headerEl = document.getElementById("charts-packets-card")?.querySelector(".charts-card-header");
+    if (headerEl) {
+        headerEl.querySelectorAll(".charts-stats-row").forEach(el => el.remove());
+        _buildStatBadges(headerEl, _chartPackets, [
+            { label: "Avg TX", value: _formatNumber(txStats.avg.toFixed(0)), color: "#A855F7", datasetLabel: "Avg TX Pkts" },
+            { label: "Avg RX", value: _formatNumber(rxStats.avg.toFixed(0)), color: "#FB923C", datasetLabel: "Avg RX Pkts" },
+            { label: "Peak TX", value: _formatNumber(txStats.max), color: "#A855F7", datasetLabel: "Peak TX Pkts" },
+            { label: "Peak RX", value: _formatNumber(rxStats.max), color: "#FB923C", datasetLabel: "Peak RX Pkts" },
+        ]);
+    }
+
     const btn = document.getElementById("charts-packets-detail-btn");
     if (btn) {
-        btn.dataset.showing = "false";
-        btn.textContent = "Show Detail";
-        btn.onclick = () => _toggleChartDetail(_chartPackets, btn);
+        btn.dataset.avgOnly = "false";
+        btn.textContent = "Avg Only";
+        btn.onclick = () => _toggleAvgOnly(_chartPackets, btn);
     }
 }
 
@@ -9834,14 +9924,14 @@ function renderChannelChart(samples) {
         const avgRxDs = _makeAvgLine(rxArr, rxCol, `Ch${chIdx} Avg RX`); delete avgRxDs.yAxisID;
         datasets.push(avgTxDs);
         datasets.push(avgRxDs);
-        // Detail (hidden by default)
+        // Detail (visible by default)
         datasets.push({
-            label: `Ch${chIdx} TX`, data: txArr, _isDetail: true, hidden: true,
+            label: `Ch${chIdx} TX`, data: txArr, _isDetail: true,
             borderColor: txCol + "66", fill: false,
             tension: 0.2, pointRadius: 0, borderWidth: 1,
         });
         datasets.push({
-            label: `Ch${chIdx} RX`, data: rxArr, _isDetail: true, hidden: true,
+            label: `Ch${chIdx} RX`, data: rxArr, _isDetail: true,
             borderColor: rxCol + "66", borderDash: [4, 2], fill: false,
             tension: 0.2, pointRadius: 0, borderWidth: 1,
         });
@@ -9853,11 +9943,30 @@ function renderChannelChart(samples) {
         options: _bpsChartOptions(theme),
     });
 
+    // Stat badges
+    const headerEl = document.getElementById("charts-channel-card")?.querySelector(".charts-card-header");
+    if (headerEl) {
+        headerEl.querySelectorAll(".charts-stats-row").forEach(el => el.remove());
+        const badgeStats = [];
+        sorted.forEach((chIdx, i) => {
+            const [txCol, rxCol] = chColors[i % chColors.length];
+            const txDs = datasets.find(d => d.label === `Ch${chIdx} Avg TX`);
+            const rxDs = datasets.find(d => d.label === `Ch${chIdx} Avg RX`);
+            // Use raw data stats for badge values
+            const txArr = samples.map(s => { try { const c = JSON.parse(s.channel_data).find(c => c.ch === chIdx); return c ? c.tx : null; } catch (e) { return null; } });
+            const rxArr = samples.map(s => { try { const c = JSON.parse(s.channel_data).find(c => c.ch === chIdx); return c ? c.rx : null; } catch (e) { return null; } });
+            const txS = _arrStats(txArr), rxS = _arrStats(rxArr);
+            badgeStats.push({ label: `Ch${chIdx} TX`, value: _formatBps(txS.avg), color: txCol, datasetLabel: `Ch${chIdx} Avg TX` });
+            badgeStats.push({ label: `Ch${chIdx} RX`, value: _formatBps(rxS.avg), color: rxCol, datasetLabel: `Ch${chIdx} Avg RX` });
+        });
+        _buildStatBadges(headerEl, _chartChannel, badgeStats);
+    }
+
     const btn = document.getElementById("charts-channel-detail-btn");
     if (btn) {
-        btn.dataset.showing = "false";
-        btn.textContent = "Show Detail";
-        btn.onclick = () => _toggleChartDetail(_chartChannel, btn);
+        btn.dataset.avgOnly = "false";
+        btn.textContent = "Avg Only";
+        btn.onclick = () => _toggleAvgOnly(_chartChannel, btn);
     }
 }
 
@@ -9909,7 +10018,6 @@ function renderSiteCharts(samples, mateMap) {
         const siteName = mate.site_name ? ` (${mate.site_name})` : "";
         const title = `Node ${siteLabel}${siteName}`;
 
-        // Card with header row containing title + detail button
         const card = document.createElement("section");
         card.className = "card charts-card";
         const header = document.createElement("div");
@@ -9918,8 +10026,8 @@ function renderSiteCharts(samples, mateMap) {
         h2.textContent = title;
         const detailBtn = document.createElement("button");
         detailBtn.className = "button-secondary charts-detail-btn";
-        detailBtn.textContent = "Show Detail";
-        detailBtn.dataset.showing = "false";
+        detailBtn.textContent = "Avg Only";
+        detailBtn.dataset.avgOnly = "false";
         header.appendChild(h2);
         header.appendChild(detailBtn);
         card.appendChild(header);
@@ -9931,8 +10039,8 @@ function renderSiteCharts(samples, mateMap) {
         card.appendChild(wrap);
         container.appendChild(card);
 
-        // Build datasets — avg lines (default visible) + detail (hidden) + latency on right axis
         const datasets = [];
+        const badgeStats = [];
 
         for (let ti = 0; ti < tunnelIdxs.length; ti++) {
             const tunIdx = tunnelIdxs[ti];
@@ -9953,28 +10061,49 @@ function renderSiteCharts(samples, mateMap) {
                 try { const t = JSON.parse(s.tunnel_data).find(x => x.site === siteIdx && x.tunnel === tunIdx); return t && t.delay_us ? t.delay_us / 1000.0 : null; } catch (e) { return null; }
             });
 
-            // Avg TX/RX (visible by default)
+            const txS = _arrStats(txArr), rxS = _arrStats(rxArr), dlS = _arrStats(delayArr);
+
+            // Rolling avg TX/RX (always visible)
             datasets.push(Object.assign(_makeAvgLine(txArr, txCol, `Avg TX${tunSfx}`)));
             datasets.push(Object.assign(_makeAvgLine(rxArr, rxCol, `Avg RX${tunSfx}`)));
 
-            // Latency (visible by default, right axis)
+            // Latency rolling avg (yellow, right axis)
+            const latAvgData = _computeRollingAvg(delayArr, _rollingAvgWindow());
             datasets.push({
-                label: `Latency${tunSfx}`, data: delayArr,
-                borderColor: latCol, borderWidth: 1.5, borderDash: [2, 2],
-                pointRadius: 0, tension: 0.2, fill: false, yAxisID: "yDelay",
+                label: `Latency${tunSfx}`, data: latAvgData,
+                borderColor: latCol, borderWidth: 2,
+                pointRadius: 0, tension: 0.3, fill: false, yAxisID: "yDelay",
             });
 
-            // Detail TX/RX (hidden) — append 66 for ~40% alpha on hex
+            // Peak lines (hidden, togglable via badges)
+            datasets.push(_makePeakLine(txArr, txCol, `Peak TX${tunSfx}`));
+            datasets.push(_makePeakLine(rxArr, rxCol, `Peak RX${tunSfx}`));
+            const peakLat = _arrStats(delayArr);
             datasets.push({
-                label: `TX${tunSfx}`, data: txArr, _isDetail: true, hidden: true,
+                label: `Peak Lat${tunSfx}`, data: delayArr.map(() => peakLat.max),
+                borderColor: latCol, borderDash: [3, 3], borderWidth: 1.5,
+                pointRadius: 0, tension: 0, fill: false, yAxisID: "yDelay",
+                _isStat: true, hidden: true,
+            });
+
+            // Detail TX/RX (visible by default)
+            datasets.push({
+                label: `TX${tunSfx}`, data: txArr, _isDetail: true,
                 borderColor: txCol + "66", fill: false,
                 tension: 0.2, pointRadius: 0, borderWidth: 1, yAxisID: "y",
             });
             datasets.push({
-                label: `RX${tunSfx}`, data: rxArr, _isDetail: true, hidden: true,
+                label: `RX${tunSfx}`, data: rxArr, _isDetail: true,
                 borderColor: rxCol + "66", borderDash: [4, 2], fill: false,
                 tension: 0.2, pointRadius: 0, borderWidth: 1, yAxisID: "y",
             });
+
+            // Stat badge data
+            badgeStats.push({ label: `Avg TX${tunSfx}`, value: _formatBps(txS.avg), color: txCol, datasetLabel: `Avg TX${tunSfx}` });
+            badgeStats.push({ label: `Avg RX${tunSfx}`, value: _formatBps(rxS.avg), color: rxCol, datasetLabel: `Avg RX${tunSfx}` });
+            badgeStats.push({ label: `Peak TX${tunSfx}`, value: _formatBps(txS.max), color: txCol, datasetLabel: `Peak TX${tunSfx}` });
+            badgeStats.push({ label: `Avg Lat${tunSfx}`, value: dlS.avg.toFixed(1) + " ms", color: latCol, datasetLabel: `Latency${tunSfx}` });
+            badgeStats.push({ label: `Peak Lat${tunSfx}`, value: dlS.max.toFixed(1) + " ms", color: latCol, datasetLabel: `Peak Lat${tunSfx}` });
         }
 
         const chart = new Chart(canvas.getContext("2d"), {
@@ -9984,7 +10113,10 @@ function renderSiteCharts(samples, mateMap) {
         });
         _chartSiteInstances.push({ chart, siteId: siteLabel, title });
 
-        detailBtn.onclick = () => _toggleChartDetail(chart, detailBtn);
+        // Stat badges
+        _buildStatBadges(header, chart, badgeStats);
+
+        detailBtn.onclick = () => _toggleAvgOnly(chart, detailBtn);
     }
 }
 
