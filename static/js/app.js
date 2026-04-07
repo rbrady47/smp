@@ -9723,13 +9723,22 @@ function renderChannelChart(samples) {
 
 // --- Per-site tunnel charts ---
 
-const _siteChartColors = [
-    "rgba(59, 130, 246, 0.9)",   // blue
-    "rgba(34, 197, 94, 0.9)",    // green
-    "rgba(168, 85, 247, 0.9)",   // purple
-    "rgba(251, 146, 60, 0.9)",   // orange
-    "rgba(236, 72, 153, 0.9)",   // pink
-    "rgba(20, 184, 166, 0.9)",   // teal
+// Each tunnel gets a TX color (solid) and RX color (dashed), chosen to
+// be high-contrast against dark backgrounds and distinguishable from
+// each other.  Pairs are [TX color, RX color].
+const _tunnelColorPairs = [
+    ["rgba(59, 130, 246, 0.95)",  "rgba(251, 146, 60, 0.95)"],   // blue TX, orange RX
+    ["rgba(34, 197, 94, 0.95)",   "rgba(236, 72, 153, 0.95)"],   // green TX, pink RX
+    ["rgba(168, 85, 247, 0.95)",  "rgba(250, 204, 21, 0.95)"],   // purple TX, yellow RX
+    ["rgba(20, 184, 166, 0.95)",  "rgba(239, 68, 68, 0.95)"],    // teal TX, red RX
+];
+
+// Latency uses a single distinct color per tunnel
+const _tunnelLatencyColors = [
+    "rgba(59, 130, 246, 0.95)",   // blue
+    "rgba(239, 68, 68, 0.95)",    // red
+    "rgba(34, 197, 94, 0.95)",    // green
+    "rgba(250, 204, 21, 0.95)",   // yellow
 ];
 
 function renderSiteCharts(samples, mateMap) {
@@ -9808,10 +9817,11 @@ function renderSiteCharts(samples, mateMap) {
 
         for (let ti = 0; ti < tunnelIdxs.length; ti++) {
             const tunIdx = tunnelIdxs[ti];
-            const color = _siteChartColors[ti % _siteChartColors.length];
+            const [txColor, rxColor] = _tunnelColorPairs[ti % _tunnelColorPairs.length];
+            const latColor = _tunnelLatencyColors[ti % _tunnelLatencyColors.length];
             const tunLabel = tunnelIdxs.length === 1 ? "" : ` T${tunIdx}`;
 
-            // TX
+            // TX (solid)
             tpDatasets.push({
                 label: `TX${tunLabel}`,
                 data: samples.map(s => {
@@ -9822,10 +9832,11 @@ function renderSiteCharts(samples, mateMap) {
                         return t ? t.tx : null;
                     } catch (e) { return null; }
                 }),
-                borderColor: color,
-                fill: false, tension: 0.2, pointRadius: 0, borderWidth: 1.5,
+                borderColor: txColor,
+                borderWidth: 2,
+                fill: false, tension: 0.2, pointRadius: 0,
             });
-            // RX (dashed)
+            // RX (dashed, different color)
             tpDatasets.push({
                 label: `RX${tunLabel}`,
                 data: samples.map(s => {
@@ -9836,9 +9847,10 @@ function renderSiteCharts(samples, mateMap) {
                         return t ? t.rx : null;
                     } catch (e) { return null; }
                 }),
-                borderColor: color,
-                borderDash: [4, 2],
-                fill: false, tension: 0.2, pointRadius: 0, borderWidth: 1.5,
+                borderColor: rxColor,
+                borderDash: [6, 3],
+                borderWidth: 2,
+                fill: false, tension: 0.2, pointRadius: 0,
             });
             // Delay
             dlDatasets.push({
@@ -9851,8 +9863,9 @@ function renderSiteCharts(samples, mateMap) {
                         return t && t.delay_us ? t.delay_us / 1000.0 : null;
                     } catch (e) { return null; }
                 }),
-                borderColor: color,
-                fill: false, tension: 0.2, pointRadius: 0, borderWidth: 1.5,
+                borderColor: latColor,
+                borderWidth: 2,
+                fill: false, tension: 0.2, pointRadius: 0,
             });
         }
 
