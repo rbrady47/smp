@@ -9919,33 +9919,45 @@ function renderChartsSummaryTable(summary) {
         html += `</tbody></table></div>`;
     }
 
-    // --- Per-Site Summary (text-list style matching PDF layout) ---
+    // --- Per-Site Tunnel Summary (table with rowspan grouping) ---
     if (tunnels.length > 0) {
         // Group tunnels by mate_site_id
-        const siteGroups = new Map();
+        const siteGroups = [];
+        const seen = new Map();
         for (const t of tunnels) {
             const key = t.mate_site_id || `Site ${t.site_index}`;
-            if (!siteGroups.has(key)) {
-                siteGroups.set(key, { mate_site_id: t.mate_site_id, mate_ip: t.mate_ip, site_name: t.site_name, tunnels: [] });
+            if (!seen.has(key)) {
+                const group = { mate_site_id: key, mate_ip: t.mate_ip, site_name: t.site_name, tunnels: [] };
+                seen.set(key, group);
+                siteGroups.push(group);
             }
-            siteGroups.get(key).tunnels.push(t);
+            seen.get(key).tunnels.push(t);
         }
 
         html += `<h3>Per-Site Tunnel Summary</h3>`;
-        html += `<div class="charts-site-list">`;
+        html += `<div class="table-wrap"><table class="data-table charts-tunnel-table">`;
+        html += `<thead><tr><th>Site</th><th>IP</th><th>Tunnel</th><th>Avg TX</th><th>Avg RX</th><th>Latency</th></tr></thead><tbody>`;
 
-        for (const [siteId, group] of siteGroups) {
-            const nameStr = group.site_name && group.site_name !== "--" ? group.site_name : "--";
-            html += `<div class="charts-site-list-item">`;
-            html += `<div class="charts-site-list-header">Node Site ${siteId} &mdash; ${nameStr}</div>`;
-            for (const t of group.tunnels) {
+        for (const group of siteGroups) {
+            const nameStr = group.site_name && group.site_name !== "--" ? ` (${group.site_name})` : "";
+            const rowCount = group.tunnels.length;
+
+            for (let i = 0; i < rowCount; i++) {
+                const t = group.tunnels[i];
                 const delayStr = t.avg_delay_ms != null ? t.avg_delay_ms.toFixed(1) + " ms" : "--";
-                const prefix = group.tunnels.length > 1 ? `T${t.tunnel}: ` : "";
-                html += `<div class="charts-site-list-line">${prefix}TX ${_formatBps(t.avg_tx)} &nbsp;&nbsp; RX ${_formatBps(t.avg_rx)} &nbsp;&nbsp; Latency ${delayStr}</div>`;
+                html += `<tr>`;
+                if (i === 0) {
+                    html += `<td rowspan="${rowCount}" class="charts-tunnel-site-cell">${group.mate_site_id}${nameStr}</td>`;
+                    html += `<td rowspan="${rowCount}" class="charts-tunnel-ip-cell">${group.mate_ip}</td>`;
+                }
+                html += `<td class="number">${t.tunnel}</td>`;
+                html += `<td class="number">${_formatBps(t.avg_tx)}</td>`;
+                html += `<td class="number">${_formatBps(t.avg_rx)}</td>`;
+                html += `<td class="number">${delayStr}</td>`;
+                html += `</tr>`;
             }
-            html += `</div>`;
         }
-        html += `</div>`;
+        html += `</tbody></table></div>`;
     }
 
     container.innerHTML = html;
