@@ -9668,22 +9668,35 @@ function _dualAxisChartOptions(theme) {
     };
 }
 
-function _computeAvg(arr) {
+function _rollingAvgWindow() {
+    // Auto-scale window size based on selected time range
+    if (_chartsSelectedRange <= 3600) return 60;        // 1h → 60s window
+    if (_chartsSelectedRange <= 21600) return 300;       // 6h → 5min window
+    if (_chartsSelectedRange <= 86400) return 900;       // 24h → 15min window
+    return 3600;                                          // 7d → 1h window
+}
+
+function _computeRollingAvg(arr, windowSize) {
+    const result = new Array(arr.length);
     let sum = 0, count = 0;
-    for (const v of arr) { if (v != null) { sum += v; count++; } }
-    return count > 0 ? sum / count : 0;
+    for (let i = 0; i < arr.length; i++) {
+        if (arr[i] != null) { sum += arr[i]; count++; }
+        // Remove the element leaving the window
+        const drop = i - windowSize;
+        if (drop >= 0 && arr[drop] != null) { sum -= arr[drop]; count--; }
+        result[i] = count > 0 ? sum / count : null;
+    }
+    return result;
 }
 
 function _makeAvgLine(arr, color, label) {
-    const avg = _computeAvg(arr);
     return {
         label,
-        data: arr.map(() => avg),
+        data: _computeRollingAvg(arr, _rollingAvgWindow()),
         borderColor: color,
-        borderDash: [8, 4],
         borderWidth: 2,
         pointRadius: 0,
-        tension: 0,
+        tension: 0.3,
         fill: false,
         yAxisID: "y",
     };
