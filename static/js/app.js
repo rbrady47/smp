@@ -10081,8 +10081,8 @@ function renderSiteCharts(samples, mateMap) {
             badgeStats.push({ label: `Avg TX${tunSfx}`, value: _formatBps(txS.avg), color: txCol, datasetLabel: `Avg TX${tunSfx}` });
             badgeStats.push({ label: `Avg RX${tunSfx}`, value: _formatBps(rxS.avg), color: rxCol, datasetLabel: `Avg RX${tunSfx}` });
             badgeStats.push({ label: `Peak TX${tunSfx}`, value: _formatBps(txS.max), color: txCol });
+            badgeStats.push({ label: `Peak RX${tunSfx}`, value: _formatBps(rxS.max), color: rxCol });
             badgeStats.push({ label: `Avg Lat${tunSfx}`, value: dlS.avg.toFixed(1) + " ms", color: latCol, datasetLabel: `Latency${tunSfx}` });
-            badgeStats.push({ label: `Peak Lat${tunSfx}`, value: dlS.max.toFixed(1) + " ms", color: latCol });
         }
 
         const chart = new Chart(canvas.getContext("2d"), {
