@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -199,6 +199,24 @@ class OperationalMapObjectBinding(Base):
     settings_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class ChartSample(Base):
+    __tablename__ = "chart_samples"
+    __table_args__ = (
+        UniqueConstraint("node_id", "timestamp", name="uq_chart_samples_node_timestamp"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    node_id: Mapped[int] = mapped_column(Integer, ForeignKey("nodes.id"), nullable=False, index=True)
+    timestamp: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    user_tx_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    user_tx_pkts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    user_rx_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    user_rx_pkts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    channel_data: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tunnel_data: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
 
 
 class OperationalMapLinkBinding(Base):

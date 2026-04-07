@@ -213,6 +213,7 @@ async def lifespan(app: FastAPI):
     from app.pollers.dn_seeker import dn_seeker_polling_loop
     from app.pollers.services import service_polling_loop
     from app.pollers.dashboard import node_dashboard_polling_loop
+    from app.pollers.charts import charts_polling_loop
 
     Base.metadata.create_all(bind=engine)
     await get_redis()
@@ -226,6 +227,7 @@ async def lifespan(app: FastAPI):
     _ps.dn_seeker_poll_task = asyncio.create_task(dn_seeker_polling_loop(_ps))
     _ps.service_poll_task = asyncio.create_task(service_polling_loop(_ps))
     _ps.node_dashboard_poll_task = asyncio.create_task(node_dashboard_polling_loop(_ps))
+    _ps.charts_poll_task = asyncio.create_task(charts_polling_loop(_ps))
 
     yield
 
@@ -235,6 +237,7 @@ async def lifespan(app: FastAPI):
     await _cancel_task(_ps.dn_seeker_poll_task)
     await _cancel_task(_ps.service_poll_task)
     await _cancel_task(_ps.node_dashboard_poll_task)
+    await _cancel_task(_ps.charts_poll_task)
     await close_redis()
 
 
@@ -254,6 +257,7 @@ from app.routes.topology import router as topology_router
 from app.routes.maps import router as maps_router
 from app.routes.discovery import router as discovery_router
 from app.routes.stream import router as stream_router
+from app.routes.charts import router as charts_router
 
 app.include_router(pages_router)
 app.include_router(system_router)
@@ -264,3 +268,4 @@ app.include_router(topology_router)
 app.include_router(discovery_router)
 app.include_router(maps_router)
 app.include_router(stream_router)
+app.include_router(charts_router)

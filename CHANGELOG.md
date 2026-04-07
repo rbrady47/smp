@@ -6,6 +6,13 @@ The format is intentionally simple so diffs stay readable in version control.
 
 ## Unreleased
 
+### Added
+
+- **Charts data polling:** New 60-second polling loop (`app/pollers/charts.py`) collects per-second traffic counters from each Seeker node via the `bwvChartStats` API endpoint. Data stored in `chart_samples` PostgreSQL table for weekly reporting.
+- **Chart stats API:** `GET /api/nodes/{node_id}/chart-stats?start=&end=&limit=` returns stored per-second samples (user traffic, channel data, tunnel data) for a given node.
+- **ChartSample model:** New `chart_samples` table with unique constraint on `(node_id, timestamp)` — duplicate entries silently skipped via `ON CONFLICT DO NOTHING`.
+- **get_bwv_chart_stats():** New Seeker API function in `seeker_api.py` for the `bwvChartStats` request type.
+
 ### Fixed
 
 - **SSE connection flood:** `connectNodeStateStream()` now guards against duplicate connections and uses manual reconnect with 10s delay instead of EventSource auto-reconnect (which retries immediately).

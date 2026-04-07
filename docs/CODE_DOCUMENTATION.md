@@ -19,6 +19,7 @@ Browser ──HTTP──> FastAPI (app/main.py)
                     │     ├── maps.py      — /api/topology/maps CRUD
                     │     ├── discovery.py  — /api/discovered-nodes, submap discovery
                     │     ├── stream.py    — SSE endpoints
+                    │     ├── charts.py   — /api/nodes/{id}/chart-stats
                     │     └── system.py    — /api/status
                     ├── Background tasks (ping, Seeker polling, service checks)
                     ├── Redis pub/sub (state_manager.py)
@@ -34,6 +35,7 @@ Browser ──HTTP──> FastAPI (app/main.py)
 4. **Service checks** (30s): `service_polling_loop()` → DB updates
 5. **Dashboard projection** (5s): `node_dashboard_polling_loop()` → combines caches into dashboard payload
 6. **Frontend refresh** (user-selected): topology structure + ping status via timer; submap discovery loaded once on page load only (cached in localStorage)
+7. **Charts polling** (60s): `charts_polling_loop()` → `get_bwv_chart_stats()` per node → parse `logEntries` → bulk insert into `chart_samples` table (PostgreSQL `ON CONFLICT DO NOTHING` for dedup). Per-node cursor (`last_le`) tracked in `PollerState.charts_last_le`
 
 ---
 

@@ -41,6 +41,9 @@ class PollerState:
     # --- Dashboard backend (set during init, not by dataclass default) ---
     dashboard_backend: NodeDashboardBackend | None = field(default=None, repr=False)
 
+    # --- Charts poller state (keyed by Node.id) ---
+    charts_last_le: dict[int, int] = field(default_factory=dict)
+
     # --- Background task handles ---
     ping_monitor_task: asyncio.Task | None = field(default=None, repr=False)
     seeker_poll_task: asyncio.Task | None = field(default=None, repr=False)
@@ -48,3 +51,4 @@ class PollerState:
     dn_seeker_poll_task: asyncio.Task | None = field(default=None, repr=False)
     service_poll_task: asyncio.Task | None = field(default=None, repr=False)
     node_dashboard_poll_task: asyncio.Task | None = field(default=None, repr=False)
+    charts_poll_task: asyncio.Task | None = field(default=None, repr=False)

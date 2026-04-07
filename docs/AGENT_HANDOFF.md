@@ -8,6 +8,47 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-07 — Session: Charts Data Polling Feature
+
+### Branch / commit
+- Branch: `seeker-charts` (off `main`)
+
+### What was done
+Implemented a 60-second polling loop that collects per-second traffic counters from each Seeker node via the `bwvChartStats` API endpoint and stores them in PostgreSQL for weekly reporting.
+
+### Files touched
+- `app/seeker_api.py` — added `get_bwv_chart_stats()` function
+- `app/models.py` — added `ChartSample` model with `(node_id, timestamp)` unique constraint
+- `app/poller_state.py` — added `charts_last_le` dict and `charts_poll_task` handle
+- `app/pollers/charts.py` — **new file** — polling loop + `logEntries` parser + bulk insert with dedup
+- `app/routes/charts.py` — **new file** — `GET /api/nodes/{node_id}/chart-stats` endpoint
+- `app/main.py` — launch/cancel charts poller in lifespan, mount charts router
+- `alembic/versions/20260407_0015_create_chart_samples_table.py` — **new migration**
+- `tests/test_charts_parser.py` — **new test** — unit tests for `parse_log_entries()`
+- `CHANGELOG.md` — added feature entries
+- `docs/USER_GUIDE.md` — added chart-stats API to API Areas
+- `docs/CODE_DOCUMENTATION.md` — added charts polling to Data Flow, route listing
+- `docs/AGENT_HANDOFF.md` — this entry
+
+### Verification
+- `python -m compileall app tests alembic` — passes (no syntax errors)
+- Unit tests: same 7 pre-existing import failures (missing deps in env), no new failures
+- Parser logic verified via inline assertions
+
+### Key design decisions
+- Uses `pg_insert().on_conflict_do_nothing()` for dedup — silently skips duplicates
+- Per-node `last_le` cursor tracked in `PollerState.charts_last_le` (in-memory only, resets on restart to re-fetch with `startTime=0`)
+- Channel and tunnel data stored as JSON text in `channel_data` / `tunnel_data` columns (variable structure per node)
+- 65-entry over-request covers gaps from BV restarts
+
+### Gaps / next steps
+- No Redis state persistence for `charts_last_le` — cursor resets on app restart (acceptable: dedup prevents duplicate inserts)
+- No data retention policy / cleanup for old chart_samples rows
+- No aggregation endpoint for weekly rollups (mentioned as optional in spec)
+- No frontend UI for chart visualization
+
+---
+
 ## 2026-04-06 — Session: Final Documentation Pass (Both PRs Merged to Main)
 
 ### Branch / commit

@@ -212,6 +212,7 @@ The current backend exposes several relevant route groups:
 - `/api/dashboard/services`
 - `/api/topology`
 - `/api/topology/discovery`
+- `/api/nodes/{id}/chart-stats` — per-second traffic counters (user bytes/packets, channel data, tunnel data) collected every 60s from each Seeker node via `bwvChartStats`. Query with `?start=<epoch>&end=<epoch>&limit=N` for weekly reporting.
 - Operational-map concepts are being folded back into `/topology` planning rather than exposed as a separate API/UI path for operators right now.
 
 Operational-map API coverage currently includes:
