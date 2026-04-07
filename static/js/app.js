@@ -9646,8 +9646,8 @@ function renderChannelChart(samples) {
 }
 
 async function exportChartsPDF() {
-    if (typeof html2canvas === "undefined" || typeof jspdf === "undefined") {
-        alert("PDF export libraries not loaded. Please try again.");
+    if (typeof jspdf === "undefined") {
+        alert("PDF export library not loaded. Please try again.");
         return;
     }
 
@@ -9660,32 +9660,46 @@ async function exportChartsPDF() {
         const { jsPDF } = jspdf;
         const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
         const pageWidth = pdf.internal.pageSize.getWidth();
+        const pageHeight = pdf.internal.pageSize.getHeight();
         const margin = 15;
 
         // Title
         const rangeLabel = document.querySelector("#charts-range-buttons button.active")?.textContent || "";
         const now = new Date().toLocaleString();
         pdf.setFontSize(16);
-        pdf.text(`SMP Charts Report`, margin, 15);
+        pdf.text("SMP Charts Report", margin, 15);
         pdf.setFontSize(10);
         pdf.text(`Node: ${_chartsNodeName}  |  Range: ${rangeLabel}  |  Generated: ${now}`, margin, 22);
 
-        let yOffset = 28;
+        let yOffset = 30;
 
-        const cards = document.querySelectorAll(".charts-card:not([hidden])");
-        for (const card of cards) {
-            const canvas = await html2canvas(card, { scale: 2, backgroundColor: null });
-            const imgData = canvas.toDataURL("image/png");
+        // Use Chart.js canvas elements directly — avoids html2canvas color-mix() issues
+        const chartEntries = [
+            { chart: _chartThroughput, title: "User Throughput (Bytes/sec)" },
+            { chart: _chartPackets, title: "Packet Counts (Packets/sec)" },
+            { chart: _chartChannel, title: "Channel Breakdown (Bytes/sec)" },
+        ];
+
+        for (const entry of chartEntries) {
+            if (!entry.chart) continue;
+            const canvas = entry.chart.canvas;
+            const imgData = canvas.toDataURL("image/png", 1.0);
             const imgWidth = pageWidth - margin * 2;
             const imgHeight = (canvas.height / canvas.width) * imgWidth;
 
-            if (yOffset + imgHeight > pdf.internal.pageSize.getHeight() - 10) {
+            // Check if we need a new page
+            if (yOffset + imgHeight + 8 > pageHeight - 10) {
                 pdf.addPage();
                 yOffset = 15;
             }
 
+            // Section title
+            pdf.setFontSize(11);
+            pdf.text(entry.title, margin, yOffset);
+            yOffset += 5;
+
             pdf.addImage(imgData, "PNG", margin, yOffset, imgWidth, imgHeight);
-            yOffset += imgHeight + 8;
+            yOffset += imgHeight + 10;
         }
 
         pdf.save(`smp-charts-${_chartsNodeName.replace(/[^a-zA-Z0-9]/g, "_")}-${rangeLabel.replace(/\s/g, "")}.pdf`);
