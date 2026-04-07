@@ -520,6 +520,7 @@ async def get_bwv_chart_stats(
     *,
     start_time: int = 0,
     entries: int = 65,
+    df: int = 0,
     emit_logs: bool = False,
 ) -> dict[str, Any]:
     """Fetch per-second traffic counters from a Seeker node (bwvChartStats).
@@ -527,14 +528,18 @@ async def get_bwv_chart_stats(
     *start_time*: epoch seconds.  ``0`` lets the server auto-compute
     ``now - entries``.  On subsequent polls pass ``last_le + 1``.
 
-    *entries*: number of 1-second entries to request (default 65 to
-    over-request slightly and cover gaps).
+    *entries*: number of 1-second entries to request.
+
+    *df*: decimation factor.  When > 0, the Seeker returns 2 lines per
+    *df* input seconds (min + max).  ``0`` = raw per-second data.
     """
     data0: dict[str, Any] = {
         "reqType": "bwvChartStats",
         "startTime": str(start_time),
         "entries": str(entries),
     }
+    if df > 0:
+        data0["df"] = str(df)
     return await _seeker_post_bwv(node, data0, emit_logs=emit_logs)
 
 

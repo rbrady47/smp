@@ -204,12 +204,13 @@ class OperationalMapObjectBinding(Base):
 class ChartSample(Base):
     __tablename__ = "chart_samples"
     __table_args__ = (
-        UniqueConstraint("node_id", "timestamp", name="uq_chart_samples_node_timestamp"),
+        UniqueConstraint("node_id", "timestamp", "sample_type", name="uq_chart_samples_node_ts_type"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     node_id: Mapped[int] = mapped_column(Integer, ForeignKey("nodes.id"), nullable=False, index=True)
     timestamp: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    sample_type: Mapped[str] = mapped_column(String(8), nullable=False, default="raw", server_default="raw")
     user_tx_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     user_tx_pkts: Mapped[int | None] = mapped_column(Integer, nullable=True)
     user_rx_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)

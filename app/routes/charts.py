@@ -42,6 +42,7 @@ async def get_chart_stats(
         "samples": [
             {
                 "timestamp": s.timestamp,
+                "sample_type": s.sample_type,
                 "user_tx_bytes": s.user_tx_bytes,
                 "user_tx_pkts": s.user_tx_pkts,
                 "user_rx_bytes": s.user_rx_bytes,

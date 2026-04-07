@@ -9557,6 +9557,99 @@ function _chartTimestamps(samples) {
     return samples.map(s => s.timestamp * 1000);
 }
 
+/**
+ * Merge min/max sample pairs into a single timeline.
+ * For decimated data (sample_type "min"/"max"), groups by timestamp
+ * and extracts a field, returning {timestamps, min, max, mid} arrays.
+ * For raw data, min/max/mid are all the same.
+ */
+function _mergeMinMax(samples, field) {
+    const hasMinMax = samples.some(s => s.sample_type === "min" || s.sample_type === "max");
+    if (!hasMinMax) {
+        // Raw data — no min/max pairs
+        const vals = samples.map(s => s[field]);
+        return { timestamps: _chartTimestamps(samples), min: vals, max: vals, mid: vals };
+    }
+    // Group by timestamp
+    const byTs = new Map();
+    for (const s of samples) {
+        if (!byTs.has(s.timestamp)) byTs.set(s.timestamp, {});
+        byTs.get(s.timestamp)[s.sample_type] = s;
+    }
+    const timestamps = [], minArr = [], maxArr = [], midArr = [];
+    for (const [ts, pair] of byTs) {
+        timestamps.push(ts * 1000);
+        const lo = pair.min ? pair.min[field] : null;
+        const hi = pair.max ? pair.max[field] : null;
+        minArr.push(lo);
+        maxArr.push(hi);
+        midArr.push(lo != null && hi != null ? (lo + hi) / 2 : (lo ?? hi));
+    }
+    return { timestamps, min: minArr, max: maxArr, mid: midArr };
+}
+
+/** Extract tunnel field from min/max samples by parsing tunnel_data JSON. */
+function _mergeMinMaxTunnel(samples, siteIdx, tunIdx, field) {
+    const extract = (s) => {
+        if (!s.tunnel_data) return null;
+        try {
+            const t = JSON.parse(s.tunnel_data).find(x => x.site === siteIdx && x.tunnel === tunIdx);
+            return t ? t[field] : null;
+        } catch (e) { return null; }
+    };
+    const hasMinMax = samples.some(s => s.sample_type === "min" || s.sample_type === "max");
+    if (!hasMinMax) {
+        const vals = samples.map(extract);
+        return { timestamps: _chartTimestamps(samples), min: vals, max: vals, mid: vals };
+    }
+    const byTs = new Map();
+    for (const s of samples) {
+        if (!byTs.has(s.timestamp)) byTs.set(s.timestamp, {});
+        byTs.get(s.timestamp)[s.sample_type] = s;
+    }
+    const timestamps = [], minArr = [], maxArr = [], midArr = [];
+    for (const [ts, pair] of byTs) {
+        timestamps.push(ts * 1000);
+        const lo = pair.min ? extract(pair.min) : null;
+        const hi = pair.max ? extract(pair.max) : null;
+        minArr.push(lo);
+        maxArr.push(hi);
+        midArr.push(lo != null && hi != null ? (lo + hi) / 2 : (lo ?? hi));
+    }
+    return { timestamps, min: minArr, max: maxArr, mid: midArr };
+}
+
+/** Extract channel field from min/max samples. */
+function _mergeMinMaxChannel(samples, chIdx, field) {
+    const extract = (s) => {
+        if (!s.channel_data) return null;
+        try {
+            const c = JSON.parse(s.channel_data).find(c => c.ch === chIdx);
+            return c ? c[field] : null;
+        } catch (e) { return null; }
+    };
+    const hasMinMax = samples.some(s => s.sample_type === "min" || s.sample_type === "max");
+    if (!hasMinMax) {
+        const vals = samples.map(extract);
+        return { timestamps: _chartTimestamps(samples), min: vals, max: vals, mid: vals };
+    }
+    const byTs = new Map();
+    for (const s of samples) {
+        if (!byTs.has(s.timestamp)) byTs.set(s.timestamp, {});
+        byTs.get(s.timestamp)[s.sample_type] = s;
+    }
+    const timestamps = [], minArr = [], maxArr = [], midArr = [];
+    for (const [ts, pair] of byTs) {
+        timestamps.push(ts * 1000);
+        const lo = pair.min ? extract(pair.min) : null;
+        const hi = pair.max ? extract(pair.max) : null;
+        minArr.push(lo);
+        maxArr.push(hi);
+        midArr.push(lo != null && hi != null ? (lo + hi) / 2 : (lo ?? hi));
+    }
+    return { timestamps, min: minArr, max: maxArr, mid: midArr };
+}
+
 function _getThemeColors() {
     const style = getComputedStyle(document.documentElement);
     return {
@@ -9780,43 +9873,58 @@ function renderThroughputChart(samples) {
     if (_chartThroughput) { _chartThroughput.destroy(); _chartThroughput = null; }
     const ctx = document.getElementById("charts-throughput-canvas").getContext("2d");
     const theme = _getThemeColors();
-    const labels = _chartTimestamps(samples);
-    const txData = samples.map(s => s.user_tx_bytes);
-    const rxData = samples.map(s => s.user_rx_bytes);
 
-    const avgTxDs = _makeAvgLine(txData, "#3B82F6", "Avg TX"); delete avgTxDs.yAxisID;
-    const avgRxDs = _makeAvgLine(rxData, "#22C55E", "Avg RX"); delete avgRxDs.yAxisID;
+    const txMm = _mergeMinMax(samples, "user_tx_bytes");
+    const rxMm = _mergeMinMax(samples, "user_rx_bytes");
+
+    const avgTxDs = _makeAvgLine(txMm.mid, "#3B82F6", "Avg TX"); delete avgTxDs.yAxisID;
+    const avgRxDs = _makeAvgLine(rxMm.mid, "#22C55E", "Avg RX"); delete avgRxDs.yAxisID;
     _chartThroughput = new Chart(ctx, {
         type: "line",
         data: {
-            labels,
+            labels: txMm.timestamps,
             datasets: [
                 avgTxDs, avgRxDs,
+                // Min/max envelope — max line (top of band)
                 {
-                    label: "TX", data: txData, _isDetail: true,
-                    borderColor: "#3B82F666", backgroundColor: "#3B82F614",
-                    fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1,
+                    label: "TX Range", data: txMm.max, _isDetail: true,
+                    borderColor: "#3B82F633", backgroundColor: "#3B82F618",
+                    fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 0.5,
+                },
+                // Min line (bottom of band, fill goes up to previous dataset)
+                {
+                    label: "TX Min", data: txMm.min, _isDetail: true,
+                    borderColor: "#3B82F633",
+                    fill: false, tension: 0.2, pointRadius: 0, borderWidth: 0.5,
                 },
                 {
-                    label: "RX", data: rxData, _isDetail: true,
-                    borderColor: "#22C55E66", backgroundColor: "#22C55E14",
-                    fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1,
+                    label: "RX Range", data: rxMm.max, _isDetail: true,
+                    borderColor: "#22C55E33", backgroundColor: "#22C55E18",
+                    fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 0.5,
+                },
+                {
+                    label: "RX Min", data: rxMm.min, _isDetail: true,
+                    borderColor: "#22C55E33",
+                    fill: false, tension: 0.2, pointRadius: 0, borderWidth: 0.5,
                 },
             ],
         },
         options: _bpsChartOptions(theme),
     });
 
-    const txStats = _arrStats(txData);
-    const rxStats = _arrStats(rxData);
+    const txStats = _arrStats(txMm.mid);
+    const rxStats = _arrStats(txMm.max); // peak from max values
+    const rxPeak = _arrStats(rxMm.max);
     const headerEl = document.getElementById("charts-throughput-card")?.querySelector(".charts-card-header");
     if (headerEl) {
         // Remove old badges
+        const txAvgS = _arrStats(txMm.mid), rxAvgS = _arrStats(rxMm.mid);
+        const txPeakS = _arrStats(txMm.max), rxPeakS = _arrStats(rxMm.max);
         _buildStatBadges(headerEl, _chartThroughput, [
-            { label: "Avg TX", value: _formatBps(txStats.avg), color: "#3B82F6", datasetLabel: "Avg TX" },
-            { label: "Avg RX", value: _formatBps(rxStats.avg), color: "#22C55E", datasetLabel: "Avg RX" },
-            { label: "Peak TX", value: _formatBps(txStats.max), color: "#3B82F6" },
-            { label: "Peak RX", value: _formatBps(rxStats.max), color: "#22C55E" },
+            { label: "Avg TX", value: _formatBps(txAvgS.avg), color: "#3B82F6", datasetLabel: "Avg TX" },
+            { label: "Avg RX", value: _formatBps(rxAvgS.avg), color: "#22C55E", datasetLabel: "Avg RX" },
+            { label: "Peak TX", value: _formatBps(txPeakS.max), color: "#3B82F6" },
+            { label: "Peak RX", value: _formatBps(rxPeakS.max), color: "#22C55E" },
         ]);
     }
 
@@ -9832,42 +9940,37 @@ function renderPacketsChart(samples) {
     if (_chartPackets) { _chartPackets.destroy(); _chartPackets = null; }
     const ctx = document.getElementById("charts-packets-canvas").getContext("2d");
     const theme = _getThemeColors();
-    const labels = _chartTimestamps(samples);
-    const txData = samples.map(s => s.user_tx_pkts);
-    const rxData = samples.map(s => s.user_rx_pkts);
 
-    const avgTxDs = _makeAvgLine(txData, "#A855F7", "Avg TX Pkts"); delete avgTxDs.yAxisID;
-    const avgRxDs = _makeAvgLine(rxData, "#FB923C", "Avg RX Pkts"); delete avgRxDs.yAxisID;
+    const txMm = _mergeMinMax(samples, "user_tx_pkts");
+    const rxMm = _mergeMinMax(samples, "user_rx_pkts");
+
+    const avgTxDs = _makeAvgLine(txMm.mid, "#A855F7", "Avg TX Pkts"); delete avgTxDs.yAxisID;
+    const avgRxDs = _makeAvgLine(rxMm.mid, "#FB923C", "Avg RX Pkts"); delete avgRxDs.yAxisID;
     _chartPackets = new Chart(ctx, {
         type: "line",
         data: {
-            labels,
+            labels: txMm.timestamps,
             datasets: [
                 avgTxDs, avgRxDs,
-                {
-                    label: "TX Packets", data: txData, _isDetail: true,
-                    borderColor: "#A855F766", backgroundColor: "#A855F714",
-                    fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1,
-                },
-                {
-                    label: "RX Packets", data: rxData, _isDetail: true,
-                    borderColor: "#FB923C66", backgroundColor: "#FB923C14",
-                    fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1,
-                },
+                { label: "TX Range", data: txMm.max, _isDetail: true, borderColor: "#A855F733", backgroundColor: "#A855F718", fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 0.5 },
+                { label: "TX Min", data: txMm.min, _isDetail: true, borderColor: "#A855F733", fill: false, tension: 0.2, pointRadius: 0, borderWidth: 0.5 },
+                { label: "RX Range", data: rxMm.max, _isDetail: true, borderColor: "#FB923C33", backgroundColor: "#FB923C18", fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 0.5 },
+                { label: "RX Min", data: rxMm.min, _isDetail: true, borderColor: "#FB923C33", fill: false, tension: 0.2, pointRadius: 0, borderWidth: 0.5 },
             ],
         },
         options: _commonChartOptions(theme),
     });
 
-    const txStats = _arrStats(txData);
-    const rxStats = _arrStats(rxData);
+    const txStats = _arrStats(txMm.mid);
+    const rxStats = _arrStats(rxMm.mid);
+    const txPeakS = _arrStats(txMm.max), rxPeakS = _arrStats(rxMm.max);
     const headerEl = document.getElementById("charts-packets-card")?.querySelector(".charts-card-header");
     if (headerEl) {
         _buildStatBadges(headerEl, _chartPackets, [
             { label: "Avg TX", value: _formatNumber(txStats.avg.toFixed(0)), color: "#A855F7", datasetLabel: "Avg TX Pkts" },
             { label: "Avg RX", value: _formatNumber(rxStats.avg.toFixed(0)), color: "#FB923C", datasetLabel: "Avg RX Pkts" },
-            { label: "Peak TX", value: _formatNumber(txStats.max), color: "#A855F7" },
-            { label: "Peak RX", value: _formatNumber(rxStats.max), color: "#FB923C" },
+            { label: "Peak TX", value: _formatNumber(txPeakS.max), color: "#A855F7" },
+            { label: "Peak RX", value: _formatNumber(rxPeakS.max), color: "#FB923C" },
         ]);
     }
 
@@ -9899,38 +10002,28 @@ function renderChannelChart(samples) {
     ];
 
     const datasets = [];
+    let chartLabels = null;
     const sorted = [...channelIndexes].sort((a, b) => a - b);
     sorted.forEach((chIdx, i) => {
         const [txCol, rxCol] = chColors[i % chColors.length];
-        const txArr = samples.map(s => {
-            if (!s.channel_data) return null;
-            try { const c = JSON.parse(s.channel_data).find(c => c.ch === chIdx); return c ? c.tx : null; } catch (e) { return null; }
-        });
-        const rxArr = samples.map(s => {
-            if (!s.channel_data) return null;
-            try { const c = JSON.parse(s.channel_data).find(c => c.ch === chIdx); return c ? c.rx : null; } catch (e) { return null; }
-        });
-        // Avg lines (visible by default) — no yAxisID (single-axis chart)
-        const avgTxDs = _makeAvgLine(txArr, txCol, `Ch${chIdx} Avg TX`); delete avgTxDs.yAxisID;
-        const avgRxDs = _makeAvgLine(rxArr, rxCol, `Ch${chIdx} Avg RX`); delete avgRxDs.yAxisID;
+        const txMm = _mergeMinMaxChannel(samples, chIdx, "tx");
+        const rxMm = _mergeMinMaxChannel(samples, chIdx, "rx");
+        if (!chartLabels) chartLabels = txMm.timestamps;
+
+        const avgTxDs = _makeAvgLine(txMm.mid, txCol, `Ch${chIdx} Avg TX`); delete avgTxDs.yAxisID;
+        const avgRxDs = _makeAvgLine(rxMm.mid, rxCol, `Ch${chIdx} Avg RX`); delete avgRxDs.yAxisID;
         datasets.push(avgTxDs);
         datasets.push(avgRxDs);
-        // Detail (visible by default)
-        datasets.push({
-            label: `Ch${chIdx} TX`, data: txArr, _isDetail: true,
-            borderColor: txCol + "66", fill: false,
-            tension: 0.2, pointRadius: 0, borderWidth: 1,
-        });
-        datasets.push({
-            label: `Ch${chIdx} RX`, data: rxArr, _isDetail: true,
-            borderColor: rxCol + "66", borderDash: [4, 2], fill: false,
-            tension: 0.2, pointRadius: 0, borderWidth: 1,
-        });
+        // Min/max envelope (detail)
+        datasets.push({ label: `Ch${chIdx} TX Range`, data: txMm.max, _isDetail: true, borderColor: txCol + "33", backgroundColor: txCol + "18", fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 0.5 });
+        datasets.push({ label: `Ch${chIdx} TX Min`, data: txMm.min, _isDetail: true, borderColor: txCol + "33", fill: false, tension: 0.2, pointRadius: 0, borderWidth: 0.5 });
+        datasets.push({ label: `Ch${chIdx} RX Range`, data: rxMm.max, _isDetail: true, borderColor: rxCol + "33", backgroundColor: rxCol + "18", fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 0.5 });
+        datasets.push({ label: `Ch${chIdx} RX Min`, data: rxMm.min, _isDetail: true, borderColor: rxCol + "33", fill: false, tension: 0.2, pointRadius: 0, borderWidth: 0.5 });
     });
 
     _chartChannel = new Chart(ctx, {
         type: "line",
-        data: { labels, datasets },
+        data: { labels: chartLabels || _chartTimestamps(samples), datasets },
         options: _bpsChartOptions(theme),
     });
 
@@ -9940,12 +10033,9 @@ function renderChannelChart(samples) {
         const badgeStats = [];
         sorted.forEach((chIdx, i) => {
             const [txCol, rxCol] = chColors[i % chColors.length];
-            const txDs = datasets.find(d => d.label === `Ch${chIdx} Avg TX`);
-            const rxDs = datasets.find(d => d.label === `Ch${chIdx} Avg RX`);
-            // Use raw data stats for badge values
-            const txArr = samples.map(s => { try { const c = JSON.parse(s.channel_data).find(c => c.ch === chIdx); return c ? c.tx : null; } catch (e) { return null; } });
-            const rxArr = samples.map(s => { try { const c = JSON.parse(s.channel_data).find(c => c.ch === chIdx); return c ? c.rx : null; } catch (e) { return null; } });
-            const txS = _arrStats(txArr), rxS = _arrStats(rxArr);
+            const txMm = _mergeMinMaxChannel(samples, chIdx, "tx");
+            const rxMm = _mergeMinMaxChannel(samples, chIdx, "rx");
+            const txS = _arrStats(txMm.mid), rxS = _arrStats(rxMm.mid);
             badgeStats.push({ label: `Ch${chIdx} TX`, value: _formatBps(txS.avg), color: txCol, datasetLabel: `Ch${chIdx} Avg TX` });
             badgeStats.push({ label: `Ch${chIdx} RX`, value: _formatBps(rxS.avg), color: rxCol, datasetLabel: `Ch${chIdx} Avg RX` });
         });
@@ -10031,6 +10121,7 @@ function renderSiteCharts(samples, mateMap) {
 
         const datasets = [];
         const badgeStats = [];
+        let chartLabels = null;
 
         for (let ti = 0; ti < tunnelIdxs.length; ti++) {
             const tunIdx = tunnelIdxs[ti];
@@ -10038,56 +10129,62 @@ function renderSiteCharts(samples, mateMap) {
             const latCol = _tunnelLatencyColors[ti % _tunnelLatencyColors.length];
             const tunSfx = tunnelIdxs.length === 1 ? "" : ` T${tunIdx}`;
 
-            const txArr = samples.map(s => {
-                if (!s.tunnel_data) return null;
-                try { const t = JSON.parse(s.tunnel_data).find(x => x.site === siteIdx && x.tunnel === tunIdx); return t ? t.tx : null; } catch (e) { return null; }
-            });
-            const rxArr = samples.map(s => {
-                if (!s.tunnel_data) return null;
-                try { const t = JSON.parse(s.tunnel_data).find(x => x.site === siteIdx && x.tunnel === tunIdx); return t ? t.rx : null; } catch (e) { return null; }
-            });
-            const delayArr = samples.map(s => {
-                if (!s.tunnel_data) return null;
-                try { const t = JSON.parse(s.tunnel_data).find(x => x.site === siteIdx && x.tunnel === tunIdx); return t && t.delay_us ? t.delay_us / 1000.0 : null; } catch (e) { return null; }
-            });
+            const txMm = _mergeMinMaxTunnel(samples, siteIdx, tunIdx, "tx");
+            const rxMm = _mergeMinMaxTunnel(samples, siteIdx, tunIdx, "rx");
+            const dlMm = _mergeMinMaxTunnel(samples, siteIdx, tunIdx, "delay_us");
+            // Convert delay from us to ms
+            const dlMid = dlMm.mid.map(v => v != null ? v / 1000.0 : null);
 
-            const txS = _arrStats(txArr), rxS = _arrStats(rxArr), dlS = _arrStats(delayArr);
+            if (!chartLabels) chartLabels = txMm.timestamps;
+
+            const txS = _arrStats(txMm.mid), rxS = _arrStats(rxMm.mid), dlS = _arrStats(dlMid);
+            const txPk = _arrStats(txMm.max), rxPk = _arrStats(rxMm.max);
 
             // Rolling avg TX/RX (always visible)
-            datasets.push(Object.assign(_makeAvgLine(txArr, txCol, `Avg TX${tunSfx}`)));
-            datasets.push(Object.assign(_makeAvgLine(rxArr, rxCol, `Avg RX${tunSfx}`)));
+            datasets.push(Object.assign(_makeAvgLine(txMm.mid, txCol, `Avg TX${tunSfx}`)));
+            datasets.push(Object.assign(_makeAvgLine(rxMm.mid, rxCol, `Avg RX${tunSfx}`)));
 
             // Latency rolling avg (yellow, right axis)
-            const latAvgData = _computeRollingAvg(delayArr, _rollingAvgWindow());
+            const latAvgData = _computeRollingAvg(dlMid, _rollingAvgWindow());
             datasets.push({
                 label: `Latency${tunSfx}`, data: latAvgData,
                 borderColor: latCol, borderWidth: 2,
                 pointRadius: 0, tension: 0.3, fill: false, yAxisID: "yDelay",
             });
 
-            // Detail TX/RX (visible by default)
+            // Min/max envelope (detail, visible by default)
             datasets.push({
-                label: `TX${tunSfx}`, data: txArr, _isDetail: true,
-                borderColor: txCol + "66", fill: false,
-                tension: 0.2, pointRadius: 0, borderWidth: 1, yAxisID: "y",
+                label: `TX Range${tunSfx}`, data: txMm.max, _isDetail: true,
+                borderColor: txCol + "33", backgroundColor: txCol + "18",
+                fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 0.5, yAxisID: "y",
             });
             datasets.push({
-                label: `RX${tunSfx}`, data: rxArr, _isDetail: true,
-                borderColor: rxCol + "66", borderDash: [4, 2], fill: false,
-                tension: 0.2, pointRadius: 0, borderWidth: 1, yAxisID: "y",
+                label: `TX Min${tunSfx}`, data: txMm.min, _isDetail: true,
+                borderColor: txCol + "33", fill: false,
+                tension: 0.2, pointRadius: 0, borderWidth: 0.5, yAxisID: "y",
+            });
+            datasets.push({
+                label: `RX Range${tunSfx}`, data: rxMm.max, _isDetail: true,
+                borderColor: rxCol + "33", backgroundColor: rxCol + "18",
+                fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 0.5, yAxisID: "y",
+            });
+            datasets.push({
+                label: `RX Min${tunSfx}`, data: rxMm.min, _isDetail: true,
+                borderColor: rxCol + "33", fill: false,
+                tension: 0.2, pointRadius: 0, borderWidth: 0.5, yAxisID: "y",
             });
 
             // Stat badge data
             badgeStats.push({ label: `Avg TX${tunSfx}`, value: _formatBps(txS.avg), color: txCol, datasetLabel: `Avg TX${tunSfx}` });
             badgeStats.push({ label: `Avg RX${tunSfx}`, value: _formatBps(rxS.avg), color: rxCol, datasetLabel: `Avg RX${tunSfx}` });
-            badgeStats.push({ label: `Peak TX${tunSfx}`, value: _formatBps(txS.max), color: txCol });
-            badgeStats.push({ label: `Peak RX${tunSfx}`, value: _formatBps(rxS.max), color: rxCol });
+            badgeStats.push({ label: `Peak TX${tunSfx}`, value: _formatBps(txPk.max), color: txCol });
+            badgeStats.push({ label: `Peak RX${tunSfx}`, value: _formatBps(rxPk.max), color: rxCol });
             badgeStats.push({ label: `Avg Lat${tunSfx}`, value: dlS.avg.toFixed(1) + " ms", color: latCol, datasetLabel: `Latency${tunSfx}` });
         }
 
         const chart = new Chart(canvas.getContext("2d"), {
             type: "line",
-            data: { labels, datasets },
+            data: { labels: chartLabels || [], datasets },
             options: _dualAxisChartOptions(theme),
         });
         _chartSiteInstances.push({ chart, siteId: siteLabel, title });

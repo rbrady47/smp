@@ -30,7 +30,8 @@ logger = logging.getLogger(__name__)
 
 CHARTS_POLL_INTERVAL_SECONDS = 60.0
 CHARTS_POLL_CONCURRENCY = 10
-CHARTS_ENTRIES_PER_REQUEST = 65
+CHARTS_DECIMATION_FACTOR = 30       # 30-second buckets → 2 rows (min+max) per bucket
+CHARTS_ENTRIES_PER_REQUEST = 65     # raw 1-second entries to request (covers 60s + gap buffer)
 
 
 def _safe_int(value: str | None) -> int | None:
@@ -45,6 +46,8 @@ def _safe_int(value: str | None) -> int | None:
 def parse_log_entries(
     log_entries_str: str,
     node_id: int,
+    *,
+    decimated: bool = False,
 ) -> list[dict]:
     """Parse the newline-delimited ``logEntries`` string into row dicts.
 
@@ -52,11 +55,19 @@ def parse_log_entries(
 
         <epoch>,c0t:4487,c0r:4016,...,ut:8078:33,ur:6719:41
 
+    When *decimated* is True (df > 0 was used), lines come in min/max
+    pairs sharing the same timestamp.  The first of each pair is tagged
+    ``sample_type="min"`` and the second ``"max"``.
+
     Returns a list of dicts ready for ``ChartSample`` insertion.
     """
     rows: list[dict] = []
     if not log_entries_str:
         return rows
+
+    # Track timestamps to detect min/max pairs (same ts appears twice)
+    last_ts: int | None = None
+    ts_count = 0
 
     for line in log_entries_str.strip().split("\n"):
         line = line.strip()
@@ -131,9 +142,20 @@ def parse_log_entries(
                     else:
                         tun_entry["delay_us"] = val
 
+        # Determine sample_type
+        if decimated:
+            if ts == last_ts:
+                sample_type = "max"  # second occurrence of same timestamp
+            else:
+                sample_type = "min"  # first occurrence
+                last_ts = ts
+        else:
+            sample_type = "raw"
+
         rows.append({
             "node_id": node_id,
             "timestamp": ts,
+            "sample_type": sample_type,
             "user_tx_bytes": user_tx_bytes,
             "user_tx_pkts": user_tx_pkts,
             "user_rx_bytes": user_rx_bytes,
@@ -158,6 +180,7 @@ async def _poll_node_chart_stats(
         node,
         start_time=start_time,
         entries=CHARTS_ENTRIES_PER_REQUEST,
+        df=CHARTS_DECIMATION_FACTOR,
     )
 
     if result.get("status") != "ok":
@@ -177,7 +200,7 @@ async def _poll_node_chart_stats(
             ps.charts_last_le[node.id] = le
         return
 
-    rows = parse_log_entries(log_entries_str, node.id)
+    rows = parse_log_entries(log_entries_str, node.id, decimated=CHARTS_DECIMATION_FACTOR > 0)
     if not rows:
         if le is not None:
             ps.charts_last_le[node.id] = le
@@ -188,7 +211,7 @@ async def _poll_node_chart_stats(
     try:
         stmt = pg_insert(ChartSample).values(rows)
         stmt = stmt.on_conflict_do_nothing(
-            constraint="uq_chart_samples_node_timestamp",
+            constraint="uq_chart_samples_node_ts_type",
         )
         db.execute(stmt)
         db.commit()

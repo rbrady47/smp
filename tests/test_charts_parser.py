@@ -19,12 +19,25 @@ class TestParseLogEntries(unittest.TestCase):
         row = rows[0]
         self.assertEqual(row["node_id"], 5)
         self.assertEqual(row["timestamp"], 1775573477)
+        self.assertEqual(row["sample_type"], "raw")
         self.assertEqual(row["user_tx_bytes"], 8078)
         self.assertEqual(row["user_tx_pkts"], 33)
         self.assertEqual(row["user_rx_bytes"], 6719)
         self.assertEqual(row["user_rx_pkts"], 41)
         self.assertIsNone(row["channel_data"])
         self.assertIsNone(row["tunnel_data"])
+
+    def test_decimated_min_max_pairs(self):
+        """With df>0, same timestamp appears twice: first=min, second=max."""
+        lines = "1775573477,ut:100:10,ur:200:20\n1775573477,ut:500:50,ur:800:80\n1775573507,ut:150:15,ur:250:25"
+        rows = parse_log_entries(lines, node_id=1, decimated=True)
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[0]["sample_type"], "min")
+        self.assertEqual(rows[0]["timestamp"], 1775573477)
+        self.assertEqual(rows[1]["sample_type"], "max")
+        self.assertEqual(rows[1]["timestamp"], 1775573477)
+        self.assertEqual(rows[2]["sample_type"], "min")
+        self.assertEqual(rows[2]["timestamp"], 1775573507)
 
     def test_channel_data(self):
         line = "1775573477,c0t:4487,c0r:4016,c1t:148,c1r:156,ut:100:10,ur:200:20"
