@@ -9730,11 +9730,14 @@ function _buildStatBadges(container, chart, stats) {
     row.className = "charts-stats-row";
     for (const stat of stats) {
         const badge = document.createElement("span");
-        badge.className = "charts-stat-badge inactive";
         badge.innerHTML = `<span class="charts-stat-badge-dot" style="background:${stat.color}"></span>`
             + `<span class="charts-stat-badge-label">${stat.label}</span>`
             + `<span class="charts-stat-badge-value">${stat.value}</span>`;
         if (stat.datasetLabel) {
+            // Clickable — start lit up (active) since dataset is visible
+            const ds = chart.data.datasets.find(d => d.label === stat.datasetLabel);
+            const isVisible = ds && !ds.hidden;
+            badge.className = "charts-stat-badge" + (isVisible ? " active" : " inactive");
             badge.style.cursor = "pointer";
             badge.addEventListener("click", () => {
                 const ds = chart.data.datasets.find(d => d.label === stat.datasetLabel);
@@ -9745,8 +9748,9 @@ function _buildStatBadges(container, chart, stats) {
                 chart.update("none");
             });
         } else {
+            // Display-only (peaks) — always lit
+            badge.className = "charts-stat-badge active";
             badge.style.cursor = "default";
-            badge.classList.remove("inactive");
         }
         row.appendChild(badge);
     }
