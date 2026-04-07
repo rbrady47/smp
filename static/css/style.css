@@ -5353,3 +5353,93 @@ body.modal-open {
     text-align: right;
     font-variant-numeric: tabular-nums;
 }
+
+/* Per-site chart layout — two charts side by side */
+.charts-site-row {
+    display: flex;
+    gap: 1rem;
+}
+
+.charts-site-half {
+    flex: 1;
+    min-width: 0;
+    height: 250px;
+}
+
+.charts-site-half h3 {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--muted);
+    margin: 0 0 0.25rem 0;
+}
+
+/* Grouped site summary cards */
+.charts-site-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 0.75rem;
+}
+
+.charts-site-summary-card {
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.75rem;
+}
+
+.charts-site-summary-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 0.5rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.charts-site-summary-header strong {
+    font-size: 0.9rem;
+    color: var(--text);
+}
+
+.charts-site-summary-ip {
+    font-size: 0.8rem;
+    color: var(--muted);
+    font-family: monospace;
+}
+
+.charts-site-summary-row {
+    padding: 0.25rem 0;
+}
+
+.charts-site-summary-row + .charts-site-summary-row {
+    border-top: 1px solid var(--border);
+    padding-top: 0.35rem;
+    margin-top: 0.2rem;
+}
+
+.charts-site-tun-label {
+    font-size: 0.75rem;
+    color: var(--muted);
+    display: block;
+    margin-bottom: 0.15rem;
+}
+
+.charts-site-summary-metrics {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.charts-metric {
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+}
+
+.charts-metric-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin-right: 0.25rem;
+}

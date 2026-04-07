@@ -51,25 +51,27 @@
         <p id="charts-empty-state" class="charts-empty-state">Select a node above to view traffic charts.</p>
 
         <section class="card charts-card" id="charts-throughput-card" hidden>
-            <h2>User Throughput (Bytes/sec)</h2>
+            <h2>User Throughput</h2>
             <div class="charts-canvas-wrap">
                 <canvas id="charts-throughput-canvas"></canvas>
             </div>
         </section>
 
         <section class="card charts-card" id="charts-packets-card" hidden>
-            <h2>Packet Counts (Packets/sec)</h2>
+            <h2>Packet Counts</h2>
             <div class="charts-canvas-wrap">
                 <canvas id="charts-packets-canvas"></canvas>
             </div>
         </section>
 
         <section class="card charts-card" id="charts-channel-card" hidden>
-            <h2>Channel Breakdown (Bytes/sec)</h2>
+            <h2>WAN Channel Throughput</h2>
             <div class="charts-canvas-wrap">
                 <canvas id="charts-channel-canvas"></canvas>
             </div>
         </section>
+
+        <div id="charts-site-container"></div>
 
         <section class="card charts-card" id="charts-summary-card" hidden>
             <h2>Summary Report</h2>

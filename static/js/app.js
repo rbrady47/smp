@@ -9362,6 +9362,7 @@ async function discoveryFetchAndInit() {
 let _chartThroughput = null;
 let _chartPackets = null;
 let _chartChannel = null;
+let _chartSiteInstances = [];  // Array of {chart, siteId, title} for per-site charts
 let _chartsSelectedNodeId = null;
 let _chartsSelectedRange = 3600;
 let _chartsNodeName = "";
@@ -9440,6 +9441,12 @@ async function fetchAndRenderCharts() {
     channelCard.hidden = true;
     summaryCard.hidden = true;
 
+    // Clean up previous site charts
+    for (const inst of _chartSiteInstances) inst.chart.destroy();
+    _chartSiteInstances = [];
+    const siteContainer = document.getElementById("charts-site-container");
+    if (siteContainer) siteContainer.innerHTML = "";
+
     const now = Math.floor(Date.now() / 1000);
     const start = now - _chartsSelectedRange;
     const limit = Math.min(_chartsSelectedRange, 604800);
@@ -9468,15 +9475,37 @@ async function fetchAndRenderCharts() {
             channelCard.hidden = false;
         }
 
-        // Fetch and render summary table
+        // Fetch summary (also provides mate map for site charts)
+        let mateMap = {};
         try {
             const summary = await apiRequest(
                 `/api/nodes/${nodeId}/chart-summary?start=${start}&end=${now}`
             );
             renderChartsSummaryTable(summary);
             summaryCard.hidden = false;
+
+            // Build mate map from tunnel_summary for site chart labels
+            for (const t of summary.tunnel_summary || []) {
+                if (t.mate_site_id) {
+                    mateMap[t.mate_site_id] = mateMap[t.mate_site_id] || t;
+                }
+            }
         } catch (summaryErr) {
             summaryCard.hidden = true;
+        }
+
+        // Per-site tunnel charts
+        const hasTunnels = data.samples.some(s => s.tunnel_data);
+        if (hasTunnels) {
+            const siteMap = {};
+            if (_lastSummaryData) {
+                for (const t of _lastSummaryData.tunnel_summary || []) {
+                    if (t.site_index != null && !siteMap[t.site_index]) {
+                        siteMap[t.site_index] = { mate_site_id: t.mate_site_id, mate_ip: t.mate_ip, site_name: t.site_name };
+                    }
+                }
+            }
+            renderSiteCharts(data.samples, siteMap);
         }
 
         exportBtn.disabled = false;
@@ -9501,9 +9530,23 @@ function _getThemeColors() {
     };
 }
 
-function _commonChartOptions(theme) {
+function _bpsTickCallback(value) {
+    const bps = value * 8;
+    if (bps >= 1e9) return (bps / 1e9).toFixed(1) + " Gbps";
+    if (bps >= 1e6) return (bps / 1e6).toFixed(1) + " Mbps";
+    if (bps >= 1e3) return (bps / 1e3).toFixed(0) + " Kbps";
+    return bps.toFixed(0) + " bps";
+}
+
+function _bpsTooltipCallback(context) {
+    const v = context.parsed.y;
+    if (v == null) return "";
+    return context.dataset.label + ": " + _formatBps(v);
+}
+
+function _commonChartOptions(theme, { yTickCallback, tooltipCallback } = {}) {
     const useDecimation = _chartsSelectedRange > 3600;
-    return {
+    const opts = {
         responsive: true,
         maintainAspectRatio: false,
         interaction: { mode: "index", intersect: false },
@@ -9524,6 +9567,24 @@ function _commonChartOptions(theme) {
             },
         },
     };
+    if (yTickCallback) {
+        opts.scales.y.ticks.callback = yTickCallback;
+    }
+    if (tooltipCallback) {
+        opts.plugins.tooltip = { callbacks: { label: tooltipCallback } };
+    }
+    return opts;
+}
+
+function _bpsChartOptions(theme) {
+    return _commonChartOptions(theme, { yTickCallback: _bpsTickCallback, tooltipCallback: _bpsTooltipCallback });
+}
+
+function _delayChartOptions(theme) {
+    return _commonChartOptions(theme, {
+        yTickCallback: (v) => v.toFixed(1) + " ms",
+        tooltipCallback: (ctx) => ctx.dataset.label + ": " + (ctx.parsed.y != null ? ctx.parsed.y.toFixed(1) + " ms" : "--"),
+    });
 }
 
 function renderThroughputChart(samples) {
@@ -9538,28 +9599,22 @@ function renderThroughputChart(samples) {
             labels,
             datasets: [
                 {
-                    label: "TX Bytes",
+                    label: "User TX",
                     data: samples.map(s => s.user_tx_bytes),
                     borderColor: "rgba(59, 130, 246, 0.9)",
                     backgroundColor: "rgba(59, 130, 246, 0.15)",
-                    fill: true,
-                    tension: 0.2,
-                    pointRadius: 0,
-                    borderWidth: 1.5,
+                    fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1.5,
                 },
                 {
-                    label: "RX Bytes",
+                    label: "User RX",
                     data: samples.map(s => s.user_rx_bytes),
                     borderColor: "rgba(34, 197, 94, 0.9)",
                     backgroundColor: "rgba(34, 197, 94, 0.15)",
-                    fill: true,
-                    tension: 0.2,
-                    pointRadius: 0,
-                    borderWidth: 1.5,
+                    fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1.5,
                 },
             ],
         },
-        options: _commonChartOptions(theme),
+        options: _bpsChartOptions(theme),
     });
 }
 
@@ -9579,20 +9634,14 @@ function renderPacketsChart(samples) {
                     data: samples.map(s => s.user_tx_pkts),
                     borderColor: "rgba(168, 85, 247, 0.9)",
                     backgroundColor: "rgba(168, 85, 247, 0.15)",
-                    fill: true,
-                    tension: 0.2,
-                    pointRadius: 0,
-                    borderWidth: 1.5,
+                    fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1.5,
                 },
                 {
                     label: "RX Packets",
                     data: samples.map(s => s.user_rx_pkts),
                     borderColor: "rgba(251, 146, 60, 0.9)",
                     backgroundColor: "rgba(251, 146, 60, 0.15)",
-                    fill: true,
-                    tension: 0.2,
-                    pointRadius: 0,
-                    borderWidth: 1.5,
+                    fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1.5,
                 },
             ],
         },
@@ -9668,8 +9717,159 @@ function renderChannelChart(samples) {
     _chartChannel = new Chart(ctx, {
         type: "line",
         data: { labels, datasets },
-        options: _commonChartOptions(theme),
+        options: _bpsChartOptions(theme),
     });
+}
+
+// --- Per-site tunnel charts ---
+
+const _siteChartColors = [
+    "rgba(59, 130, 246, 0.9)",   // blue
+    "rgba(34, 197, 94, 0.9)",    // green
+    "rgba(168, 85, 247, 0.9)",   // purple
+    "rgba(251, 146, 60, 0.9)",   // orange
+    "rgba(236, 72, 153, 0.9)",   // pink
+    "rgba(20, 184, 166, 0.9)",   // teal
+];
+
+function renderSiteCharts(samples, mateMap) {
+    // Destroy previous site charts
+    for (const inst of _chartSiteInstances) {
+        inst.chart.destroy();
+    }
+    _chartSiteInstances = [];
+
+    const container = document.getElementById("charts-site-container");
+    container.innerHTML = "";
+
+    // Collect all (site, tunnel) pairs across all samples
+    const siteTunnels = new Map(); // siteIdx → Set of tunnelIdx
+    for (const s of samples) {
+        if (!s.tunnel_data) continue;
+        try {
+            const tunnels = JSON.parse(s.tunnel_data);
+            for (const t of tunnels) {
+                if (!siteTunnels.has(t.site)) siteTunnels.set(t.site, new Set());
+                siteTunnels.get(t.site).add(t.tunnel);
+            }
+        } catch (e) { /* skip */ }
+    }
+
+    if (siteTunnels.size === 0) return;
+
+    const theme = _getThemeColors();
+    const labels = _chartTimestamps(samples);
+    const sortedSites = [...siteTunnels.keys()].sort((a, b) => a - b);
+
+    for (const siteIdx of sortedSites) {
+        const tunnelIdxs = [...siteTunnels.get(siteIdx)].sort((a, b) => a - b);
+        const mate = mateMap[siteIdx] || {};
+        const siteLabel = mate.mate_site_id || `Site ${siteIdx}`;
+        const siteName = mate.site_name ? ` (${mate.site_name})` : "";
+        const title = `Node ${siteLabel}${siteName}`;
+
+        // Create card HTML
+        const card = document.createElement("section");
+        card.className = "card charts-card";
+        const h2 = document.createElement("h2");
+        h2.textContent = title;
+        card.appendChild(h2);
+
+        // Two charts side-by-side: throughput and delay
+        const row = document.createElement("div");
+        row.className = "charts-site-row";
+
+        // Throughput chart
+        const throughputWrap = document.createElement("div");
+        throughputWrap.className = "charts-canvas-wrap charts-site-half";
+        const throughputLabel = document.createElement("h3");
+        throughputLabel.textContent = "Throughput";
+        const canvasTp = document.createElement("canvas");
+        throughputWrap.appendChild(throughputLabel);
+        throughputWrap.appendChild(canvasTp);
+
+        // Delay chart
+        const delayWrap = document.createElement("div");
+        delayWrap.className = "charts-canvas-wrap charts-site-half";
+        const delayLabel = document.createElement("h3");
+        delayLabel.textContent = "Latency";
+        const canvasDl = document.createElement("canvas");
+        delayWrap.appendChild(delayLabel);
+        delayWrap.appendChild(canvasDl);
+
+        row.appendChild(throughputWrap);
+        row.appendChild(delayWrap);
+        card.appendChild(row);
+        container.appendChild(card);
+
+        // Build datasets
+        const tpDatasets = [];
+        const dlDatasets = [];
+
+        for (let ti = 0; ti < tunnelIdxs.length; ti++) {
+            const tunIdx = tunnelIdxs[ti];
+            const color = _siteChartColors[ti % _siteChartColors.length];
+            const tunLabel = tunnelIdxs.length === 1 ? "" : ` T${tunIdx}`;
+
+            // TX
+            tpDatasets.push({
+                label: `TX${tunLabel}`,
+                data: samples.map(s => {
+                    if (!s.tunnel_data) return null;
+                    try {
+                        const ts = JSON.parse(s.tunnel_data);
+                        const t = ts.find(x => x.site === siteIdx && x.tunnel === tunIdx);
+                        return t ? t.tx : null;
+                    } catch (e) { return null; }
+                }),
+                borderColor: color,
+                fill: false, tension: 0.2, pointRadius: 0, borderWidth: 1.5,
+            });
+            // RX (dashed)
+            tpDatasets.push({
+                label: `RX${tunLabel}`,
+                data: samples.map(s => {
+                    if (!s.tunnel_data) return null;
+                    try {
+                        const ts = JSON.parse(s.tunnel_data);
+                        const t = ts.find(x => x.site === siteIdx && x.tunnel === tunIdx);
+                        return t ? t.rx : null;
+                    } catch (e) { return null; }
+                }),
+                borderColor: color,
+                borderDash: [4, 2],
+                fill: false, tension: 0.2, pointRadius: 0, borderWidth: 1.5,
+            });
+            // Delay
+            dlDatasets.push({
+                label: `Tunnel ${tunIdx}`,
+                data: samples.map(s => {
+                    if (!s.tunnel_data) return null;
+                    try {
+                        const ts = JSON.parse(s.tunnel_data);
+                        const t = ts.find(x => x.site === siteIdx && x.tunnel === tunIdx);
+                        return t && t.delay_us ? t.delay_us / 1000.0 : null;
+                    } catch (e) { return null; }
+                }),
+                borderColor: color,
+                fill: false, tension: 0.2, pointRadius: 0, borderWidth: 1.5,
+            });
+        }
+
+        const tpChart = new Chart(canvasTp.getContext("2d"), {
+            type: "line",
+            data: { labels, datasets: tpDatasets },
+            options: _bpsChartOptions(theme),
+        });
+        _chartSiteInstances.push({ chart: tpChart, siteId: siteLabel, title: title + " — Throughput" });
+
+        const dlChart = new Chart(canvasDl.getContext("2d"), {
+            type: "line",
+            data: { labels, datasets: dlDatasets },
+            options: _delayChartOptions(theme),
+        });
+        _chartSiteInstances.push({ chart: dlChart, siteId: siteLabel, title: title + " — Latency" });
+    }
 }
 
 let _lastSummaryData = null;
@@ -9695,36 +9895,55 @@ function renderChartsSummaryTable(summary) {
     html += `<tr><td>Total Packets</td><td class="number">${_formatNumber(us.total_tx_pkts)}</td><td class="number">${_formatNumber(us.total_rx_pkts)}</td></tr>`;
     html += `</tbody></table></div>`;
 
-    // --- Per-Tunnel Averages ---
-    if (tunnels.length > 0) {
-        html += `<h3>Per-Tunnel Averages</h3>`;
-        html += `<div class="table-wrap"><table class="data-table">`;
-        html += `<thead><tr><th>Mate Site</th><th>IP</th><th>Tunnel</th><th>Avg TX Rate</th><th>Avg RX Rate</th><th>Avg Latency</th><th>Samples</th></tr></thead><tbody>`;
-        for (const t of tunnels) {
-            const label = t.site_name ? `${t.mate_site_id} (${t.site_name})` : t.mate_site_id;
-            const delayStr = t.avg_delay_ms != null ? t.avg_delay_ms.toFixed(1) + " ms" : "--";
-            html += `<tr>`;
-            html += `<td>${label}</td>`;
-            html += `<td>${t.mate_ip}</td>`;
-            html += `<td class="number">${t.tunnel}</td>`;
-            html += `<td class="number">${_formatBps(t.avg_tx)}</td>`;
-            html += `<td class="number">${_formatBps(t.avg_rx)}</td>`;
-            html += `<td class="number">${delayStr}</td>`;
-            html += `<td class="number">${_formatNumber(t.sample_count)}</td>`;
-            html += `</tr>`;
-        }
-        html += `</tbody></table></div>`;
-    }
-
-    // --- Channel Summary ---
+    // --- Per-Channel Summary ---
     if (channels.length > 0) {
-        html += `<h3>Per-Channel Averages</h3>`;
+        html += `<h3>WAN Channels</h3>`;
         html += `<div class="table-wrap"><table class="data-table">`;
         html += `<thead><tr><th>Channel</th><th>Avg TX Rate</th><th>Avg RX Rate</th></tr></thead><tbody>`;
         for (const c of channels) {
             html += `<tr><td>Ch ${c.channel}</td><td class="number">${_formatBps(c.avg_tx)}</td><td class="number">${_formatBps(c.avg_rx)}</td></tr>`;
         }
         html += `</tbody></table></div>`;
+    }
+
+    // --- Per-Site Summary (grouped, with tunnels inline) ---
+    if (tunnels.length > 0) {
+        // Group tunnels by mate_site_id
+        const siteGroups = new Map();
+        for (const t of tunnels) {
+            const key = t.mate_site_id || `Site ${t.site_index}`;
+            if (!siteGroups.has(key)) {
+                siteGroups.set(key, { mate_site_id: t.mate_site_id, mate_ip: t.mate_ip, site_name: t.site_name, tunnels: [] });
+            }
+            siteGroups.get(key).tunnels.push(t);
+        }
+
+        html += `<h3>Per-Site Tunnel Summary</h3>`;
+        html += `<div class="charts-site-summary-grid">`;
+
+        for (const [siteId, group] of siteGroups) {
+            const label = group.site_name ? `${siteId} (${group.site_name})` : siteId;
+            html += `<div class="charts-site-summary-card">`;
+            html += `<div class="charts-site-summary-header">`;
+            html += `<strong>Node ${label}</strong>`;
+            html += `<span class="charts-site-summary-ip">${group.mate_ip}</span>`;
+            html += `</div>`;
+
+            for (const t of group.tunnels) {
+                const delayStr = t.avg_delay_ms != null ? t.avg_delay_ms.toFixed(1) + " ms" : "--";
+                const tunLabel = group.tunnels.length > 1 ? `<span class="charts-site-tun-label">Tunnel ${t.tunnel}</span>` : "";
+                html += `<div class="charts-site-summary-row">`;
+                html += tunLabel;
+                html += `<div class="charts-site-summary-metrics">`;
+                html += `<span class="charts-metric"><span class="charts-metric-label">TX</span> ${_formatBps(t.avg_tx)}</span>`;
+                html += `<span class="charts-metric"><span class="charts-metric-label">RX</span> ${_formatBps(t.avg_rx)}</span>`;
+                html += `<span class="charts-metric"><span class="charts-metric-label">Latency</span> ${delayStr}</span>`;
+                html += `</div>`;
+                html += `</div>`;
+            }
+            html += `</div>`;
+        }
+        html += `</div>`;
     }
 
     container.innerHTML = html;
@@ -9760,9 +9979,10 @@ async function exportChartsPDF() {
 
         // Use Chart.js canvas elements directly — avoids html2canvas color-mix() issues
         const chartEntries = [
-            { chart: _chartThroughput, title: "User Throughput (Bytes/sec)" },
-            { chart: _chartPackets, title: "Packet Counts (Packets/sec)" },
-            { chart: _chartChannel, title: "Channel Breakdown (Bytes/sec)" },
+            { chart: _chartThroughput, title: "User Throughput" },
+            { chart: _chartPackets, title: "Packet Counts" },
+            { chart: _chartChannel, title: "WAN Channel Throughput" },
+            ..._chartSiteInstances.map(inst => ({ chart: inst.chart, title: inst.title })),
         ];
 
         for (const entry of chartEntries) {
@@ -9810,40 +10030,39 @@ async function exportChartsPDF() {
             pdf.text(`Total TX: ${_formatNumber(us.total_tx_bytes)} bytes    Total RX: ${_formatNumber(us.total_rx_bytes)} bytes`, margin, yOffset); yOffset += 4;
             pdf.text(`Total TX Pkts: ${_formatNumber(us.total_tx_pkts)}    Total RX Pkts: ${_formatNumber(us.total_rx_pkts)}`, margin, yOffset); yOffset += 8;
 
-            // Tunnel averages
+            // Per-site tunnel summary (grouped)
             const tunnels = s.tunnel_summary || [];
             if (tunnels.length > 0) {
-                pdf.setFontSize(11);
-                pdf.text("Per-Tunnel Averages", margin, yOffset);
-                yOffset += 6;
-                pdf.setFontSize(8);
-
-                // Header
-                const cols = [margin, margin + 25, margin + 60, margin + 72, margin + 100, margin + 128, margin + 155];
-                pdf.setFont(undefined, "bold");
-                pdf.text("Mate Site", cols[0], yOffset);
-                pdf.text("IP", cols[1], yOffset);
-                pdf.text("Tun", cols[2], yOffset);
-                pdf.text("Avg TX Rate", cols[3], yOffset);
-                pdf.text("Avg RX Rate", cols[4], yOffset);
-                pdf.text("Avg Latency", cols[5], yOffset);
-                pdf.text("Samples", cols[6], yOffset);
-                pdf.setFont(undefined, "normal");
-                yOffset += 4;
-
+                // Group by site
+                const groups = new Map();
                 for (const t of tunnels) {
-                    if (yOffset > pageHeight - 10) {
-                        pdf.addPage();
-                        yOffset = 15;
-                    }
-                    pdf.text(String(t.mate_site_id), cols[0], yOffset);
-                    pdf.text(String(t.mate_ip), cols[1], yOffset);
-                    pdf.text(String(t.tunnel), cols[2], yOffset);
-                    pdf.text(_formatBps(t.avg_tx), cols[3], yOffset);
-                    pdf.text(_formatBps(t.avg_rx), cols[4], yOffset);
-                    pdf.text(t.avg_delay_ms != null ? t.avg_delay_ms.toFixed(1) + " ms" : "--", cols[5], yOffset);
-                    pdf.text(_formatNumber(t.sample_count), cols[6], yOffset);
+                    const key = t.mate_site_id || `Site ${t.site_index}`;
+                    if (!groups.has(key)) groups.set(key, { ip: t.mate_ip, name: t.site_name, tunnels: [] });
+                    groups.get(key).tunnels.push(t);
+                }
+
+                pdf.setFontSize(11);
+                pdf.text("Per-Site Tunnel Summary", margin, yOffset);
+                yOffset += 6;
+
+                for (const [siteId, group] of groups) {
+                    if (yOffset > pageHeight - 15) { pdf.addPage(); yOffset = 15; }
+                    const label = group.name ? `Node ${siteId} (${group.name})` : `Node ${siteId}`;
+                    pdf.setFontSize(9);
+                    pdf.setFont(undefined, "bold");
+                    pdf.text(`${label}  —  ${group.ip}`, margin, yOffset);
+                    pdf.setFont(undefined, "normal");
                     yOffset += 4;
+
+                    pdf.setFontSize(8);
+                    for (const t of group.tunnels) {
+                        if (yOffset > pageHeight - 10) { pdf.addPage(); yOffset = 15; }
+                        const tunPfx = group.tunnels.length > 1 ? `T${t.tunnel}: ` : "";
+                        const delayStr = t.avg_delay_ms != null ? t.avg_delay_ms.toFixed(1) + " ms" : "--";
+                        pdf.text(`${tunPfx}TX ${_formatBps(t.avg_tx)}    RX ${_formatBps(t.avg_rx)}    Latency ${delayStr}`, margin + 4, yOffset);
+                        yOffset += 3.5;
+                    }
+                    yOffset += 2;
                 }
             }
         }

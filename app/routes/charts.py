@@ -170,6 +170,7 @@ async def get_chart_summary(
             "site_name": "",
         })
         tunnel_summary.append({
+            "site_index": site_idx,
             "mate_site_id": mate_info["mate_site_id"],
             "mate_ip": mate_info["mate_ip"],
             "site_name": mate_info["site_name"],
