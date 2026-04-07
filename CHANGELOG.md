@@ -12,6 +12,9 @@ The format is intentionally simple so diffs stay readable in version control.
 - **Chart stats API:** `GET /api/nodes/{node_id}/chart-stats?start=&end=&limit=` returns stored per-second samples (user traffic, channel data, tunnel data) for a given node.
 - **ChartSample model:** New `chart_samples` table with unique constraint on `(node_id, timestamp)` — duplicate entries silently skipped via `ON CONFLICT DO NOTHING`.
 - **get_bwv_chart_stats():** New Seeker API function in `seeker_api.py` for the `bwvChartStats` request type.
+- **Charts UI page:** New `/charts` page with interactive time-series graphs (Chart.js) showing per-node user throughput, packet counts, and channel breakdown. Node selector dropdown + time range buttons (1h, 6h, 24h, 7d).
+- **PDF export:** Client-side PDF report generation via html2canvas + jsPDF. Captures themed chart views with title header and timestamp.
+- **Charts nav link:** Added "Charts" to the navigation bar on all pages.
 
 ### Fixed
 

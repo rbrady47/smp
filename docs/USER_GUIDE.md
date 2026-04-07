@@ -96,6 +96,21 @@ Typical uses:
 - Remove obsolete checks
 - Keep the service inventory aligned with operational needs
 
+### Charts
+
+Path: `/charts`
+
+The Charts page provides time-series traffic visualization for anchor nodes. It displays per-second data collected by the backend poller from each Seeker node's `bwvChartStats` endpoint.
+
+What operators can do here:
+
+- Select an anchor node from the dropdown to view its traffic data
+- Choose a time range: 1 Hour, 6 Hours, 24 Hours, or 7 Days
+- View three chart types: User Throughput (TX/RX bytes), Packet Counts (TX/RX packets), and Channel Breakdown (per-channel TX/RX)
+- Export the current view as a PDF report for offline sharing or weekly reporting
+
+The data updates automatically as the backend poller collects new samples every 60 seconds. For 7-day views, the charts use client-side decimation to keep rendering smooth with large datasets.
+
 ### Fixed Topology View
 
 Path: `/topology`

@@ -70,6 +70,15 @@ async def discovery_page(request: Request) -> HTMLResponse:
     )
 
 
+@router.get("/charts", response_class=HTMLResponse)
+async def charts_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request=request,
+        name="charts.html",
+        context={"page_title": "Charts | Seeker Management Platform"},
+    )
+
+
 @router.get("/nodes", response_class=HTMLResponse)
 async def nodes_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(

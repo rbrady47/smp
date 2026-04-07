@@ -20,7 +20,8 @@ Browser ──HTTP──> FastAPI (app/main.py)
                     │     ├── discovery.py  — /api/discovered-nodes, submap discovery
                     │     ├── stream.py    — SSE endpoints
                     │     ├── charts.py   — /api/nodes/{id}/chart-stats
-                    │     └── system.py    — /api/status
+                    │     ├── system.py    — /api/status
+                    │     └── pages.py    — /charts (Charts UI page)
                     ├── Background tasks (ping, Seeker polling, service checks)
                     ├── Redis pub/sub (state_manager.py)
                     └── SQLAlchemy ──> PostgreSQL

@@ -9357,6 +9357,349 @@ async function discoveryFetchAndInit() {
 // ==================== END DISCOVERY PAGE ====================
 
 
+// ==================== CHARTS PAGE ====================
+
+let _chartThroughput = null;
+let _chartPackets = null;
+let _chartChannel = null;
+let _chartsSelectedNodeId = null;
+let _chartsSelectedRange = 3600;
+let _chartsNodeName = "";
+
+function loadChartsPage() {
+    const root = document.getElementById("charts-root");
+    if (!root) return;
+
+    const nodeSelect = document.getElementById("charts-node-select");
+    const rangeButtons = document.getElementById("charts-range-buttons");
+    const exportBtn = document.getElementById("charts-export-pdf");
+
+    // Populate node dropdown from /api/nodes
+    apiRequest("/api/nodes").then(nodes => {
+        const enabled = (nodes || []).filter(n => n.enabled && n.api_username);
+        enabled.forEach(n => {
+            const opt = document.createElement("option");
+            opt.value = n.id;
+            opt.textContent = `${n.name} (${n.host})`;
+            nodeSelect.appendChild(opt);
+        });
+    }).catch(() => {});
+
+    nodeSelect.addEventListener("change", () => {
+        _chartsSelectedNodeId = nodeSelect.value || null;
+        _chartsNodeName = nodeSelect.selectedOptions[0]?.textContent || "";
+        if (_chartsSelectedNodeId) {
+            fetchAndRenderCharts();
+        }
+    });
+
+    rangeButtons.addEventListener("click", (e) => {
+        const btn = e.target.closest("button[data-range]");
+        if (!btn) return;
+        rangeButtons.querySelectorAll("button").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        _chartsSelectedRange = parseInt(btn.dataset.range, 10);
+        if (_chartsSelectedNodeId) {
+            fetchAndRenderCharts();
+        }
+    });
+
+    exportBtn.addEventListener("click", exportChartsPDF);
+}
+
+async function fetchAndRenderCharts() {
+    const nodeId = _chartsSelectedNodeId;
+    if (!nodeId) return;
+
+    const emptyState = document.getElementById("charts-empty-state");
+    const errorEl = document.getElementById("charts-error");
+    const throughputCard = document.getElementById("charts-throughput-card");
+    const packetsCard = document.getElementById("charts-packets-card");
+    const channelCard = document.getElementById("charts-channel-card");
+    const exportBtn = document.getElementById("charts-export-pdf");
+
+    emptyState.hidden = true;
+    errorEl.hidden = true;
+    throughputCard.hidden = true;
+    packetsCard.hidden = true;
+    channelCard.hidden = true;
+
+    const now = Math.floor(Date.now() / 1000);
+    const start = now - _chartsSelectedRange;
+    const limit = Math.min(_chartsSelectedRange, 604800);
+
+    try {
+        const data = await apiRequest(
+            `/api/nodes/${nodeId}/chart-stats?start=${start}&end=${now}&limit=${limit}`
+        );
+
+        if (!data.samples || data.samples.length === 0) {
+            emptyState.textContent = "No chart data available for the selected time range.";
+            emptyState.hidden = false;
+            exportBtn.disabled = true;
+            return;
+        }
+
+        renderThroughputChart(data.samples);
+        throughputCard.hidden = false;
+
+        renderPacketsChart(data.samples);
+        packetsCard.hidden = false;
+
+        const hasChannels = data.samples.some(s => s.channel_data);
+        if (hasChannels) {
+            renderChannelChart(data.samples);
+            channelCard.hidden = false;
+        }
+
+        exportBtn.disabled = false;
+    } catch (err) {
+        errorEl.textContent = `Failed to load chart data: ${err.message}`;
+        errorEl.hidden = false;
+        exportBtn.disabled = true;
+    }
+}
+
+function _chartTimestamps(samples) {
+    return samples.map(s => s.timestamp * 1000);
+}
+
+function _getThemeColors() {
+    const style = getComputedStyle(document.documentElement);
+    return {
+        text: style.getPropertyValue("--text").trim() || "#1e293b",
+        muted: style.getPropertyValue("--muted").trim() || "#94a3b8",
+        border: style.getPropertyValue("--border").trim() || "#e2e8f0",
+        surface: style.getPropertyValue("--surface").trim() || "#ffffff",
+    };
+}
+
+function _commonChartOptions(theme) {
+    const useDecimation = _chartsSelectedRange > 3600;
+    return {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+            legend: { labels: { color: theme.text, usePointStyle: true, pointStyle: "circle" } },
+            decimation: useDecimation ? { enabled: true, algorithm: "lttb", threshold: 800 } : { enabled: false },
+        },
+        scales: {
+            x: {
+                type: "time",
+                ticks: { color: theme.muted, maxTicksLimit: 12 },
+                grid: { color: theme.border + "40" },
+            },
+            y: {
+                beginAtZero: true,
+                ticks: { color: theme.muted },
+                grid: { color: theme.border + "40" },
+            },
+        },
+    };
+}
+
+function renderThroughputChart(samples) {
+    if (_chartThroughput) { _chartThroughput.destroy(); _chartThroughput = null; }
+    const ctx = document.getElementById("charts-throughput-canvas").getContext("2d");
+    const theme = _getThemeColors();
+    const labels = _chartTimestamps(samples);
+
+    _chartThroughput = new Chart(ctx, {
+        type: "line",
+        data: {
+            labels,
+            datasets: [
+                {
+                    label: "TX Bytes",
+                    data: samples.map(s => s.user_tx_bytes),
+                    borderColor: "rgba(59, 130, 246, 0.9)",
+                    backgroundColor: "rgba(59, 130, 246, 0.15)",
+                    fill: true,
+                    tension: 0.2,
+                    pointRadius: 0,
+                    borderWidth: 1.5,
+                },
+                {
+                    label: "RX Bytes",
+                    data: samples.map(s => s.user_rx_bytes),
+                    borderColor: "rgba(34, 197, 94, 0.9)",
+                    backgroundColor: "rgba(34, 197, 94, 0.15)",
+                    fill: true,
+                    tension: 0.2,
+                    pointRadius: 0,
+                    borderWidth: 1.5,
+                },
+            ],
+        },
+        options: _commonChartOptions(theme),
+    });
+}
+
+function renderPacketsChart(samples) {
+    if (_chartPackets) { _chartPackets.destroy(); _chartPackets = null; }
+    const ctx = document.getElementById("charts-packets-canvas").getContext("2d");
+    const theme = _getThemeColors();
+    const labels = _chartTimestamps(samples);
+
+    _chartPackets = new Chart(ctx, {
+        type: "line",
+        data: {
+            labels,
+            datasets: [
+                {
+                    label: "TX Packets",
+                    data: samples.map(s => s.user_tx_pkts),
+                    borderColor: "rgba(168, 85, 247, 0.9)",
+                    backgroundColor: "rgba(168, 85, 247, 0.15)",
+                    fill: true,
+                    tension: 0.2,
+                    pointRadius: 0,
+                    borderWidth: 1.5,
+                },
+                {
+                    label: "RX Packets",
+                    data: samples.map(s => s.user_rx_pkts),
+                    borderColor: "rgba(251, 146, 60, 0.9)",
+                    backgroundColor: "rgba(251, 146, 60, 0.15)",
+                    fill: true,
+                    tension: 0.2,
+                    pointRadius: 0,
+                    borderWidth: 1.5,
+                },
+            ],
+        },
+        options: _commonChartOptions(theme),
+    });
+}
+
+function renderChannelChart(samples) {
+    if (_chartChannel) { _chartChannel.destroy(); _chartChannel = null; }
+    const ctx = document.getElementById("charts-channel-canvas").getContext("2d");
+    const theme = _getThemeColors();
+    const labels = _chartTimestamps(samples);
+
+    // Collect all channel indexes across samples
+    const channelIndexes = new Set();
+    samples.forEach(s => {
+        if (!s.channel_data) return;
+        try {
+            const chs = JSON.parse(s.channel_data);
+            chs.forEach(c => channelIndexes.add(c.ch));
+        } catch (e) { /* skip */ }
+    });
+
+    const channelColors = [
+        ["rgba(59, 130, 246, 0.8)", "rgba(59, 130, 246, 0.1)"],
+        ["rgba(34, 197, 94, 0.8)", "rgba(34, 197, 94, 0.1)"],
+        ["rgba(168, 85, 247, 0.8)", "rgba(168, 85, 247, 0.1)"],
+        ["rgba(251, 146, 60, 0.8)", "rgba(251, 146, 60, 0.1)"],
+    ];
+
+    const datasets = [];
+    const sortedIndexes = [...channelIndexes].sort((a, b) => a - b);
+    sortedIndexes.forEach((chIdx, i) => {
+        const colors = channelColors[i % channelColors.length];
+        // TX dataset
+        datasets.push({
+            label: `Ch${chIdx} TX`,
+            data: samples.map(s => {
+                if (!s.channel_data) return null;
+                try {
+                    const chs = JSON.parse(s.channel_data);
+                    const ch = chs.find(c => c.ch === chIdx);
+                    return ch ? ch.tx : null;
+                } catch (e) { return null; }
+            }),
+            borderColor: colors[0],
+            backgroundColor: colors[1],
+            fill: false,
+            tension: 0.2,
+            pointRadius: 0,
+            borderWidth: 1.5,
+        });
+        // RX dataset
+        datasets.push({
+            label: `Ch${chIdx} RX`,
+            data: samples.map(s => {
+                if (!s.channel_data) return null;
+                try {
+                    const chs = JSON.parse(s.channel_data);
+                    const ch = chs.find(c => c.ch === chIdx);
+                    return ch ? ch.rx : null;
+                } catch (e) { return null; }
+            }),
+            borderColor: colors[0].replace("0.8", "0.5"),
+            borderDash: [4, 2],
+            fill: false,
+            tension: 0.2,
+            pointRadius: 0,
+            borderWidth: 1.5,
+        });
+    });
+
+    _chartChannel = new Chart(ctx, {
+        type: "line",
+        data: { labels, datasets },
+        options: _commonChartOptions(theme),
+    });
+}
+
+async function exportChartsPDF() {
+    if (typeof html2canvas === "undefined" || typeof jspdf === "undefined") {
+        alert("PDF export libraries not loaded. Please try again.");
+        return;
+    }
+
+    const exportBtn = document.getElementById("charts-export-pdf");
+    const origText = exportBtn.textContent;
+    exportBtn.textContent = "Exporting...";
+    exportBtn.disabled = true;
+
+    try {
+        const { jsPDF } = jspdf;
+        const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const margin = 15;
+
+        // Title
+        const rangeLabel = document.querySelector("#charts-range-buttons button.active")?.textContent || "";
+        const now = new Date().toLocaleString();
+        pdf.setFontSize(16);
+        pdf.text(`SMP Charts Report`, margin, 15);
+        pdf.setFontSize(10);
+        pdf.text(`Node: ${_chartsNodeName}  |  Range: ${rangeLabel}  |  Generated: ${now}`, margin, 22);
+
+        let yOffset = 28;
+
+        const cards = document.querySelectorAll(".charts-card:not([hidden])");
+        for (const card of cards) {
+            const canvas = await html2canvas(card, { scale: 2, backgroundColor: null });
+            const imgData = canvas.toDataURL("image/png");
+            const imgWidth = pageWidth - margin * 2;
+            const imgHeight = (canvas.height / canvas.width) * imgWidth;
+
+            if (yOffset + imgHeight > pdf.internal.pageSize.getHeight() - 10) {
+                pdf.addPage();
+                yOffset = 15;
+            }
+
+            pdf.addImage(imgData, "PNG", margin, yOffset, imgWidth, imgHeight);
+            yOffset += imgHeight + 8;
+        }
+
+        pdf.save(`smp-charts-${_chartsNodeName.replace(/[^a-zA-Z0-9]/g, "_")}-${rangeLabel.replace(/\s/g, "")}.pdf`);
+    } catch (err) {
+        alert(`PDF export failed: ${err.message}`);
+    } finally {
+        exportBtn.textContent = origText;
+        exportBtn.disabled = false;
+    }
+}
+
+// ==================== END CHARTS PAGE ====================
+
+
 window.addEventListener("DOMContentLoaded", () => {
     applyThemeMode();
     mountThemeControl();
@@ -9368,6 +9711,7 @@ window.addEventListener("DOMContentLoaded", () => {
     safeStart(loadServices, "services");
     safeStart(loadTopologyPage, "topology");
     safeStart(loadDiscoveryPage, "discovery");
+    safeStart(loadChartsPage, "charts");
     safeStart(loadNodeDetailPage, "node-detail");
 
     // Connect SSE for real-time updates on all pages

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page_title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260407-charts1">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">SMP</div>
+        <nav class="nav">
+            <a href="/">Dashboard</a>
+            <a href="/services/dashboard">Services Dashboard</a>
+            <a href="/topology">Topology</a>
+            <a href="/discovery">Discovery</a>
+            <a href="/charts" class="active">Charts</a>
+            <a href="#health">Health</a>
+            <a href="#admin">Admin</a>
+        </nav>
+    </header>
+
+    <main class="container dashboard-container" id="charts-root">
+        <section class="dashboard-toolbar">
+            <div>
+                <p class="eyebrow">Analytics</p>
+                <h1>Charts</h1>
+                <p class="subtitle">Time-series traffic visualization per anchor node.</p>
+            </div>
+            <div class="dashboard-toolbar-actions">
+                <button id="charts-export-pdf" class="button-secondary" disabled>Export PDF</button>
+            </div>
+        </section>
+
+        <section class="card charts-controls">
+            <div class="charts-controls-row">
+                <label for="charts-node-select">Node</label>
+                <select id="charts-node-select" class="charts-select">
+                    <option value="">Select a node...</option>
+                </select>
+
+                <div class="charts-range-buttons" id="charts-range-buttons">
+                    <button data-range="3600" class="button-secondary active">1 Hour</button>
+                    <button data-range="21600" class="button-secondary">6 Hours</button>
+                    <button data-range="86400" class="button-secondary">24 Hours</button>
+                    <button data-range="604800" class="button-secondary">7 Days</button>
+                </div>
+            </div>
+        </section>
+
+        <p id="charts-empty-state" class="charts-empty-state">Select a node above to view traffic charts.</p>
+
+        <section class="card charts-card" id="charts-throughput-card" hidden>
+            <h2>User Throughput (Bytes/sec)</h2>
+            <div class="charts-canvas-wrap">
+                <canvas id="charts-throughput-canvas"></canvas>
+            </div>
+        </section>
+
+        <section class="card charts-card" id="charts-packets-card" hidden>
+            <h2>Packet Counts (Packets/sec)</h2>
+            <div class="charts-canvas-wrap">
+                <canvas id="charts-packets-canvas"></canvas>
+            </div>
+        </section>
+
+        <section class="card charts-card" id="charts-channel-card" hidden>
+            <h2>Channel Breakdown (Bytes/sec)</h2>
+            <div class="charts-canvas-wrap">
+                <canvas id="charts-channel-canvas"></canvas>
+            </div>
+        </section>
+
+        <p id="charts-error" class="status-error" hidden></p>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+    <script src="{{ url_for('static', path='js/app.js') }}?v=20260407-charts1"></script>
+</body>
+</html>

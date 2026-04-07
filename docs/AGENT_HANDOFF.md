@@ -8,6 +8,34 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-07 — Session: Charts UI Visualization + PDF Export
+
+### Branch / commit
+- Branch: `seeker-charts`
+
+### What was done
+Added a `/charts` page with interactive Chart.js time-series graphs and client-side PDF export.
+
+### Files touched
+- `app/routes/pages.py` — added `/charts` route
+- `templates/charts.html` — **new file** — charts page with CDN scripts (Chart.js, html2canvas, jsPDF)
+- `templates/*.html` (all 9) — added "Charts" nav link
+- `static/js/app.js` — added charts page JS (~230 lines): node selector, time range buttons, throughput/packets/channel charts, PDF export
+- `static/css/style.css` — added charts-specific CSS (~60 lines)
+- `CHANGELOG.md`, `docs/USER_GUIDE.md`, `docs/CODE_DOCUMENTATION.md`, `docs/AGENT_HANDOFF.md`
+
+### Verification
+- Compile check passes
+- Charts page loads, node dropdown populates, charts render with real data
+- PDF export captures themed charts
+
+### Gaps / next steps
+- No auto-refresh on the charts page (user must re-select to see new data)
+- Server-side aggregation endpoint for very large date ranges not yet implemented
+- CDN scripts require internet access; vendor locally for air-gapped deployments
+
+---
+
 ## 2026-04-07 — Session: Charts Data Polling Feature
 
 ### Branch / commit
