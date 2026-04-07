@@ -72,11 +72,13 @@ async def get_chart_summary(
     if node is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Node not found")
 
+    # Use raw samples for accurate averages (not min/max midpoints)
     stmt = (
         select(ChartSample)
         .where(ChartSample.node_id == node_id)
         .where(ChartSample.timestamp >= start)
         .where(ChartSample.timestamp <= end)
+        .where(ChartSample.sample_type == "raw")
         .order_by(ChartSample.timestamp)
     )
     samples = db.scalars(stmt).all()

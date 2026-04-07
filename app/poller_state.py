@@ -43,6 +43,7 @@ class PollerState:
 
     # --- Charts poller state (keyed by Node.id) ---
     charts_last_le: dict[int, int] = field(default_factory=dict)
+    charts_raw_last_le: dict[int, int] = field(default_factory=dict)
 
     # --- Background task handles ---
     ping_monitor_task: asyncio.Task | None = field(default=None, repr=False)

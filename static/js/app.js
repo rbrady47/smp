@@ -9365,7 +9365,6 @@ let _chartChannel = null;
 let _chartSiteInstances = [];  // Array of {chart, siteId, title} for per-site charts
 let _chartsSelectedNodeId = null;
 let _chartsSelectedRange = 3600;
-let _chartsDecimationThreshold = 800;
 let _chartsNodeName = "";
 
 function loadChartsPage() {
@@ -9401,14 +9400,6 @@ function loadChartsPage() {
         rangeButtons.querySelectorAll("button").forEach(b => b.classList.remove("active"));
         btn.classList.add("active");
         _chartsSelectedRange = parseInt(btn.dataset.range, 10);
-        if (_chartsSelectedNodeId) {
-            fetchAndRenderCharts();
-        }
-    });
-
-    const decimationSelect = document.getElementById("charts-decimation-select");
-    decimationSelect.addEventListener("change", () => {
-        _chartsDecimationThreshold = parseInt(decimationSelect.value, 10);
         if (_chartsSelectedNodeId) {
             fetchAndRenderCharts();
         }
@@ -9675,7 +9666,7 @@ function _bpsTooltipCallback(context) {
 }
 
 function _commonChartOptions(theme, { yTickCallback, tooltipCallback } = {}) {
-    const useDecimation = _chartsDecimationThreshold > 0 && _chartsSelectedRange > 3600;
+    const useDecimation = false; // Seeker-side df=30 handles decimation
     const opts = {
         responsive: true,
         maintainAspectRatio: false,
@@ -9718,7 +9709,7 @@ function _delayChartOptions(theme) {
 }
 
 function _dualAxisChartOptions(theme) {
-    const useDecimation = _chartsDecimationThreshold > 0 && _chartsSelectedRange > 3600;
+    const useDecimation = false; // Seeker-side df=30 handles decimation
     return {
         responsive: true,
         maintainAspectRatio: false,
@@ -9865,7 +9856,7 @@ function _toggleAvgOnly(chart, btn) {
         }
     }
     btn.dataset.avgOnly = isAvgOnly ? "false" : "true";
-    btn.textContent = isAvgOnly ? "Avg Only" : "Show Detail";
+    btn.textContent = isAvgOnly ? "Smooth" : "Envelope";
     chart.update("none");
 }
 
@@ -9931,7 +9922,7 @@ function renderThroughputChart(samples) {
     const btn = document.getElementById("charts-throughput-detail-btn");
     if (btn) {
         btn.dataset.avgOnly = "false";
-        btn.textContent = "Avg Only";
+        btn.textContent = "Smooth";
         btn.onclick = () => _toggleAvgOnly(_chartThroughput, btn);
     }
 }
@@ -9977,7 +9968,7 @@ function renderPacketsChart(samples) {
     const btn = document.getElementById("charts-packets-detail-btn");
     if (btn) {
         btn.dataset.avgOnly = "false";
-        btn.textContent = "Avg Only";
+        btn.textContent = "Smooth";
         btn.onclick = () => _toggleAvgOnly(_chartPackets, btn);
     }
 }
@@ -10045,7 +10036,7 @@ function renderChannelChart(samples) {
     const btn = document.getElementById("charts-channel-detail-btn");
     if (btn) {
         btn.dataset.avgOnly = "false";
-        btn.textContent = "Avg Only";
+        btn.textContent = "Smooth";
         btn.onclick = () => _toggleAvgOnly(_chartChannel, btn);
     }
 }
@@ -10106,7 +10097,7 @@ function renderSiteCharts(samples, mateMap) {
         h2.textContent = title;
         const detailBtn = document.createElement("button");
         detailBtn.className = "button-secondary charts-detail-btn";
-        detailBtn.textContent = "Avg Only";
+        detailBtn.textContent = "Smooth";
         detailBtn.dataset.avgOnly = "false";
         header.appendChild(h2);
         header.appendChild(detailBtn);
