@@ -100,21 +100,30 @@ Typical uses:
 
 Path: `/charts`
 
-The Charts page provides time-series traffic visualization for anchor nodes. It displays per-second data collected by the backend poller from each Seeker node's `bwvChartStats` endpoint.
+The Charts page provides time-series traffic visualization for anchor nodes. The backend polls each Seeker node every 60 seconds using two `bwvChartStats` requests: a decimated fetch (df=30) for min/max envelope visualization, and a raw fetch (30 entries) for accurate averages.
 
 What operators can do here:
 
 - Select an anchor node from the dropdown to view its traffic data
 - Choose a time range: 1 Hour, 6 Hours, 24 Hours, or 7 Days
-- View three chart types: User Throughput (TX/RX bytes), Packet Counts (TX/RX packets), and Channel Breakdown (per-channel TX/RX)
+- View charts: User Throughput, Packet Counts, WAN Channel Throughput, and per-site tunnel charts (one card per mate site with throughput + latency on dual axes)
+- Toggle between "Envelope" view (shows min/max range band) and "Smooth" view (rolling average only)
+- Click stat badges to toggle individual datasets on/off (Avg TX, Avg RX, Latency)
 - Export the current view as a PDF report for offline sharing or weekly reporting
 
+Chart features:
+- **Envelope bands** show the true min/max range from the Seeker's 30-second decimation windows
+- **Rolling average** curve shows the smoothed trend through the data
+- **Stat badges** display Avg TX, Avg RX, Peak TX, Peak RX, and Avg Latency — computed from raw per-second samples for accuracy
+- **Latency** shown in yellow on the right Y-axis (site tunnel charts only)
+- **Colors**: TX/RX use distinct color pairs per tunnel; yellow is reserved exclusively for latency
+
 Below the graphs, a **Summary Report** table shows:
-- **User Throughput**: average TX/RX rates (in Kbps/Mbps/Gbps), total bytes, and total packets for the selected period
-- **Per-Tunnel Averages**: for each mate/site node — average TX rate, RX rate, latency (ms), and sample count
+- **User Throughput**: average TX/RX rates (Kbps/Mbps/Gbps), total bytes, and total packets
+- **Per-Site Tunnel Summary**: grouped by mate site with rowspan, showing Avg TX, Avg RX, and Avg Latency per tunnel
 - **Per-Channel Averages**: average TX/RX rate per WAN channel
 
-The data updates automatically as the backend poller collects new samples every 60 seconds. For 7-day views, the charts use client-side decimation to keep rendering smooth with large datasets.
+All summary statistics are computed from raw per-second samples (not min/max midpoints) for reporting accuracy.
 
 ### Fixed Topology View
 

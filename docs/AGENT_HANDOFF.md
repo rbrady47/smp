@@ -8,7 +8,55 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
-## 2026-04-07 — Session: Charts UI Visualization + PDF Export
+## 2026-04-07 — Session: Charts Feature (Complete)
+
+### Branch / commit
+- Branch: `seeker-charts`
+
+### What was built
+Complete charts data polling, visualization, and PDF reporting feature for Seeker traffic data.
+
+### Architecture
+- **Hybrid polling**: Two `bwvChartStats` fetches per 60s cycle per node — decimated (df=30) for min/max envelopes, raw (entries=30) for accurate averages
+- **Storage**: `chart_samples` table with `sample_type` column (min/max/raw). Unique constraint on `(node_id, timestamp, sample_type)`
+- **Charts UI**: Chart.js with dual-axis graphs (throughput left, latency right in yellow). Per-site tunnel charts with envelope bands + rolling average. Clickable stat badges. Smooth/Envelope toggle.
+- **Summary report**: Aggregated from raw samples only. Per-site tunnel table with rowspan grouping. All rates in Kbps/Mbps/Gbps.
+- **PDF export**: jsPDF with chart images + formatted summary text
+
+### Files touched
+- `app/pollers/charts.py` — dual-fetch polling loop, logEntries parser with min/max tagging
+- `app/seeker_api.py` — `get_bwv_chart_stats(df=, entries=)`
+- `app/models.py` — `ChartSample` with `sample_type` column
+- `app/poller_state.py` — `charts_last_le`, `charts_raw_last_le`
+- `app/routes/charts.py` — `/chart-stats`, `/chart-summary` (raw-only for accuracy)
+- `app/routes/pages.py` — `/charts` page route
+- `app/main.py` — charts poller lifecycle + router mounting
+- `templates/charts.html` — charts page with CDN scripts
+- `templates/*.html` (all 9) — Charts nav link
+- `static/js/app.js` — all chart rendering, badges, envelope/smooth toggle, PDF export
+- `static/css/style.css` — charts-specific styles
+- `alembic/versions/20260407_0015_*` — create chart_samples table
+- `alembic/versions/20260407_0016_*` — add sample_type column
+- `tests/test_charts_parser.py` — parser unit tests
+
+### Color scheme
+- TX/RX: blue/orange (T0), cyan/pink (T1), green/purple (T2), teal/rose (T3)
+- Latency: yellow family only — bright yellow, gold, amber, light yellow
+- Yellow reserved exclusively for latency
+
+### Known state
+- Migrations 0015 + 0016 must be applied (`alembic stamp 20260407_0015` then `alembic upgrade head` if DB already exists)
+- Old raw data (sample_type="raw") from before df=30 change is compatible
+
+### Gaps / next steps
+- No auto-refresh (user re-selects to see new data)
+- No data retention cleanup (chart_samples grows indefinitely)
+- CDN scripts need internet; vendor locally for air-gapped deployments
+- Consider data tiering: per-second for 24h, rolled up to 1-min for 7 days
+
+---
+
+## 2026-04-07 — Session: Charts UI Visualization + PDF Export (superseded above)
 
 ### Branch / commit
 - Branch: `seeker-charts`

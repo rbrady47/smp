@@ -36,7 +36,7 @@ Browser ──HTTP──> FastAPI (app/main.py)
 4. **Service checks** (30s): `service_polling_loop()` → DB updates
 5. **Dashboard projection** (5s): `node_dashboard_polling_loop()` → combines caches into dashboard payload
 6. **Frontend refresh** (user-selected): topology structure + ping status via timer; submap discovery loaded once on page load only (cached in localStorage)
-7. **Charts polling** (60s): `charts_polling_loop()` → `get_bwv_chart_stats()` per node → parse `logEntries` → bulk insert into `chart_samples` table (PostgreSQL `ON CONFLICT DO NOTHING` for dedup). Per-node cursor (`last_le`) tracked in `PollerState.charts_last_le`
+7. **Charts polling** (60s, hybrid): `charts_polling_loop()` makes two `get_bwv_chart_stats()` calls per node: (1) `df=30, entries=65` for decimated min/max pairs (envelope visualization), (2) `df=0, entries=30` for raw per-second samples (accurate reporting). Both stored in `chart_samples` with `sample_type` column (`min`/`max`/`raw`). Cursors: `charts_last_le` (decimated), `charts_raw_last_le` (raw). Summary endpoint (`/chart-summary`) filters on `raw` only for accuracy.
 
 ---
 
