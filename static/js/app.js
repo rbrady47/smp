@@ -9919,7 +9919,7 @@ function renderChartsSummaryTable(summary) {
         html += `</tbody></table></div>`;
     }
 
-    // --- Per-Site Summary (grouped, with tunnels inline) ---
+    // --- Per-Site Summary (text-list style matching PDF layout) ---
     if (tunnels.length > 0) {
         // Group tunnels by mate_site_id
         const siteGroups = new Map();
@@ -9932,27 +9932,16 @@ function renderChartsSummaryTable(summary) {
         }
 
         html += `<h3>Per-Site Tunnel Summary</h3>`;
-        html += `<div class="charts-site-summary-grid">`;
+        html += `<div class="charts-site-list">`;
 
         for (const [siteId, group] of siteGroups) {
-            const label = group.site_name ? `${siteId} (${group.site_name})` : siteId;
-            html += `<div class="charts-site-summary-card">`;
-            html += `<div class="charts-site-summary-header">`;
-            html += `<strong>Node ${label}</strong>`;
-            html += `<span class="charts-site-summary-ip">${group.mate_ip}</span>`;
-            html += `</div>`;
-
+            const nameStr = group.site_name && group.site_name !== "--" ? group.site_name : "--";
+            html += `<div class="charts-site-list-item">`;
+            html += `<div class="charts-site-list-header">Node Site ${siteId} &mdash; ${nameStr}</div>`;
             for (const t of group.tunnels) {
                 const delayStr = t.avg_delay_ms != null ? t.avg_delay_ms.toFixed(1) + " ms" : "--";
-                const tunLabel = group.tunnels.length > 1 ? `<span class="charts-site-tun-label">Tunnel ${t.tunnel}</span>` : "";
-                html += `<div class="charts-site-summary-row">`;
-                html += tunLabel;
-                html += `<div class="charts-site-summary-metrics">`;
-                html += `<span class="charts-metric"><span class="charts-metric-label">TX</span> ${_formatBps(t.avg_tx)}</span>`;
-                html += `<span class="charts-metric"><span class="charts-metric-label">RX</span> ${_formatBps(t.avg_rx)}</span>`;
-                html += `<span class="charts-metric"><span class="charts-metric-label">Latency</span> ${delayStr}</span>`;
-                html += `</div>`;
-                html += `</div>`;
+                const prefix = group.tunnels.length > 1 ? `T${t.tunnel}: ` : "";
+                html += `<div class="charts-site-list-line">${prefix}TX ${_formatBps(t.avg_tx)} &nbsp;&nbsp; RX ${_formatBps(t.avg_rx)} &nbsp;&nbsp; Latency ${delayStr}</div>`;
             }
             html += `</div>`;
         }

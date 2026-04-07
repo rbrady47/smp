@@ -5373,73 +5373,28 @@ body.modal-open {
     margin: 0 0 0.25rem 0;
 }
 
-/* Grouped site summary cards */
-.charts-site-summary-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 0.75rem;
-}
-
-.charts-site-summary-card {
-    background: var(--surface-alt);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 0.75rem;
-}
-
-.charts-site-summary-header {
+/* Per-site summary — clean text list (matches PDF layout) */
+.charts-site-list {
     display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    margin-bottom: 0.5rem;
-    padding-bottom: 0.4rem;
-    border-bottom: 1px solid var(--border);
+    flex-direction: column;
+    gap: 0.6rem;
 }
 
-.charts-site-summary-header strong {
-    font-size: 0.9rem;
+.charts-site-list-item {
+    padding: 0;
+}
+
+.charts-site-list-header {
+    font-weight: 700;
+    font-size: 0.95rem;
     color: var(--text);
-}
-
-.charts-site-summary-ip {
-    font-size: 0.8rem;
-    color: var(--muted);
-    font-family: monospace;
-}
-
-.charts-site-summary-row {
-    padding: 0.25rem 0;
-}
-
-.charts-site-summary-row + .charts-site-summary-row {
-    border-top: 1px solid var(--border);
-    padding-top: 0.35rem;
-    margin-top: 0.2rem;
-}
-
-.charts-site-tun-label {
-    font-size: 0.75rem;
-    color: var(--muted);
-    display: block;
     margin-bottom: 0.15rem;
 }
 
-.charts-site-summary-metrics {
-    display: flex;
-    gap: 1rem;
-    flex-wrap: wrap;
-}
-
-.charts-metric {
-    font-size: 0.85rem;
-    font-variant-numeric: tabular-nums;
+.charts-site-list-line {
+    font-size: 0.88rem;
     color: var(--text);
-}
-
-.charts-metric-label {
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--muted);
-    margin-right: 0.25rem;
+    padding-left: 1.2rem;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.5;
 }
