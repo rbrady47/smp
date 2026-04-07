@@ -9661,7 +9661,7 @@ function _dualAxisChartOptions(theme) {
             yDelay: {
                 position: "right",
                 beginAtZero: true,
-                ticks: { color: "rgba(239, 68, 68, 0.7)", callback: (v) => v.toFixed(0) + " ms" },
+                ticks: { color: "#FACC15", callback: (v) => v.toFixed(0) + " ms" },
                 grid: { drawOnChartArea: false },
             },
         },
@@ -9723,26 +9723,28 @@ function renderThroughputChart(samples) {
     const txData = samples.map(s => s.user_tx_bytes);
     const rxData = samples.map(s => s.user_rx_bytes);
 
+    const avgTx = _makeAvgLine(txData, "#3B82F6", "Avg TX"); delete avgTx.yAxisID;
+    const avgRx = _makeAvgLine(rxData, "#22C55E", "Avg RX"); delete avgRx.yAxisID;
+
     _chartThroughput = new Chart(ctx, {
         type: "line",
         data: {
             labels,
             datasets: [
-                _makeAvgLine(txData, "rgba(59, 130, 246, 0.95)", "Avg TX"),
-                _makeAvgLine(rxData, "rgba(34, 197, 94, 0.95)", "Avg RX"),
+                avgTx, avgRx,
                 {
                     label: "TX", data: txData, _isDetail: true, hidden: true,
-                    borderColor: "rgba(59, 130, 246, 0.5)", backgroundColor: "rgba(59, 130, 246, 0.08)",
-                    fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1, yAxisID: "y",
+                    borderColor: "rgba(59, 130, 246, 0.4)", backgroundColor: "rgba(59, 130, 246, 0.08)",
+                    fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1,
                 },
                 {
                     label: "RX", data: rxData, _isDetail: true, hidden: true,
-                    borderColor: "rgba(34, 197, 94, 0.5)", backgroundColor: "rgba(34, 197, 94, 0.08)",
-                    fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1, yAxisID: "y",
+                    borderColor: "rgba(34, 197, 94, 0.4)", backgroundColor: "rgba(34, 197, 94, 0.08)",
+                    fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1,
                 },
             ],
         },
-        options: _dualAxisChartOptions(theme),
+        options: _bpsChartOptions(theme),
     });
 
     // Wire detail toggle button
@@ -9808,10 +9810,11 @@ function renderChannelChart(samples) {
         try { JSON.parse(s.channel_data).forEach(c => channelIndexes.add(c.ch)); } catch (e) {}
     });
 
+    // Channel colors — no yellow (reserved for latency)
     const chColors = [
-        ["rgba(59, 130, 246, 0.95)", "rgba(251, 146, 60, 0.95)"],
-        ["rgba(34, 197, 94, 0.95)", "rgba(236, 72, 153, 0.95)"],
-        ["rgba(168, 85, 247, 0.95)", "rgba(250, 204, 21, 0.95)"],
+        ["#3B82F6", "#FB923C"],   // Ch0: blue TX, orange RX
+        ["#22D3EE", "#EC4899"],   // Ch1: cyan TX, pink RX
+        ["#22C55E", "#A855F7"],   // Ch2: green TX, purple RX
     ];
 
     const datasets = [];
@@ -9826,26 +9829,28 @@ function renderChannelChart(samples) {
             if (!s.channel_data) return null;
             try { const c = JSON.parse(s.channel_data).find(c => c.ch === chIdx); return c ? c.rx : null; } catch (e) { return null; }
         });
-        // Avg lines (visible by default)
-        datasets.push(_makeAvgLine(txArr, txCol, `Ch${chIdx} Avg TX`));
-        datasets.push(_makeAvgLine(rxArr, rxCol, `Ch${chIdx} Avg RX`));
+        // Avg lines (visible by default) — no yAxisID (single-axis chart)
+        const avgTxDs = _makeAvgLine(txArr, txCol, `Ch${chIdx} Avg TX`); delete avgTxDs.yAxisID;
+        const avgRxDs = _makeAvgLine(rxArr, rxCol, `Ch${chIdx} Avg RX`); delete avgRxDs.yAxisID;
+        datasets.push(avgTxDs);
+        datasets.push(avgRxDs);
         // Detail (hidden by default)
         datasets.push({
             label: `Ch${chIdx} TX`, data: txArr, _isDetail: true, hidden: true,
-            borderColor: txCol.replace("0.95", "0.4"), fill: false,
-            tension: 0.2, pointRadius: 0, borderWidth: 1, yAxisID: "y",
+            borderColor: txCol + "66", fill: false,
+            tension: 0.2, pointRadius: 0, borderWidth: 1,
         });
         datasets.push({
             label: `Ch${chIdx} RX`, data: rxArr, _isDetail: true, hidden: true,
-            borderColor: rxCol.replace("0.95", "0.4"), borderDash: [4, 2], fill: false,
-            tension: 0.2, pointRadius: 0, borderWidth: 1, yAxisID: "y",
+            borderColor: rxCol + "66", borderDash: [4, 2], fill: false,
+            tension: 0.2, pointRadius: 0, borderWidth: 1,
         });
     });
 
     _chartChannel = new Chart(ctx, {
         type: "line",
         data: { labels, datasets },
-        options: _dualAxisChartOptions(theme),
+        options: _bpsChartOptions(theme),
     });
 
     const btn = document.getElementById("charts-channel-detail-btn");
@@ -9858,22 +9863,21 @@ function renderChannelChart(samples) {
 
 // --- Per-site tunnel charts ---
 
-// Each tunnel gets a TX color (solid) and RX color (dashed), chosen to
-// be high-contrast against dark backgrounds and distinguishable from
-// each other.  Pairs are [TX color, RX color].
+// Tunnel throughput color pairs: [TX solid, RX solid]
+// Yellow is RESERVED for latency only — not used here.
 const _tunnelColorPairs = [
-    ["rgba(59, 130, 246, 0.95)",  "rgba(251, 146, 60, 0.95)"],   // blue TX, orange RX
-    ["rgba(34, 197, 94, 0.95)",   "rgba(236, 72, 153, 0.95)"],   // green TX, pink RX
-    ["rgba(168, 85, 247, 0.95)",  "rgba(250, 204, 21, 0.95)"],   // purple TX, yellow RX
-    ["rgba(20, 184, 166, 0.95)",  "rgba(239, 68, 68, 0.95)"],    // teal TX, red RX
+    ["#3B82F6", "#FB923C"],   // T0: blue TX, orange RX
+    ["#22D3EE", "#EC4899"],   // T1: cyan TX, pink RX
+    ["#22C55E", "#A855F7"],   // T2: green TX, purple RX
+    ["#14B8A6", "#F43F5E"],   // T3: teal TX, rose RX
 ];
 
-// Latency uses a single distinct color per tunnel
+// Latency — yellow family only
 const _tunnelLatencyColors = [
-    "rgba(59, 130, 246, 0.95)",   // blue
-    "rgba(239, 68, 68, 0.95)",    // red
-    "rgba(34, 197, 94, 0.95)",    // green
-    "rgba(250, 204, 21, 0.95)",   // yellow
+    "#FACC15",   // T0: bright yellow
+    "#EAB308",   // T1: gold
+    "#F59E0B",   // T2: amber
+    "#FDE047",   // T3: light yellow
 ];
 
 function renderSiteCharts(samples, mateMap) {
@@ -9960,15 +9964,15 @@ function renderSiteCharts(samples, mateMap) {
                 pointRadius: 0, tension: 0.2, fill: false, yAxisID: "yDelay",
             });
 
-            // Detail TX/RX (hidden)
+            // Detail TX/RX (hidden) — append 66 for ~40% alpha on hex
             datasets.push({
                 label: `TX${tunSfx}`, data: txArr, _isDetail: true, hidden: true,
-                borderColor: txCol.replace("0.95", "0.4"), fill: false,
+                borderColor: txCol + "66", fill: false,
                 tension: 0.2, pointRadius: 0, borderWidth: 1, yAxisID: "y",
             });
             datasets.push({
                 label: `RX${tunSfx}`, data: rxArr, _isDetail: true, hidden: true,
-                borderColor: rxCol.replace("0.95", "0.4"), borderDash: [4, 2], fill: false,
+                borderColor: rxCol + "66", borderDash: [4, 2], fill: false,
                 tension: 0.2, pointRadius: 0, borderWidth: 1, yAxisID: "y",
             });
         }
