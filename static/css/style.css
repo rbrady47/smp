@@ -5335,3 +5335,21 @@ body.modal-open {
     color: var(--muted);
     padding: 2rem 1rem;
 }
+
+.charts-summary-tables {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.charts-summary-tables h3 {
+    font-size: 0.95rem;
+    font-weight: 700;
+    margin: 0 0 0.35rem 0;
+    color: var(--text);
+}
+
+.charts-summary-tables .data-table td.number {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}

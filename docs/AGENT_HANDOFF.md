@@ -29,9 +29,15 @@ Added a `/charts` page with interactive Chart.js time-series graphs and client-s
 - Charts page loads, node dropdown populates, charts render with real data
 - PDF export captures themed charts
 
+### What was done (continued)
+- Added `/api/nodes/{node_id}/chart-summary` endpoint with server-side aggregation of tunnel/channel/user data
+- Summary table below graphs shows per-tunnel avg TX/RX (Kbps/Mbps/Gbps), avg latency (ms), user totals
+- Mate site IDs resolved from seeker_detail_cache mates list
+- Summary table included in PDF export as formatted text
+- Added `_formatBps()` utility for bits-per-second formatting
+
 ### Gaps / next steps
 - No auto-refresh on the charts page (user must re-select to see new data)
-- Server-side aggregation endpoint for very large date ranges not yet implemented
 - CDN scripts require internet access; vendor locally for air-gapped deployments
 
 ---

@@ -109,6 +109,11 @@ What operators can do here:
 - View three chart types: User Throughput (TX/RX bytes), Packet Counts (TX/RX packets), and Channel Breakdown (per-channel TX/RX)
 - Export the current view as a PDF report for offline sharing or weekly reporting
 
+Below the graphs, a **Summary Report** table shows:
+- **User Throughput**: average TX/RX rates (in Kbps/Mbps/Gbps), total bytes, and total packets for the selected period
+- **Per-Tunnel Averages**: for each mate/site node — average TX rate, RX rate, latency (ms), and sample count
+- **Per-Channel Averages**: average TX/RX rate per WAN channel
+
 The data updates automatically as the backend poller collects new samples every 60 seconds. For 7-day views, the charts use client-side decimation to keep rendering smooth with large datasets.
 
 ### Fixed Topology View

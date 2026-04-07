@@ -9407,6 +9407,20 @@ function loadChartsPage() {
     exportBtn.addEventListener("click", exportChartsPDF);
 }
 
+function _formatBps(bytesPerSec) {
+    if (bytesPerSec == null || isNaN(bytesPerSec)) return "--";
+    const bps = bytesPerSec * 8;
+    if (bps >= 1e9) return (bps / 1e9).toFixed(2) + " Gbps";
+    if (bps >= 1e6) return (bps / 1e6).toFixed(2) + " Mbps";
+    if (bps >= 1e3) return (bps / 1e3).toFixed(1) + " Kbps";
+    return bps.toFixed(0) + " bps";
+}
+
+function _formatNumber(n) {
+    if (n == null || isNaN(n)) return "--";
+    return Number(n).toLocaleString();
+}
+
 async function fetchAndRenderCharts() {
     const nodeId = _chartsSelectedNodeId;
     if (!nodeId) return;
@@ -9416,6 +9430,7 @@ async function fetchAndRenderCharts() {
     const throughputCard = document.getElementById("charts-throughput-card");
     const packetsCard = document.getElementById("charts-packets-card");
     const channelCard = document.getElementById("charts-channel-card");
+    const summaryCard = document.getElementById("charts-summary-card");
     const exportBtn = document.getElementById("charts-export-pdf");
 
     emptyState.hidden = true;
@@ -9423,6 +9438,7 @@ async function fetchAndRenderCharts() {
     throughputCard.hidden = true;
     packetsCard.hidden = true;
     channelCard.hidden = true;
+    summaryCard.hidden = true;
 
     const now = Math.floor(Date.now() / 1000);
     const start = now - _chartsSelectedRange;
@@ -9450,6 +9466,17 @@ async function fetchAndRenderCharts() {
         if (hasChannels) {
             renderChannelChart(data.samples);
             channelCard.hidden = false;
+        }
+
+        // Fetch and render summary table
+        try {
+            const summary = await apiRequest(
+                `/api/nodes/${nodeId}/chart-summary?start=${start}&end=${now}`
+            );
+            renderChartsSummaryTable(summary);
+            summaryCard.hidden = false;
+        } catch (summaryErr) {
+            summaryCard.hidden = true;
         }
 
         exportBtn.disabled = false;
@@ -9645,6 +9672,64 @@ function renderChannelChart(samples) {
     });
 }
 
+let _lastSummaryData = null;
+
+function renderChartsSummaryTable(summary) {
+    _lastSummaryData = summary;
+    const container = document.getElementById("charts-summary-content");
+    if (!container) return;
+
+    const us = summary.user_summary || {};
+    const tunnels = summary.tunnel_summary || [];
+    const channels = summary.channel_summary || [];
+    const count = summary.sample_count || 0;
+
+    let html = "";
+
+    // --- User Throughput Summary ---
+    html += `<h3>User Throughput (${count.toLocaleString()} samples)</h3>`;
+    html += `<div class="table-wrap"><table class="data-table">`;
+    html += `<thead><tr><th>Metric</th><th>TX</th><th>RX</th></tr></thead><tbody>`;
+    html += `<tr><td>Avg Rate</td><td class="number">${_formatBps(us.avg_tx_bytes_per_sec)}</td><td class="number">${_formatBps(us.avg_rx_bytes_per_sec)}</td></tr>`;
+    html += `<tr><td>Total Bytes</td><td class="number">${_formatNumber(us.total_tx_bytes)}</td><td class="number">${_formatNumber(us.total_rx_bytes)}</td></tr>`;
+    html += `<tr><td>Total Packets</td><td class="number">${_formatNumber(us.total_tx_pkts)}</td><td class="number">${_formatNumber(us.total_rx_pkts)}</td></tr>`;
+    html += `</tbody></table></div>`;
+
+    // --- Per-Tunnel Averages ---
+    if (tunnels.length > 0) {
+        html += `<h3>Per-Tunnel Averages</h3>`;
+        html += `<div class="table-wrap"><table class="data-table">`;
+        html += `<thead><tr><th>Mate Site</th><th>IP</th><th>Tunnel</th><th>Avg TX Rate</th><th>Avg RX Rate</th><th>Avg Latency</th><th>Samples</th></tr></thead><tbody>`;
+        for (const t of tunnels) {
+            const label = t.site_name ? `${t.mate_site_id} (${t.site_name})` : t.mate_site_id;
+            const delayStr = t.avg_delay_ms != null ? t.avg_delay_ms.toFixed(1) + " ms" : "--";
+            html += `<tr>`;
+            html += `<td>${label}</td>`;
+            html += `<td>${t.mate_ip}</td>`;
+            html += `<td class="number">${t.tunnel}</td>`;
+            html += `<td class="number">${_formatBps(t.avg_tx)}</td>`;
+            html += `<td class="number">${_formatBps(t.avg_rx)}</td>`;
+            html += `<td class="number">${delayStr}</td>`;
+            html += `<td class="number">${_formatNumber(t.sample_count)}</td>`;
+            html += `</tr>`;
+        }
+        html += `</tbody></table></div>`;
+    }
+
+    // --- Channel Summary ---
+    if (channels.length > 0) {
+        html += `<h3>Per-Channel Averages</h3>`;
+        html += `<div class="table-wrap"><table class="data-table">`;
+        html += `<thead><tr><th>Channel</th><th>Avg TX Rate</th><th>Avg RX Rate</th></tr></thead><tbody>`;
+        for (const c of channels) {
+            html += `<tr><td>Ch ${c.channel}</td><td class="number">${_formatBps(c.avg_tx)}</td><td class="number">${_formatBps(c.avg_rx)}</td></tr>`;
+        }
+        html += `</tbody></table></div>`;
+    }
+
+    container.innerHTML = html;
+}
+
 async function exportChartsPDF() {
     if (typeof jspdf === "undefined") {
         alert("PDF export library not loaded. Please try again.");
@@ -9700,6 +9785,67 @@ async function exportChartsPDF() {
 
             pdf.addImage(imgData, "PNG", margin, yOffset, imgWidth, imgHeight);
             yOffset += imgHeight + 10;
+        }
+
+        // --- Summary table as text ---
+        if (_lastSummaryData && _lastSummaryData.sample_count > 0) {
+            const s = _lastSummaryData;
+            const us = s.user_summary || {};
+
+            // New page for summary
+            pdf.addPage();
+            yOffset = 15;
+
+            pdf.setFontSize(14);
+            pdf.text("Summary Report", margin, yOffset);
+            yOffset += 8;
+
+            // User throughput
+            pdf.setFontSize(11);
+            pdf.text("User Throughput", margin, yOffset);
+            yOffset += 6;
+            pdf.setFontSize(9);
+            pdf.text(`Samples: ${_formatNumber(s.sample_count)}`, margin, yOffset); yOffset += 4;
+            pdf.text(`Avg TX Rate: ${_formatBps(us.avg_tx_bytes_per_sec)}    Avg RX Rate: ${_formatBps(us.avg_rx_bytes_per_sec)}`, margin, yOffset); yOffset += 4;
+            pdf.text(`Total TX: ${_formatNumber(us.total_tx_bytes)} bytes    Total RX: ${_formatNumber(us.total_rx_bytes)} bytes`, margin, yOffset); yOffset += 4;
+            pdf.text(`Total TX Pkts: ${_formatNumber(us.total_tx_pkts)}    Total RX Pkts: ${_formatNumber(us.total_rx_pkts)}`, margin, yOffset); yOffset += 8;
+
+            // Tunnel averages
+            const tunnels = s.tunnel_summary || [];
+            if (tunnels.length > 0) {
+                pdf.setFontSize(11);
+                pdf.text("Per-Tunnel Averages", margin, yOffset);
+                yOffset += 6;
+                pdf.setFontSize(8);
+
+                // Header
+                const cols = [margin, margin + 25, margin + 60, margin + 72, margin + 100, margin + 128, margin + 155];
+                pdf.setFont(undefined, "bold");
+                pdf.text("Mate Site", cols[0], yOffset);
+                pdf.text("IP", cols[1], yOffset);
+                pdf.text("Tun", cols[2], yOffset);
+                pdf.text("Avg TX Rate", cols[3], yOffset);
+                pdf.text("Avg RX Rate", cols[4], yOffset);
+                pdf.text("Avg Latency", cols[5], yOffset);
+                pdf.text("Samples", cols[6], yOffset);
+                pdf.setFont(undefined, "normal");
+                yOffset += 4;
+
+                for (const t of tunnels) {
+                    if (yOffset > pageHeight - 10) {
+                        pdf.addPage();
+                        yOffset = 15;
+                    }
+                    pdf.text(String(t.mate_site_id), cols[0], yOffset);
+                    pdf.text(String(t.mate_ip), cols[1], yOffset);
+                    pdf.text(String(t.tunnel), cols[2], yOffset);
+                    pdf.text(_formatBps(t.avg_tx), cols[3], yOffset);
+                    pdf.text(_formatBps(t.avg_rx), cols[4], yOffset);
+                    pdf.text(t.avg_delay_ms != null ? t.avg_delay_ms.toFixed(1) + " ms" : "--", cols[5], yOffset);
+                    pdf.text(_formatNumber(t.sample_count), cols[6], yOffset);
+                    yOffset += 4;
+                }
+            }
         }
 
         pdf.save(`smp-charts-${_chartsNodeName.replace(/[^a-zA-Z0-9]/g, "_")}-${rangeLabel.replace(/\s/g, "")}.pdf`);

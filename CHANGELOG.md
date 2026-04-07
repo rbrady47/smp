@@ -15,6 +15,7 @@ The format is intentionally simple so diffs stay readable in version control.
 - **Charts UI page:** New `/charts` page with interactive time-series graphs (Chart.js) showing per-node user throughput, packet counts, and channel breakdown. Node selector dropdown + time range buttons (1h, 6h, 24h, 7d).
 - **PDF export:** Client-side PDF report generation via html2canvas + jsPDF. Captures themed chart views with title header and timestamp.
 - **Charts nav link:** Added "Charts" to the navigation bar on all pages.
+- **Charts summary report:** New `/api/nodes/{node_id}/chart-summary` endpoint aggregates per-tunnel TX/RX rates (Kbps/Mbps/Gbps), latency (ms), and total user throughput. Summary table rendered below graphs and included in PDF export. Mate site IDs resolved from seeker detail cache.
 
 ### Fixed
 
