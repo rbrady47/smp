@@ -5460,21 +5460,29 @@ body.modal-open {
     font-variant-numeric: tabular-nums;
 }
 
-/* Chart card header with detail toggle */
+/* Chart card header: title | badges (center) | button (right) */
 .charts-card-header {
-    display: flex;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
     align-items: center;
-    justify-content: space-between;
+    gap: 0.75rem;
     margin-bottom: 0.5rem;
 }
 
 .charts-card-header h2 {
     margin: 0;
+    white-space: nowrap;
+}
+
+.charts-card-header .charts-stats-row {
+    justify-content: center;
+    margin-top: 0;
 }
 
 .charts-detail-btn {
     font-size: 0.78rem;
     padding: 0.3rem 0.7rem;
+    white-space: nowrap;
 }
 
 /* Per-site tunnel summary table */

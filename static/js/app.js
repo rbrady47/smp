@@ -9588,7 +9588,7 @@ function _commonChartOptions(theme, { yTickCallback, tooltipCallback } = {}) {
         maintainAspectRatio: false,
         interaction: { mode: "index", intersect: false },
         plugins: {
-            legend: { labels: { color: theme.text, usePointStyle: true, pointStyle: "circle" } },
+            legend: { display: false },
             decimation: useDecimation ? { enabled: true, algorithm: "lttb", threshold: _chartsDecimationThreshold } : { enabled: false },
         },
         scales: {
@@ -9631,7 +9631,7 @@ function _dualAxisChartOptions(theme) {
         maintainAspectRatio: false,
         interaction: { mode: "index", intersect: false },
         plugins: {
-            legend: { labels: { color: theme.text, usePointStyle: true, pointStyle: "circle" } },
+            legend: { display: false },
             decimation: useDecimation ? { enabled: true, algorithm: "lttb", threshold: _chartsDecimationThreshold } : { enabled: false },
             tooltip: {
                 callbacks: {
@@ -9743,6 +9743,8 @@ function _makeMinLine(arr, color, label) {
  *   datasetLabel matches the dataset.label in the chart to toggle
  */
 function _buildStatBadges(container, chart, stats) {
+    // Remove any existing badge rows first
+    container.querySelectorAll(".charts-stats-row").forEach(el => el.remove());
     const row = document.createElement("div");
     row.className = "charts-stats-row";
     for (const stat of stats) {
@@ -9761,7 +9763,13 @@ function _buildStatBadges(container, chart, stats) {
         });
         row.appendChild(badge);
     }
-    container.appendChild(row);
+    // Insert before the button (last child) so layout is: h2 | badges | button
+    const btn = container.querySelector(".charts-detail-btn");
+    if (btn) {
+        container.insertBefore(row, btn);
+    } else {
+        container.appendChild(row);
+    }
 }
 
 // Toggle detail (raw per-second) datasets on/off
@@ -9816,7 +9824,6 @@ function renderThroughputChart(samples) {
     const headerEl = document.getElementById("charts-throughput-card")?.querySelector(".charts-card-header");
     if (headerEl) {
         // Remove old badges
-        headerEl.querySelectorAll(".charts-stats-row").forEach(el => el.remove());
         _buildStatBadges(headerEl, _chartThroughput, [
             { label: "Avg TX", value: _formatBps(txStats.avg), color: "#3B82F6", datasetLabel: "Avg TX" },
             { label: "Avg RX", value: _formatBps(rxStats.avg), color: "#22C55E", datasetLabel: "Avg RX" },
@@ -9871,7 +9878,6 @@ function renderPacketsChart(samples) {
     const rxStats = _arrStats(rxData);
     const headerEl = document.getElementById("charts-packets-card")?.querySelector(".charts-card-header");
     if (headerEl) {
-        headerEl.querySelectorAll(".charts-stats-row").forEach(el => el.remove());
         _buildStatBadges(headerEl, _chartPackets, [
             { label: "Avg TX", value: _formatNumber(txStats.avg.toFixed(0)), color: "#A855F7", datasetLabel: "Avg TX Pkts" },
             { label: "Avg RX", value: _formatNumber(rxStats.avg.toFixed(0)), color: "#FB923C", datasetLabel: "Avg RX Pkts" },
@@ -9946,7 +9952,6 @@ function renderChannelChart(samples) {
     // Stat badges
     const headerEl = document.getElementById("charts-channel-card")?.querySelector(".charts-card-header");
     if (headerEl) {
-        headerEl.querySelectorAll(".charts-stats-row").forEach(el => el.remove());
         const badgeStats = [];
         sorted.forEach((chIdx, i) => {
             const [txCol, rxCol] = chColors[i % chColors.length];
