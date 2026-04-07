@@ -9761,34 +9761,26 @@ function renderPacketsChart(samples) {
     const labels = _chartTimestamps(samples);
     const txData = samples.map(s => s.user_tx_pkts);
     const rxData = samples.map(s => s.user_rx_pkts);
-    const txAvg = _computeAvg(txData);
-    const rxAvg = _computeAvg(rxData);
+
+    const avgTx = Object.assign(_makeAvgLine(txData, "rgba(168, 85, 247, 0.95)", "Avg TX Pkts"));
+    delete avgTx.yAxisID; // packets chart has no dual axis
+    const avgRx = Object.assign(_makeAvgLine(rxData, "rgba(251, 146, 60, 0.95)", "Avg RX Pkts"));
+    delete avgRx.yAxisID;
 
     _chartPackets = new Chart(ctx, {
         type: "line",
         data: {
             labels,
             datasets: [
-                {
-                    label: "Avg TX Pkts",
-                    data: txData.map(() => txAvg),
-                    borderColor: "rgba(168, 85, 247, 0.95)", borderDash: [8, 4], borderWidth: 2,
-                    pointRadius: 0, tension: 0, fill: false,
-                },
-                {
-                    label: "Avg RX Pkts",
-                    data: rxData.map(() => rxAvg),
-                    borderColor: "rgba(251, 146, 60, 0.95)", borderDash: [8, 4], borderWidth: 2,
-                    pointRadius: 0, tension: 0, fill: false,
-                },
+                avgTx, avgRx,
                 {
                     label: "TX Packets", data: txData, _isDetail: true, hidden: true,
-                    borderColor: "rgba(168, 85, 247, 0.5)", backgroundColor: "rgba(168, 85, 247, 0.08)",
+                    borderColor: "rgba(168, 85, 247, 0.4)", backgroundColor: "rgba(168, 85, 247, 0.08)",
                     fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1,
                 },
                 {
                     label: "RX Packets", data: rxData, _isDetail: true, hidden: true,
-                    borderColor: "rgba(251, 146, 60, 0.5)", backgroundColor: "rgba(251, 146, 60, 0.08)",
+                    borderColor: "rgba(251, 146, 60, 0.4)", backgroundColor: "rgba(251, 146, 60, 0.08)",
                     fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1,
                 },
             ],
