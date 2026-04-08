@@ -6800,8 +6800,8 @@ function initTopologyLinkContextMenu() {
             const linkType = document.getElementById("topology-link-ctx-type")?.value || "solid";
             const statusNodeVal = document.getElementById("topology-link-ctx-status-node")?.value;
             const statusNodeId = statusNodeVal ? Number(statusNodeVal) : null;
-            await updateTopologyLink(dbId, { link_type: linkType, status_node_id: statusNodeId });
             closeTopologyLinkContextMenu();
+            await updateTopologyLink(dbId, { link_type: linkType, status_node_id: statusNodeId });
             await refreshTopologyData();
             renderTopologyStage();
         };
@@ -6814,19 +6814,15 @@ function initTopologyLinkContextMenu() {
             event.stopPropagation();
             const dbId = menu.dataset.dbId;
             if (!dbId) {
-                console.warn("[LinkConfig] Delete clicked but no dbId in menu dataset");
                 return;
             }
-            console.log("[LinkConfig] Deleting link dbId=", dbId);
-            const ok = await deleteTopologyLink(dbId);
-            if (!ok) {
-                console.error("[LinkConfig] Delete API call failed for dbId=", dbId);
-            }
+            // Close panel and clear selection immediately so user sees feedback
             closeTopologyLinkContextMenu();
             topologyState.selectedKind = null;
             topologyState.selectedId = null;
             topologyState.pinnedLinkTooltipId = null;
             hideTopologyLinkTooltip();
+            await deleteTopologyLink(dbId);
             await refreshTopologyData();
             renderTopologyStage();
         };
