@@ -4,7 +4,7 @@ import json
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
     DiscoveredNode,
@@ -179,44 +179,44 @@ def _serialize_available_node(payload: dict[str, object]) -> dict[str, object]:
     return OperationalMapAvailableNodeRead.model_validate(payload).model_dump()
 
 
-def _get_map_view_or_404(map_view_id: int, db: Session) -> OperationalMapView:
-    map_view = db.get(OperationalMapView, map_view_id)
+async def _get_map_view_or_404(map_view_id: int, db: AsyncSession) -> OperationalMapView:
+    map_view = await db.get(OperationalMapView, map_view_id)
     if map_view is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Operational map view not found")
     return map_view
 
 
-def _get_map_object_or_404(object_id: int, db: Session) -> OperationalMapObject:
-    map_object = db.get(OperationalMapObject, object_id)
+async def _get_map_object_or_404(object_id: int, db: AsyncSession) -> OperationalMapObject:
+    map_object = await db.get(OperationalMapObject, object_id)
     if map_object is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Operational map object not found")
     return map_object
 
 
-def _get_map_link_or_404(link_id: int, db: Session) -> OperationalMapLink:
-    link = db.get(OperationalMapLink, link_id)
+async def _get_map_link_or_404(link_id: int, db: AsyncSession) -> OperationalMapLink:
+    link = await db.get(OperationalMapLink, link_id)
     if link is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Operational map link not found")
     return link
 
 
-def _get_object_binding_or_404(binding_id: int, db: Session) -> OperationalMapObjectBinding:
-    binding = db.get(OperationalMapObjectBinding, binding_id)
+async def _get_object_binding_or_404(binding_id: int, db: AsyncSession) -> OperationalMapObjectBinding:
+    binding = await db.get(OperationalMapObjectBinding, binding_id)
     if binding is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Operational map object binding not found")
     return binding
 
 
-def _get_link_binding_or_404(binding_id: int, db: Session) -> OperationalMapLinkBinding:
-    binding = db.get(OperationalMapLinkBinding, binding_id)
+async def _get_link_binding_or_404(binding_id: int, db: AsyncSession) -> OperationalMapLinkBinding:
+    binding = await db.get(OperationalMapLinkBinding, binding_id)
     if binding is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Operational map link binding not found")
     return binding
 
 
-def _ensure_unique_map_slug(slug: str, db: Session, *, exclude_map_view_id: int | None = None) -> None:
+async def _ensure_unique_map_slug(slug: str, db: AsyncSession, *, exclude_map_view_id: int | None = None) -> None:
     stmt = select(OperationalMapView).where(OperationalMapView.slug == slug)
-    existing = db.scalars(stmt).first()
+    existing = (await db.scalars(stmt)).first()
     if existing is None:
         return
     if exclude_map_view_id is not None and existing.id == exclude_map_view_id:
@@ -224,49 +224,49 @@ def _ensure_unique_map_slug(slug: str, db: Session, *, exclude_map_view_id: int 
     raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Operational map slug already exists")
 
 
-def _validate_parent_map(parent_map_id: int | None, current_map_view_id: int | None, db: Session) -> None:
+async def _validate_parent_map(parent_map_id: int | None, current_map_view_id: int | None, db: AsyncSession) -> None:
     if parent_map_id is None:
         return
     if current_map_view_id is not None and parent_map_id == current_map_view_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Operational map cannot parent itself")
-    _get_map_view_or_404(parent_map_id, db)
+    await _get_map_view_or_404(parent_map_id, db)
 
 
-def _resolve_node_binding_key(node_site_id: str, db: Session) -> str:
+async def _resolve_node_binding_key(node_site_id: str, db: AsyncSession) -> str:
     node_site_id = node_site_id.strip()
     if not node_site_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Node site ID is required")
 
     anchor_stmt = select(Node).where(Node.node_id == node_site_id)
-    anchor = db.scalars(anchor_stmt).first()
+    anchor = (await db.scalars(anchor_stmt)).first()
     if anchor is not None:
         return f"anchor:{anchor.id}"
 
     if node_site_id.isdigit():
-        anchor_by_id = db.get(Node, int(node_site_id))
+        anchor_by_id = await db.get(Node, int(node_site_id))
         if anchor_by_id is not None:
             return f"anchor:{anchor_by_id.id}"
 
-    discovered = db.get(DiscoveredNode, node_site_id)
+    discovered = await db.get(DiscoveredNode, node_site_id)
     if discovered is not None:
         return f"discovered:{discovered.site_id}"
 
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Assigned node site ID was not found")
 
 
-def _validate_map_object_payload(
+async def _validate_map_object_payload(
     map_view_id: int,
     object_type: str,
     node_site_id: str | None,
     child_map_view_id: int | None,
-    db: Session,
+    db: AsyncSession,
 ) -> str | None:
-    _get_map_view_or_404(map_view_id, db)
+    await _get_map_view_or_404(map_view_id, db)
 
     if object_type == "node":
         if not node_site_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Node objects require a node site ID")
-        return _resolve_node_binding_key(node_site_id, db)
+        return await _resolve_node_binding_key(node_site_id, db)
 
     if node_site_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only node objects can assign a node site ID")
@@ -276,7 +276,7 @@ def _validate_map_object_payload(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Submap objects require a child map view")
         if child_map_view_id == map_view_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Submap objects cannot drill into the same map")
-        _get_map_view_or_404(child_map_view_id, db)
+        await _get_map_view_or_404(child_map_view_id, db)
     elif child_map_view_id is not None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only submap objects can set a child map view")
 
@@ -303,10 +303,10 @@ def _validate_link_binding_payload(binding: OperationalMapLinkBindingCreate) -> 
         )
 
 
-def _list_available_nodes(db: Session) -> list[dict[str, object]]:
+async def _list_available_nodes(db: AsyncSession) -> list[dict[str, object]]:
     available_nodes: list[dict[str, object]] = []
 
-    anchors = db.scalars(select(Node).order_by(Node.name, Node.id)).all()
+    anchors = (await db.scalars(select(Node).order_by(Node.name, Node.id))).all()
     for anchor in anchors:
         site_id = anchor.node_id or str(anchor.id)
         available_nodes.append(
@@ -324,7 +324,7 @@ def _list_available_nodes(db: Session) -> list[dict[str, object]]:
             )
         )
 
-    discovered_nodes = db.scalars(select(DiscoveredNode).order_by(DiscoveredNode.site_name, DiscoveredNode.site_id)).all()
+    discovered_nodes = (await db.scalars(select(DiscoveredNode).order_by(DiscoveredNode.site_name, DiscoveredNode.site_id))).all()
     for discovered in discovered_nodes:
         available_nodes.append(
             _serialize_available_node(
@@ -344,76 +344,76 @@ def _list_available_nodes(db: Session) -> list[dict[str, object]]:
     return available_nodes
 
 
-def _list_available_submaps(current_map_view_id: int, db: Session) -> list[dict[str, object]]:
-    submaps = db.scalars(
+async def _list_available_submaps(current_map_view_id: int, db: AsyncSession) -> list[dict[str, object]]:
+    submaps = (await db.scalars(
         select(OperationalMapView).where(OperationalMapView.id != current_map_view_id).order_by(OperationalMapView.name, OperationalMapView.id)
-    ).all()
+    )).all()
     return [_serialize_map_view(submap) for submap in submaps]
 
 
-def list_map_views(db: Session) -> list[dict[str, object]]:
-    views = db.scalars(select(OperationalMapView).order_by(OperationalMapView.name, OperationalMapView.id)).all()
+async def list_map_views(db: AsyncSession) -> list[dict[str, object]]:
+    views = (await db.scalars(select(OperationalMapView).order_by(OperationalMapView.name, OperationalMapView.id))).all()
     return [_serialize_map_view(view) for view in views]
 
 
-def create_map_view(payload: OperationalMapViewCreate, db: Session) -> dict[str, object]:
-    _ensure_unique_map_slug(payload.slug, db)
-    _validate_parent_map(payload.parent_map_id, None, db)
+async def create_map_view(payload: OperationalMapViewCreate, db: AsyncSession) -> dict[str, object]:
+    await _ensure_unique_map_slug(payload.slug, db)
+    await _validate_parent_map(payload.parent_map_id, None, db)
     map_view = OperationalMapView(**payload.model_dump())
     db.add(map_view)
-    db.commit()
-    db.refresh(map_view)
+    await db.commit()
+    await db.refresh(map_view)
     return _serialize_map_view(map_view)
 
 
-def update_map_view(map_view_id: int, payload: OperationalMapViewUpdate, db: Session) -> dict[str, object]:
-    map_view = _get_map_view_or_404(map_view_id, db)
+async def update_map_view(map_view_id: int, payload: OperationalMapViewUpdate, db: AsyncSession) -> dict[str, object]:
+    map_view = await _get_map_view_or_404(map_view_id, db)
     updates = payload.model_dump(exclude_unset=True)
     if "slug" in updates:
-        _ensure_unique_map_slug(str(updates["slug"]), db, exclude_map_view_id=map_view_id)
+        await _ensure_unique_map_slug(str(updates["slug"]), db, exclude_map_view_id=map_view_id)
     if "parent_map_id" in updates:
-        _validate_parent_map(updates["parent_map_id"], map_view_id, db)
+        await _validate_parent_map(updates["parent_map_id"], map_view_id, db)
     for field, value in updates.items():
         setattr(map_view, field, value)
-    db.commit()
-    db.refresh(map_view)
+    await db.commit()
+    await db.refresh(map_view)
     return _serialize_map_view(map_view)
 
 
-def delete_map_view(map_view_id: int, db: Session) -> None:
-    map_view = _get_map_view_or_404(map_view_id, db)
+async def delete_map_view(map_view_id: int, db: AsyncSession) -> None:
+    map_view = await _get_map_view_or_404(map_view_id, db)
 
     child_map_stmt = select(OperationalMapView).where(OperationalMapView.parent_map_id == map_view_id)
-    if db.scalars(child_map_stmt).first() is not None:
+    if (await db.scalars(child_map_stmt)).first() is not None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Operational map has child submaps")
 
     object_stmt = select(OperationalMapObject).where(OperationalMapObject.map_view_id == map_view_id)
-    objects = db.scalars(object_stmt).all()
+    objects = (await db.scalars(object_stmt)).all()
     object_ids = [map_object.id for map_object in objects]
 
     if object_ids:
         link_stmt = select(OperationalMapLink).where(OperationalMapLink.map_view_id == map_view_id)
-        links = db.scalars(link_stmt).all()
+        links = (await db.scalars(link_stmt)).all()
         for link in links:
             link_binding_stmt = select(OperationalMapLinkBinding).where(OperationalMapLinkBinding.link_id == link.id)
-            for binding in db.scalars(link_binding_stmt).all():
-                db.delete(binding)
-            db.delete(link)
+            for binding in (await db.scalars(link_binding_stmt)).all():
+                await db.delete(binding)
+            await db.delete(link)
 
         for object_id in object_ids:
             object_binding_stmt = select(OperationalMapObjectBinding).where(OperationalMapObjectBinding.object_id == object_id)
-            for binding in db.scalars(object_binding_stmt).all():
-                db.delete(binding)
+            for binding in (await db.scalars(object_binding_stmt)).all():
+                await db.delete(binding)
 
         for map_object in objects:
-            db.delete(map_object)
+            await db.delete(map_object)
 
-    db.delete(map_view)
-    db.commit()
+    await db.delete(map_view)
+    await db.commit()
 
 
-def create_map_object(payload: OperationalMapObjectCreate, db: Session) -> dict[str, object]:
-    resolved_binding_key = _validate_map_object_payload(
+async def create_map_object(payload: OperationalMapObjectCreate, db: AsyncSession) -> dict[str, object]:
+    resolved_binding_key = await _validate_map_object_payload(
         payload.map_view_id,
         payload.object_type,
         payload.node_site_id,
@@ -436,18 +436,18 @@ def create_map_object(payload: OperationalMapObjectCreate, db: Session) -> dict[
         style_json=_dump_json(payload.style),
     )
     db.add(map_object)
-    db.commit()
-    db.refresh(map_object)
+    await db.commit()
+    await db.refresh(map_object)
     return _serialize_map_object(map_object)
 
 
-def update_map_object(object_id: int, payload: OperationalMapObjectUpdate, db: Session) -> dict[str, object]:
-    map_object = _get_map_object_or_404(object_id, db)
+async def update_map_object(object_id: int, payload: OperationalMapObjectUpdate, db: AsyncSession) -> dict[str, object]:
+    map_object = await _get_map_object_or_404(object_id, db)
     updates = payload.model_dump(exclude_unset=True)
 
     new_node_site_id = updates["node_site_id"] if "node_site_id" in updates else map_object.node_site_id
     new_child_map_view_id = updates["child_map_view_id"] if "child_map_view_id" in updates else map_object.child_map_view_id
-    resolved_binding_key = _validate_map_object_payload(
+    resolved_binding_key = await _validate_map_object_payload(
         map_object.map_view_id,
         map_object.object_type,
         new_node_site_id,
@@ -466,34 +466,34 @@ def update_map_object(object_id: int, payload: OperationalMapObjectUpdate, db: S
     if map_object.object_type == "node":
         map_object.binding_key = resolved_binding_key
 
-    db.commit()
-    db.refresh(map_object)
+    await db.commit()
+    await db.refresh(map_object)
     return _serialize_map_object(map_object)
 
 
-def delete_map_object(object_id: int, db: Session) -> None:
-    map_object = _get_map_object_or_404(object_id, db)
+async def delete_map_object(object_id: int, db: AsyncSession) -> None:
+    map_object = await _get_map_object_or_404(object_id, db)
 
     dependent_link_stmt = select(OperationalMapLink).where(
         (OperationalMapLink.source_object_id == object_id) | (OperationalMapLink.target_object_id == object_id)
     )
-    dependent_links = db.scalars(dependent_link_stmt).all()
+    dependent_links = (await db.scalars(dependent_link_stmt)).all()
     for link in dependent_links:
         binding_stmt = select(OperationalMapLinkBinding).where(OperationalMapLinkBinding.link_id == link.id)
-        for binding in db.scalars(binding_stmt).all():
-            db.delete(binding)
-        db.delete(link)
+        for binding in (await db.scalars(binding_stmt)).all():
+            await db.delete(binding)
+        await db.delete(link)
 
     binding_stmt = select(OperationalMapObjectBinding).where(OperationalMapObjectBinding.object_id == object_id)
-    for binding in db.scalars(binding_stmt).all():
-        db.delete(binding)
+    for binding in (await db.scalars(binding_stmt)).all():
+        await db.delete(binding)
 
-    db.delete(map_object)
-    db.commit()
+    await db.delete(map_object)
+    await db.commit()
 
 
-def create_map_object_binding(payload: OperationalMapObjectBindingCreate, db: Session) -> dict[str, object]:
-    map_object = _get_map_object_or_404(payload.object_id, db)
+async def create_map_object_binding(payload: OperationalMapObjectBindingCreate, db: AsyncSession) -> dict[str, object]:
+    map_object = await _get_map_object_or_404(payload.object_id, db)
     _validate_object_binding_payload(payload, map_object)
     binding = OperationalMapObjectBinding(
         object_id=payload.object_id,
@@ -504,21 +504,21 @@ def create_map_object_binding(payload: OperationalMapObjectBindingCreate, db: Se
         settings_json=_dump_json(payload.settings),
     )
     db.add(binding)
-    db.commit()
-    db.refresh(binding)
+    await db.commit()
+    await db.refresh(binding)
     return _serialize_object_binding(binding)
 
 
-def delete_map_object_binding(binding_id: int, db: Session) -> None:
-    binding = _get_object_binding_or_404(binding_id, db)
-    db.delete(binding)
-    db.commit()
+async def delete_map_object_binding(binding_id: int, db: AsyncSession) -> None:
+    binding = await _get_object_binding_or_404(binding_id, db)
+    await db.delete(binding)
+    await db.commit()
 
 
-def create_map_link(payload: OperationalMapLinkCreate, db: Session) -> dict[str, object]:
-    _get_map_view_or_404(payload.map_view_id, db)
-    source_object = _get_map_object_or_404(payload.source_object_id, db)
-    target_object = _get_map_object_or_404(payload.target_object_id, db)
+async def create_map_link(payload: OperationalMapLinkCreate, db: AsyncSession) -> dict[str, object]:
+    await _get_map_view_or_404(payload.map_view_id, db)
+    source_object = await _get_map_object_or_404(payload.source_object_id, db)
+    target_object = await _get_map_object_or_404(payload.target_object_id, db)
     if source_object.map_view_id != payload.map_view_id or target_object.map_view_id != payload.map_view_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Links must connect objects in the same map view")
 
@@ -533,13 +533,13 @@ def create_map_link(payload: OperationalMapLinkCreate, db: Session) -> dict[str,
         points_json=_dump_json(payload.points),
     )
     db.add(link)
-    db.commit()
-    db.refresh(link)
+    await db.commit()
+    await db.refresh(link)
     return _serialize_map_link(link)
 
 
-def update_map_link(link_id: int, payload: OperationalMapLinkUpdate, db: Session) -> dict[str, object]:
-    link = _get_map_link_or_404(link_id, db)
+async def update_map_link(link_id: int, payload: OperationalMapLinkUpdate, db: AsyncSession) -> dict[str, object]:
+    link = await _get_map_link_or_404(link_id, db)
     updates = payload.model_dump(exclude_unset=True)
     for field, value in updates.items():
         if field == "points":
@@ -548,22 +548,22 @@ def update_map_link(link_id: int, payload: OperationalMapLinkUpdate, db: Session
             link.style_json = _dump_json(value or {})
         else:
             setattr(link, field, value)
-    db.commit()
-    db.refresh(link)
+    await db.commit()
+    await db.refresh(link)
     return _serialize_map_link(link)
 
 
-def delete_map_link(link_id: int, db: Session) -> None:
-    link = _get_map_link_or_404(link_id, db)
+async def delete_map_link(link_id: int, db: AsyncSession) -> None:
+    link = await _get_map_link_or_404(link_id, db)
     binding_stmt = select(OperationalMapLinkBinding).where(OperationalMapLinkBinding.link_id == link_id)
-    for binding in db.scalars(binding_stmt).all():
-        db.delete(binding)
-    db.delete(link)
-    db.commit()
+    for binding in (await db.scalars(binding_stmt)).all():
+        await db.delete(binding)
+    await db.delete(link)
+    await db.commit()
 
 
-def create_map_link_binding(payload: OperationalMapLinkBindingCreate, db: Session) -> dict[str, object]:
-    _get_map_link_or_404(payload.link_id, db)
+async def create_map_link_binding(payload: OperationalMapLinkBindingCreate, db: AsyncSession) -> dict[str, object]:
+    await _get_map_link_or_404(payload.link_id, db)
     _validate_link_binding_payload(payload)
     binding = OperationalMapLinkBinding(
         link_id=payload.link_id,
@@ -574,37 +574,37 @@ def create_map_link_binding(payload: OperationalMapLinkBindingCreate, db: Sessio
         settings_json=_dump_json(payload.settings),
     )
     db.add(binding)
-    db.commit()
-    db.refresh(binding)
+    await db.commit()
+    await db.refresh(binding)
     return _serialize_link_binding(binding)
 
 
-def delete_map_link_binding(binding_id: int, db: Session) -> None:
-    binding = _get_link_binding_or_404(binding_id, db)
-    db.delete(binding)
-    db.commit()
+async def delete_map_link_binding(binding_id: int, db: AsyncSession) -> None:
+    binding = await _get_link_binding_or_404(binding_id, db)
+    await db.delete(binding)
+    await db.commit()
 
 
-def get_map_view_detail(map_view_id: int, db: Session) -> dict[str, object]:
-    map_view = _get_map_view_or_404(map_view_id, db)
-    objects = db.scalars(
+async def get_map_view_detail(map_view_id: int, db: AsyncSession) -> dict[str, object]:
+    map_view = await _get_map_view_or_404(map_view_id, db)
+    objects = (await db.scalars(
         select(OperationalMapObject).where(OperationalMapObject.map_view_id == map_view_id).order_by(OperationalMapObject.z_index, OperationalMapObject.id)
-    ).all()
+    )).all()
     object_ids = [map_object.id for map_object in objects]
-    links = db.scalars(select(OperationalMapLink).where(OperationalMapLink.map_view_id == map_view_id).order_by(OperationalMapLink.id)).all()
+    links = (await db.scalars(select(OperationalMapLink).where(OperationalMapLink.map_view_id == map_view_id).order_by(OperationalMapLink.id))).all()
     link_ids = [link.id for link in links]
 
     object_bindings = []
     if object_ids:
-        object_bindings = db.scalars(
+        object_bindings = (await db.scalars(
             select(OperationalMapObjectBinding).where(OperationalMapObjectBinding.object_id.in_(object_ids)).order_by(OperationalMapObjectBinding.id)
-        ).all()
+        )).all()
 
     link_bindings = []
     if link_ids:
-        link_bindings = db.scalars(
+        link_bindings = (await db.scalars(
             select(OperationalMapLinkBinding).where(OperationalMapLinkBinding.link_id.in_(link_ids)).order_by(OperationalMapLinkBinding.id)
-        ).all()
+        )).all()
 
     return OperationalMapViewDetailPayload.model_validate(
         {
@@ -613,8 +613,8 @@ def get_map_view_detail(map_view_id: int, db: Session) -> dict[str, object]:
             "object_bindings": [_serialize_object_binding(binding) for binding in object_bindings],
             "links": [_serialize_map_link(link) for link in links],
             "link_bindings": [_serialize_link_binding(binding) for binding in link_bindings],
-            "available_nodes": _list_available_nodes(db),
-            "available_submaps": _list_available_submaps(map_view_id, db),
+            "available_nodes": await _list_available_nodes(db),
+            "available_submaps": await _list_available_submaps(map_view_id, db),
             "object_binding_catalog": OBJECT_BINDING_FIELD_CATALOG,
             "link_binding_catalog": LINK_BINDING_FIELD_CATALOG,
         }

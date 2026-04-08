@@ -20,7 +20,7 @@ logging.basicConfig(
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.db import Base, engine
+from app.db import Base, async_engine
 from app.node_dashboard_backend import NodeDashboardBackend
 from app.poller_state import PollerState
 from app.pollers.ping import check_tcp_port, ping_host
@@ -112,9 +112,9 @@ def serialize_node(node, health):  # noqa: F811 — intentional redefinition
     from app.services.node_health import serialize_node as _impl
     return _impl(_ps, node, health)
 
-def get_node_or_404(node_id, db):  # noqa: F811
+async def get_node_or_404(node_id, db):  # noqa: F811
     from app.services.node_health import get_node_or_404 as _impl
-    return _impl(node_id, db)
+    return await _impl(node_id, db)
 
 async def refresh_nodes(nodes, db):  # noqa: F811
     from app.services.node_health import refresh_nodes as _impl
@@ -215,7 +215,8 @@ async def lifespan(app: FastAPI):
     from app.pollers.dashboard import node_dashboard_polling_loop
     from app.pollers.charts import charts_polling_loop
 
-    Base.metadata.create_all(bind=engine)
+    async with async_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     await get_redis()
 
     # Warm caches from Redis so the dashboard has data immediately on restart

@@ -6,6 +6,10 @@ The format is intentionally simple so diffs stay readable in version control.
 
 ## Unreleased
 
+### Changed
+
+- **Async SQLAlchemy migration:** Migrated entire database layer from synchronous SQLAlchemy (`create_engine` + `Session`) to async SQLAlchemy 2.0 (`create_async_engine` + `AsyncSession`). All route handlers, service functions, and background pollers now use non-blocking async DB I/O. Eliminates event loop starvation that caused 15-20 second page load delays. Alembic migrations remain sync (own engine). Tests converted to `IsolatedAsyncioTestCase` with `aiosqlite`.
+
 ### Added
 
 - **DN promotion to Anchor Node:** `POST /api/discovered-nodes/{site_id}/promote` converts a Discovered Node into a managed Anchor Node. Operator provides API credentials via a modal form on the DN detail page. The DN record and related data are deleted after successful promotion. New AN is immediately available for polling, charts, and topology.

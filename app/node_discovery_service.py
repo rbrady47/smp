@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import delete, select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import DiscoveredNode, DiscoveredNodeObservation, Node, NodeRelationship
 from app.node_projection_service import build_anchor_records
@@ -170,7 +170,7 @@ def build_discovery_candidates(
     return discovery_candidates
 
 
-async def refresh_discovered_inventory(backend: Any, db: Session, nodes: list[Node]) -> None:
+async def refresh_discovered_inventory(backend: Any, db: AsyncSession, nodes: list[Node]) -> None:
     for cached_site_id, cached in list(backend.discovered_node_cache.items()):
         if not isinstance(cached, dict):
             backend.discovered_node_cache.pop(cached_site_id, None)
@@ -181,11 +181,11 @@ async def refresh_discovered_inventory(backend: Any, db: Session, nodes: list[No
     _, anchor_by_site_id = await build_anchor_records(backend, nodes)
     inventory_records = {
         record.site_id: record
-        for record in db.scalars(select(DiscoveredNode).order_by(DiscoveredNode.site_id)).all()
+        for record in (await db.scalars(select(DiscoveredNode).order_by(DiscoveredNode.site_id))).all()
     }
     observation_records = {
         record.site_id: record
-        for record in db.scalars(select(DiscoveredNodeObservation).order_by(DiscoveredNodeObservation.site_id)).all()
+        for record in (await db.scalars(select(DiscoveredNodeObservation).order_by(DiscoveredNodeObservation.site_id))).all()
     }
     persisted_discovered = {
         site_id: backend._compose_discovered_row(inventory_record, observation_records.get(site_id))
@@ -248,7 +248,7 @@ async def refresh_discovered_inventory(backend: Any, db: Session, nodes: list[No
             deleted_site_ids.add(site_id)
             continue
         backend._store_discovered_node_cache(site_id, entry)
-        backend._upsert_discovered_record(db, entry)
+        await backend._upsert_discovered_record(db, entry)
         refreshed_site_ids.add(site_id)
         if ping_up and isinstance(candidate.get("source_node"), Node):
             backend._schedule_discovered_node_probe(
@@ -275,22 +275,22 @@ async def refresh_discovered_inventory(backend: Any, db: Session, nodes: list[No
         prunable_site_ids.append(site_id)
 
     if prunable_site_ids:
-        db.execute(
+        await db.execute(
             delete(NodeRelationship).where(
                 (NodeRelationship.source_site_id.in_(prunable_site_ids))
                 | (NodeRelationship.target_site_id.in_(prunable_site_ids))
             )
         )
-        db.execute(
+        await db.execute(
             delete(DiscoveredNodeObservation).where(
                 DiscoveredNodeObservation.site_id.in_(prunable_site_ids)
             )
         )
-        db.execute(
+        await db.execute(
             delete(DiscoveredNode).where(
                 DiscoveredNode.site_id.in_(prunable_site_ids)
             )
         )
 
-    db.commit()
+    await db.commit()
 

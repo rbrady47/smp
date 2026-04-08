@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
-from app.db import SessionLocal
+from app.db import AsyncSessionLocal
 from app.models import Node
 from app.pollers.ping import get_ping_snapshot
 from app.seeker_api import normalize_bwv_stats
@@ -201,19 +201,9 @@ async def probe_discovered_node_detail(
 
 
 async def refresh_node_dashboard_cache_once(ps: PollerState) -> None:
-    def _query_dashboard_nodes():
-        db = SessionLocal()
-        try:
-            return db.scalars(select(Node).order_by(Node.name)).all(), db
-        except Exception:
-            db.close()
-            raise
-
-    nodes, db = await asyncio.to_thread(_query_dashboard_nodes)
-    try:
+    async with AsyncSessionLocal() as db:
+        nodes = (await db.scalars(select(Node).order_by(Node.name))).all()
         await ps.dashboard_backend.refresh_cache(db, nodes)
-    finally:
-        db.close()
 
 
 _SSE_AN_FIELDS = (

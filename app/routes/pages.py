@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.models import OperationalMapView
@@ -49,8 +49,8 @@ async def topology_page(request: Request) -> HTMLResponse:
 
 
 @router.get("/topology/maps/{map_view_id}", response_class=HTMLResponse)
-async def topology_submap_page(request: Request, map_view_id: int, db: Session = Depends(get_db)) -> HTMLResponse:
-    view = db.get(OperationalMapView, map_view_id)
+async def topology_submap_page(request: Request, map_view_id: int, db: AsyncSession = Depends(get_db)) -> HTMLResponse:
+    view = await db.get(OperationalMapView, map_view_id)
     if not view:
         raise HTTPException(status_code=404, detail="Map view not found")
     page_title = f"{view.name} | Seeker Management Platform"
@@ -98,9 +98,9 @@ async def services_page(request: Request) -> HTMLResponse:
 
 
 @router.get("/nodes/{node_id}", response_class=HTMLResponse)
-async def node_detail_page(node_id: int, request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+async def node_detail_page(node_id: int, request: Request, db: AsyncSession = Depends(get_db)) -> HTMLResponse:
     from app.main import get_node_or_404
-    node = get_node_or_404(node_id, db)
+    node = await get_node_or_404(node_id, db)
     embedded = request.query_params.get("embedded") == "1"
     return templates.TemplateResponse(
         request=request,
@@ -117,7 +117,7 @@ async def node_detail_page(node_id: int, request: Request, db: Session = Depends
 
 
 @router.get("/node/{node_id}", response_class=HTMLResponse)
-async def node_detail_alias(node_id: int, request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+async def node_detail_alias(node_id: int, request: Request, db: AsyncSession = Depends(get_db)) -> HTMLResponse:
     return await node_detail_page(node_id, request, db)
 
 

@@ -1,10 +1,6 @@
-import os
 import unittest
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
-os.environ.setdefault("DATABASE_URL", "sqlite:///smp-test.db")
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.db import Base
 from app.models import DiscoveredNode, Node
@@ -28,11 +24,15 @@ from app.schemas import (
 )
 
 
-class OperationalMapServiceTest(unittest.TestCase):
-    def setUp(self) -> None:
-        engine = create_engine("sqlite:///:memory:")
-        Base.metadata.create_all(bind=engine)
-        self.session = sessionmaker(bind=engine, autoflush=False, autocommit=False)()
+class OperationalMapServiceTest(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with self.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        self.async_session_factory = async_sessionmaker(
+            bind=self.engine, class_=AsyncSession, expire_on_commit=False,
+        )
+        self.session = self.async_session_factory()
         self.session.add(
             Node(
                 id=1,
@@ -63,13 +63,14 @@ class OperationalMapServiceTest(unittest.TestCase):
                 discovered_level=2,
             )
         )
-        self.session.commit()
+        await self.session.commit()
 
-    def tearDown(self) -> None:
-        self.session.close()
+    async def asyncTearDown(self) -> None:
+        await self.session.close()
+        await self.engine.dispose()
 
-    def test_map_view_crud_starter_lists_created_views(self) -> None:
-        created = create_map_view(
+    async def test_map_view_crud_starter_lists_created_views(self) -> None:
+        created = await create_map_view(
             OperationalMapViewCreate(
                 name="Global Map",
                 slug="global-map",
@@ -78,14 +79,14 @@ class OperationalMapServiceTest(unittest.TestCase):
             self.session,
         )
 
-        views = list_map_views(self.session)
+        views = await list_map_views(self.session)
 
         self.assertEqual(created["slug"], "global-map")
         self.assertEqual(len(views), 1)
         self.assertEqual(views[0]["name"], "Global Map")
 
-    def test_map_detail_returns_objects_links_and_bindings(self) -> None:
-        parent_map = create_map_view(
+    async def test_map_detail_returns_objects_links_and_bindings(self) -> None:
+        parent_map = await create_map_view(
             OperationalMapViewCreate(
                 name="Global Map",
                 slug="global-map",
@@ -93,7 +94,7 @@ class OperationalMapServiceTest(unittest.TestCase):
             ),
             self.session,
         )
-        child_map = create_map_view(
+        child_map = await create_map_view(
             OperationalMapViewCreate(
                 name="DIV HQ Submap",
                 slug="div-hq-submap",
@@ -103,7 +104,7 @@ class OperationalMapServiceTest(unittest.TestCase):
             self.session,
         )
 
-        node_object = create_map_object(
+        node_object = await create_map_object(
             OperationalMapObjectCreate(
                 map_view_id=parent_map["id"],
                 object_type="node",
@@ -113,7 +114,7 @@ class OperationalMapServiceTest(unittest.TestCase):
             ),
             self.session,
         )
-        submap_object = create_map_object(
+        submap_object = await create_map_object(
             OperationalMapObjectCreate(
                 map_view_id=parent_map["id"],
                 object_type="submap",
@@ -123,7 +124,7 @@ class OperationalMapServiceTest(unittest.TestCase):
             ),
             self.session,
         )
-        object_binding = create_map_object_binding(
+        object_binding = await create_map_object_binding(
             OperationalMapObjectBindingCreate(
                 object_id=node_object["id"],
                 slot="primary_status",
@@ -133,7 +134,7 @@ class OperationalMapServiceTest(unittest.TestCase):
             ),
             self.session,
         )
-        link = create_map_link(
+        link = await create_map_link(
             OperationalMapLinkCreate(
                 map_view_id=parent_map["id"],
                 source_object_id=node_object["id"],
@@ -144,7 +145,7 @@ class OperationalMapServiceTest(unittest.TestCase):
             ),
             self.session,
         )
-        link_binding = create_map_link_binding(
+        link_binding = await create_map_link_binding(
             OperationalMapLinkBindingCreate(
                 link_id=link["id"],
                 slot="label",
@@ -155,7 +156,7 @@ class OperationalMapServiceTest(unittest.TestCase):
             self.session,
         )
 
-        detail = get_map_view_detail(parent_map["id"], self.session)
+        detail = await get_map_view_detail(parent_map["id"], self.session)
 
         self.assertEqual(detail["map_view"]["slug"], "global-map")
         self.assertEqual(len(detail["objects"]), 2)
@@ -169,8 +170,8 @@ class OperationalMapServiceTest(unittest.TestCase):
         self.assertIn("primary_status", detail["object_binding_catalog"])
         self.assertIn("label", detail["link_binding_catalog"])
 
-    def test_node_object_can_be_reassigned_to_discovered_node_id(self) -> None:
-        map_view = create_map_view(
+    async def test_node_object_can_be_reassigned_to_discovered_node_id(self) -> None:
+        map_view = await create_map_view(
             OperationalMapViewCreate(
                 name="Global Map",
                 slug="global-map",
@@ -178,7 +179,7 @@ class OperationalMapServiceTest(unittest.TestCase):
             ),
             self.session,
         )
-        node_object = create_map_object(
+        node_object = await create_map_object(
             OperationalMapObjectCreate(
                 map_view_id=map_view["id"],
                 object_type="node",
@@ -189,7 +190,7 @@ class OperationalMapServiceTest(unittest.TestCase):
             self.session,
         )
 
-        updated = update_map_object(
+        updated = await update_map_object(
             node_object["id"],
             OperationalMapObjectUpdate(node_site_id="4001"),
             self.session,

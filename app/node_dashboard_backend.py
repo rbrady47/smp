@@ -9,7 +9,7 @@ import re
 from typing import Any, Awaitable, Callable
 
 from sqlalchemy import delete, select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import DiscoveredNode, DiscoveredNodeObservation, Node, NodeRelationship
 from app.node_discovery_service import refresh_discovered_inventory
@@ -69,16 +69,16 @@ class NodeDashboardBackend:
         cached = self.discovered_node_cache.get(site_id)
         return cached if isinstance(cached, dict) else None
 
-    def ensure_discovered_node_cached(self, db: Session, site_id: str) -> dict[str, object] | None:
+    async def ensure_discovered_node_cached(self, db: AsyncSession, site_id: str) -> dict[str, object] | None:
         cached = self.get_cached_discovered_node(site_id)
         if cached:
             return cached
 
-        inventory_record = db.get(DiscoveredNode, site_id)
+        inventory_record = await db.get(DiscoveredNode, site_id)
         if inventory_record is None:
             return None
 
-        observation_record = db.get(DiscoveredNodeObservation, site_id)
+        observation_record = await db.get(DiscoveredNodeObservation, site_id)
         return self.merge_cached_discovered_node(
             site_id,
             self._compose_discovered_row(inventory_record, observation_record),
@@ -89,7 +89,7 @@ class NodeDashboardBackend:
         self._store_discovered_node_cache(site_id, merged)
         return merged
 
-    def delete_discovered_nodes(self, db: Session, site_ids: list[str]) -> list[str]:
+    async def delete_discovered_nodes(self, db: AsyncSession, site_ids: list[str]) -> list[str]:
         normalized_site_ids = [str(site_id).strip() for site_id in site_ids if str(site_id).strip()]
         if not normalized_site_ids:
             return []
@@ -108,20 +108,20 @@ class NodeDashboardBackend:
             for row in list(self.node_dashboard_cache.get("discovered") or [])
             if isinstance(row, dict) and str(row.get("site_id") or "").strip() not in normalized_site_ids
         ]
-        db.execute(
+        await db.execute(
             delete(NodeRelationship).where(
                 (NodeRelationship.source_site_id.in_(normalized_site_ids))
                 | (NodeRelationship.target_site_id.in_(normalized_site_ids))
             )
         )
-        db.execute(
+        await db.execute(
             delete(DiscoveredNodeObservation).where(DiscoveredNodeObservation.site_id.in_(normalized_site_ids))
         )
-        db.execute(delete(DiscoveredNode).where(DiscoveredNode.site_id.in_(normalized_site_ids)))
-        db.commit()
+        await db.execute(delete(DiscoveredNode).where(DiscoveredNode.site_id.in_(normalized_site_ids)))
+        await db.commit()
         return normalized_site_ids
 
-    def clear_discovery(self, db: Session) -> None:
+    async def clear_discovery(self, db: AsyncSession) -> None:
         self.discovered_node_cache.clear()
         self.discovered_metric_history.clear()
         self.discovered_ping_cache.clear()
@@ -130,13 +130,13 @@ class NodeDashboardBackend:
         self.discovered_node_tombstones.clear()
         self.node_dashboard_cache["discovered"] = []
         self.mark_projection_dirty()
-        db.execute(delete(NodeRelationship).where(NodeRelationship.target_row_type == "discovered"))
-        db.execute(delete(DiscoveredNodeObservation))
-        db.execute(delete(DiscoveredNode))
-        db.commit()
+        await db.execute(delete(NodeRelationship).where(NodeRelationship.target_row_type == "discovered"))
+        await db.execute(delete(DiscoveredNodeObservation))
+        await db.execute(delete(DiscoveredNode))
+        await db.commit()
 
-    def delete_discovered_node(self, db: Session, site_id: str) -> None:
-        self.delete_discovered_nodes(db, [site_id])
+    async def delete_discovered_node(self, db: AsyncSession, site_id: str) -> None:
+        await self.delete_discovered_nodes(db, [site_id])
 
     def _serialize_discovered_inventory_record(self, record: DiscoveredNode) -> dict[str, object]:
         surfaced_by_names: list[str] = []
@@ -223,38 +223,38 @@ class NodeDashboardBackend:
             "discovered_level": record.discovered_level,
         }
 
-    def get_topology_relationships(self, db: Session) -> list[dict[str, object]]:
+    async def get_topology_relationships(self, db: AsyncSession) -> list[dict[str, object]]:
         return [
             self._serialize_relationship_record(record)
-            for record in db.scalars(
+            for record in (await db.scalars(
                 select(NodeRelationship).order_by(
                     NodeRelationship.relationship_kind,
                     NodeRelationship.source_site_id,
                     NodeRelationship.target_site_id,
                 )
-            ).all()
+            )).all()
         ]
 
-    def _upsert_discovered_relationships(self, db: Session, row: dict[str, object]) -> None:
+    async def _upsert_discovered_relationships(self, db: AsyncSession, row: dict[str, object]) -> None:
         target_site_id = str(row.get("site_id") or "").strip()
         source_site_id = str(row.get("discovered_parent_site_id") or row.get("surfaced_by_site_id") or "").strip()
         relationship_kind = "surfaced_by"
 
-        existing_relationships = db.scalars(
+        existing_relationships = (await db.scalars(
             select(NodeRelationship).where(
                 (NodeRelationship.target_site_id == target_site_id)
                 & (NodeRelationship.relationship_kind == relationship_kind)
             )
-        ).all()
+        )).all()
 
         for relationship in existing_relationships:
             if not source_site_id or relationship.source_site_id != source_site_id:
-                db.delete(relationship)
+                await db.delete(relationship)
 
         if not target_site_id or not source_site_id:
             return
 
-        record = db.get(NodeRelationship, {
+        record = await db.get(NodeRelationship, {
             "source_site_id": source_site_id,
             "target_site_id": target_site_id,
             "relationship_kind": relationship_kind,
@@ -275,21 +275,21 @@ class NodeDashboardBackend:
         record.target_location = str(row.get("location") or "").strip() or None
         record.discovered_level = int(row.get("discovered_level") or row.get("level") or 2)
 
-    def _upsert_discovered_record(self, db: Session, row: dict[str, object]) -> None:
+    async def _upsert_discovered_record(self, db: AsyncSession, row: dict[str, object]) -> None:
         site_id = str(row.get("site_id") or "").strip()
         if not site_id:
             return
 
-        self._upsert_discovered_inventory_record(db, row)
-        self._upsert_discovered_observation_record(db, row)
-        self._upsert_discovered_relationships(db, row)
+        await self._upsert_discovered_inventory_record(db, row)
+        await self._upsert_discovered_observation_record(db, row)
+        await self._upsert_discovered_relationships(db, row)
 
-    def _upsert_discovered_inventory_record(self, db: Session, row: dict[str, object]) -> None:
+    async def _upsert_discovered_inventory_record(self, db: AsyncSession, row: dict[str, object]) -> None:
         site_id = str(row.get("site_id") or "").strip()
         if not site_id:
             return
 
-        record = db.get(DiscoveredNode, site_id)
+        record = await db.get(DiscoveredNode, site_id)
         if record is None:
             record = DiscoveredNode(site_id=site_id)
             db.add(record)
@@ -304,12 +304,12 @@ class NodeDashboardBackend:
         record.discovered_parent_name = str(row.get("discovered_parent_name") or row.get("surfaced_by_name") or "").strip() or None
         record.surfaced_by_names_json = json.dumps(self._merge_discovered_sources(row.get("surfaced_by_names")))
 
-    def _upsert_discovered_observation_record(self, db: Session, row: dict[str, object]) -> None:
+    async def _upsert_discovered_observation_record(self, db: AsyncSession, row: dict[str, object]) -> None:
         site_id = str(row.get("site_id") or "").strip()
         if not site_id:
             return
 
-        record = db.get(DiscoveredNodeObservation, site_id)
+        record = await db.get(DiscoveredNodeObservation, site_id)
         if record is None:
             record = DiscoveredNodeObservation(site_id=site_id)
             db.add(record)
@@ -568,7 +568,7 @@ class NodeDashboardBackend:
             "refresh_window_seconds": normalized_window,
         }
 
-    async def refresh_cache(self, db: Session, nodes: list[Node]) -> None:
+    async def refresh_cache(self, db: AsyncSession, nodes: list[Node]) -> None:
         if self.discovery_enabled:
             await self.refresh_discovered_inventory(db, nodes)
         if not self.should_refresh_projection():
@@ -933,16 +933,16 @@ class NodeDashboardBackend:
 
         asyncio.create_task(_runner())
 
-    async def refresh_discovered_inventory(self, db: Session, nodes: list[Node]) -> None:
+    async def refresh_discovered_inventory(self, db: AsyncSession, nodes: list[Node]) -> None:
         await refresh_discovered_inventory(self, db, nodes)
 
-    async def build_projection(self, db: Session, nodes: list[Node]) -> dict[str, list[dict[str, object]]]:
+    async def build_projection(self, db: AsyncSession, nodes: list[Node]) -> dict[str, list[dict[str, object]]]:
         return await build_projection(self, db, nodes)
 
     async def _build_anchor_records(self, nodes: list[Node]) -> tuple[list[dict[str, object]], dict[str, dict[str, object]]]:
         return await build_anchor_records(self, nodes)
 
-    async def build_payload(self, db: Session, nodes: list[Node]) -> dict[str, list[dict[str, object]]]:
+    async def build_payload(self, db: AsyncSession, nodes: list[Node]) -> dict[str, list[dict[str, object]]]:
         return await self.build_projection(db, nodes)
 
 

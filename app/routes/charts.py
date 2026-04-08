@@ -5,7 +5,7 @@ from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.models import ChartSample, Node
@@ -139,10 +139,10 @@ async def get_chart_stats(
     node_id: int,
     start: int | None = Query(default=None, description="Start epoch (inclusive)"),
     end: int | None = Query(default=None, description="End epoch (inclusive)"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     """Return chart samples for a node, bucketed into 5-minute averages."""
-    node = db.get(Node, node_id)
+    node = await db.get(Node, node_id)
     if node is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Node not found")
 
@@ -153,7 +153,7 @@ async def get_chart_stats(
         stmt = stmt.where(ChartSample.timestamp <= end)
     stmt = stmt.order_by(ChartSample.timestamp)
 
-    samples = db.scalars(stmt).all()
+    samples = (await db.scalars(stmt)).all()
     bucketed = _bucket_samples(samples, BUCKET_SECONDS)
 
     return {
@@ -171,7 +171,7 @@ async def get_chart_summary(
     node_id: int,
     start: int = Query(..., description="Start epoch (inclusive)"),
     end: int = Query(..., description="End epoch (inclusive)"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     """Return aggregated chart stats for a node over a time range.
 
@@ -179,7 +179,7 @@ async def get_chart_summary(
     and per-channel averages.  Tunnel site indexes are cross-referenced
     with the seeker detail cache to resolve mate site IDs.
     """
-    node = db.get(Node, node_id)
+    node = await db.get(Node, node_id)
     if node is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Node not found")
 
@@ -192,7 +192,7 @@ async def get_chart_summary(
         .where(ChartSample.sample_type == "raw")
         .order_by(ChartSample.timestamp)
     )
-    samples = db.scalars(stmt).all()
+    samples = (await db.scalars(stmt)).all()
 
     if not samples:
         return {

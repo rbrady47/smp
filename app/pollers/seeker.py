@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
-from app.db import SessionLocal
+from app.db import AsyncSessionLocal
 from app.models import Node
 from app.pollers.ping import check_tcp_port, get_ping_snapshot, ping_host
 from app.seeker_api import (
@@ -223,14 +223,8 @@ async def seeker_polling_loop(ps: PollerState) -> None:
     while True:
         t0 = time.monotonic()
         try:
-            def _query_nodes():
-                db = SessionLocal()
-                try:
-                    return db.scalars(select(Node).order_by(Node.id)).all()
-                finally:
-                    db.close()
-
-            nodes = await asyncio.to_thread(_query_nodes)
+            async with AsyncSessionLocal() as db:
+                nodes = (await db.scalars(select(Node).order_by(Node.id))).all()
 
             enabled_nodes = [node for node in nodes if node.enabled and node.api_username and node.api_password]
             if enabled_nodes:
@@ -290,22 +284,17 @@ async def seeker_polling_loop(ps: PollerState) -> None:
                         backfill_needed.append((node.id, cfg_site_id))
 
                 if backfill_needed:
-                    def _backfill():
-                        bdb = SessionLocal()
+                    async with AsyncSessionLocal() as bdb:
                         try:
                             for node_id_pk, site_id_val in backfill_needed:
-                                db_node = bdb.get(Node, node_id_pk)
+                                db_node = await bdb.get(Node, node_id_pk)
                                 if db_node and not db_node.node_id:
                                     db_node.node_id = site_id_val
                                     logger.info("Backfilled node_id=%s for Node.id=%d", site_id_val, node_id_pk)
-                            bdb.commit()
+                            await bdb.commit()
                         except Exception:
                             logger.exception("Failed to backfill node_id values")
-                            bdb.rollback()
-                        finally:
-                            bdb.close()
-
-                    await asyncio.to_thread(_backfill)
+                            await bdb.rollback()
 
             elapsed = time.monotonic() - t0
             logger.info("Seeker poll cycle completed in %.1fs for %d nodes", elapsed, len(enabled_nodes))
@@ -337,14 +326,8 @@ async def site_name_resolution_loop(ps: PollerState) -> None:
         t0 = time.monotonic()
         resolved_count = 0
         try:
-            def _query_nodes_snr():
-                db = SessionLocal()
-                try:
-                    return db.scalars(select(Node).order_by(Node.id)).all()
-                finally:
-                    db.close()
-
-            nodes = await asyncio.to_thread(_query_nodes_snr)
+            async with AsyncSessionLocal() as db:
+                nodes = (await db.scalars(select(Node).order_by(Node.id))).all()
 
             nodes_by_id: dict[int, Node] = {
                 n.id: n for n in nodes

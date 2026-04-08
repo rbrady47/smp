@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.models import (
@@ -24,9 +24,9 @@ router = APIRouter(prefix="/api")
 
 
 @router.get("/nodes/ping-status")
-async def nodes_ping_status(db: Session = Depends(get_db)) -> list[dict[str, object]]:
+async def nodes_ping_status(db: AsyncSession = Depends(get_db)) -> list[dict[str, object]]:
     from app.main import ping_snapshot_by_node
-    nodes = db.scalars(select(Node).order_by(Node.id)).all()
+    nodes = (await db.scalars(select(Node).order_by(Node.id))).all()
     result = []
     for node in nodes:
         snap = ping_snapshot_by_node.get(node.id, {})
@@ -43,9 +43,9 @@ async def nodes_ping_status(db: Session = Depends(get_db)) -> list[dict[str, obj
 
 
 @router.get("/nodes")
-async def list_nodes(db: Session = Depends(get_db)) -> list[dict[str, object]]:
+async def list_nodes(db: AsyncSession = Depends(get_db)) -> list[dict[str, object]]:
     from app.main import node_dashboard_backend, serialize_node
-    nodes = db.scalars(select(Node).order_by(Node.name)).all()
+    nodes = (await db.scalars(select(Node).order_by(Node.name))).all()
     cached = node_dashboard_backend.get_cached_payload(60)
     anchor_rows_by_id = {
         int(row["id"]): row
@@ -70,26 +70,26 @@ async def list_nodes(db: Session = Depends(get_db)) -> list[dict[str, object]]:
 
 
 @router.post("/nodes/refresh")
-async def refresh_all_nodes(db: Session = Depends(get_db)) -> list[dict[str, object]]:
+async def refresh_all_nodes(db: AsyncSession = Depends(get_db)) -> list[dict[str, object]]:
     from app.main import refresh_nodes
     try:
-        nodes = db.scalars(select(Node).order_by(Node.name)).all()
+        nodes = (await db.scalars(select(Node).order_by(Node.name))).all()
         return await refresh_nodes(nodes, db)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"/api/nodes/refresh failed: {exc}") from exc
 
 
 @router.post("/nodes/{node_id}/telemetry")
-async def node_telemetry(node_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+async def node_telemetry(node_id: int, db: AsyncSession = Depends(get_db)) -> dict[str, object]:
     from app.main import get_node_or_404, request_node_telemetry
-    node = get_node_or_404(node_id, db)
+    node = await get_node_or_404(node_id, db)
     return await request_node_telemetry(node)
 
 
 @router.get("/nodes/{node_id}/config")
-async def node_config(node_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+async def node_config(node_id: int, db: AsyncSession = Depends(get_db)) -> dict[str, object]:
     from app.main import get_node_or_404, seeker_detail_cache
-    node = get_node_or_404(node_id, db)
+    node = await get_node_or_404(node_id, db)
     detail = seeker_detail_cache.get(node.id)
     if not detail:
         return {
@@ -108,10 +108,10 @@ async def node_config(node_id: int, db: Session = Depends(get_db)) -> dict[str, 
 
 
 @router.get("/nodes/{node_id}/stats")
-async def node_stats(node_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+async def node_stats(node_id: int, db: AsyncSession = Depends(get_db)) -> dict[str, object]:
     from app.main import get_node_or_404, seeker_detail_cache
     from app.seeker_api import normalize_bwv_stats
-    node = get_node_or_404(node_id, db)
+    node = await get_node_or_404(node_id, db)
     detail = seeker_detail_cache.get(node.id)
     if not detail:
         return {
@@ -131,9 +131,9 @@ async def node_stats(node_id: int, db: Session = Depends(get_db)) -> dict[str, o
 
 
 @router.get("/nodes/{node_id}/routes")
-async def node_routes(node_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+async def node_routes(node_id: int, db: AsyncSession = Depends(get_db)) -> dict[str, object]:
     from app.main import get_node_or_404, seeker_detail_cache
-    node = get_node_or_404(node_id, db)
+    node = await get_node_or_404(node_id, db)
     detail = seeker_detail_cache.get(node.id)
     if not detail:
         return {
@@ -157,7 +157,7 @@ async def node_routes(node_id: int, db: Session = Depends(get_db)) -> dict[str, 
 async def node_detail(
     node_id: int,
     window_seconds: int = Query(default=60),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     from app.main import (
         apply_windowed_detail_summary,
@@ -167,11 +167,11 @@ async def node_detail(
         refresh_seeker_detail_for_node,
         seeker_detail_cache,
     )
-    node = get_node_or_404(node_id, db)
+    node = await get_node_or_404(node_id, db)
     detail = seeker_detail_cache.get(node.id)
     if not detail:
         detail = await refresh_seeker_detail_for_node(node)
-    db.commit()
+    await db.commit()
     detail_dict = dict(detail)
     detail_site_id = (
         detail_dict.get("config_summary", {}).get("site_id")
@@ -189,16 +189,16 @@ async def node_detail(
 
 
 @router.get("/nodes/{node_id}/bwvstats/phase1")
-async def node_bwvstats_phase1(node_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+async def node_bwvstats_phase1(node_id: int, db: AsyncSession = Depends(get_db)) -> dict[str, object]:
     from app.main import get_node_or_404
-    node = get_node_or_404(node_id, db)
+    node = await get_node_or_404(node_id, db)
     return await collect_bwvstats_phase1(node, emit_logs=True)
 
 
 @router.get("/nodes/{node_id}/bwvstats/phase1/raw")
-async def node_bwvstats_phase1_raw(node_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+async def node_bwvstats_phase1_raw(node_id: int, db: AsyncSession = Depends(get_db)) -> dict[str, object]:
     from app.main import get_node_or_404
-    node = get_node_or_404(node_id, db)
+    node = await get_node_or_404(node_id, db)
     return {
         "status": "ok",
         "node_id": node.id,
@@ -207,22 +207,22 @@ async def node_bwvstats_phase1_raw(node_id: int, db: Session = Depends(get_db)) 
 
 
 @router.post("/nodes/flush-all")
-async def flush_all_nodes(db: Session = Depends(get_db)) -> dict[str, object]:
+async def flush_all_nodes(db: AsyncSession = Depends(get_db)) -> dict[str, object]:
     from app.main import (
         node_dashboard_backend,
         ping_samples_by_node,
         ping_snapshot_by_node,
         seeker_detail_cache,
     )
-    node_count = len(db.scalars(select(Node)).all())
-    discovered_count = len(db.scalars(select(DiscoveredNode)).all())
+    node_count = len((await db.scalars(select(Node))).all())
+    discovered_count = len((await db.scalars(select(DiscoveredNode))).all())
 
-    db.query(DiscoveredNodeObservation).delete()
-    db.query(NodeRelationship).delete()
-    db.query(DiscoveredNode).delete()
-    db.query(Node).delete()
-    db.query(TopologyEditorState).delete()
-    db.commit()
+    await db.execute(delete(DiscoveredNodeObservation))
+    await db.execute(delete(NodeRelationship))
+    await db.execute(delete(DiscoveredNode))
+    await db.execute(delete(Node))
+    await db.execute(delete(TopologyEditorState))
+    await db.commit()
 
     ping_samples_by_node.clear()
     ping_snapshot_by_node.clear()
@@ -242,12 +242,12 @@ async def flush_all_nodes(db: Session = Depends(get_db)) -> dict[str, object]:
 
 
 @router.post("/nodes", status_code=status.HTTP_201_CREATED)
-async def create_node(node_data: NodeCreate, db: Session = Depends(get_db)) -> dict[str, object]:
+async def create_node(node_data: NodeCreate, db: AsyncSession = Depends(get_db)) -> dict[str, object]:
     from app.main import serialize_node
     node = Node(**node_data.model_dump())
     db.add(node)
-    db.commit()
-    db.refresh(node)
+    await db.commit()
+    await db.refresh(node)
     pending_health = {
         "status": "unknown",
         "latency_ms": None,
@@ -267,16 +267,16 @@ async def create_node(node_data: NodeCreate, db: Session = Depends(get_db)) -> d
 async def update_node(
     node_id: int,
     node_data: NodeUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     from app.main import get_node_or_404, node_dashboard_backend, serialize_node
-    node = get_node_or_404(node_id, db)
+    node = await get_node_or_404(node_id, db)
 
     for field, value in node_data.model_dump().items():
         setattr(node, field, value)
 
-    db.commit()
-    db.refresh(node)
+    await db.commit()
+    await db.refresh(node)
     cached = node_dashboard_backend.get_cached_payload(60)
     cached_row = next(
         (r for r in (cached.get("anchors") or []) if isinstance(r, dict) and r.get("id") == node.id),
@@ -296,7 +296,7 @@ async def update_node(
 
 
 @router.delete("/nodes/{node_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_node(node_id: int, db: Session = Depends(get_db)) -> Response:
+async def delete_node(node_id: int, db: AsyncSession = Depends(get_db)) -> Response:
     from app.main import (
         get_node_or_404,
         node_dashboard_backend,
@@ -304,14 +304,14 @@ async def delete_node(node_id: int, db: Session = Depends(get_db)) -> Response:
         ping_snapshot_by_node,
         seeker_detail_cache,
     )
-    node = get_node_or_404(node_id, db)
+    node = await get_node_or_404(node_id, db)
     deleted_node_id = node.id
-    db.delete(node)
-    db.commit()
+    await db.delete(node)
+    await db.commit()
     seeker_detail_cache.pop(deleted_node_id, None)
     ping_samples_by_node.pop(deleted_node_id, None)
     ping_snapshot_by_node.pop(deleted_node_id, None)
-    remaining_nodes = db.scalars(select(Node).order_by(Node.name)).all()
+    remaining_nodes = (await db.scalars(select(Node).order_by(Node.name))).all()
     await node_dashboard_backend.refresh_cache(db, remaining_nodes)
     await state_manager.publish_topology_change("node_deleted", id=deleted_node_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
