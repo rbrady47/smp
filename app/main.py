@@ -112,9 +112,9 @@ def serialize_node(node, health):  # noqa: F811 — intentional redefinition
     from app.services.node_health import serialize_node as _impl
     return _impl(_ps, node, health)
 
-def get_node_or_404(node_id, db):  # noqa: F811
+async def get_node_or_404(node_id, db):  # noqa: F811
     from app.services.node_health import get_node_or_404 as _impl
-    return _impl(node_id, db)
+    return await _impl(node_id, db)
 
 async def refresh_nodes(nodes, db):  # noqa: F811
     from app.services.node_health import refresh_nodes as _impl

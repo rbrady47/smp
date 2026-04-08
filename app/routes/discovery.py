@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.models import DiscoveredNode, DiscoveredNodeObservation, Node, OperationalMapObject, OperationalMapView
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api")
 async def discovered_node_detail(
     site_id: str,
     window_seconds: int = Query(default=60),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     from app.main import (
         apply_windowed_detail_summary,
@@ -31,8 +31,8 @@ async def discovered_node_detail(
         normalize_node_dashboard_window,
         probe_discovered_node_detail,
     )
-    nodes = db.scalars(select(Node).order_by(Node.name)).all()
-    cached = node_dashboard_backend.ensure_discovered_node_cached(db, site_id)
+    nodes = (await db.scalars(select(Node).order_by(Node.name))).all()
+    cached = await node_dashboard_backend.ensure_discovered_node_cached(db, site_id)
 
     if not cached:
         raise HTTPException(status_code=404, detail="Discovered node not found")
@@ -82,9 +82,9 @@ async def discovered_node_detail(
 
 
 @router.delete("/discovered-nodes/{site_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_discovered_node(site_id: str, db: Session = Depends(get_db)) -> Response:
+async def delete_discovered_node(site_id: str, db: AsyncSession = Depends(get_db)) -> Response:
     from app.main import node_dashboard_backend
-    node_dashboard_backend.delete_discovered_node(db, site_id)
+    await node_dashboard_backend.delete_discovered_node(db, site_id)
     await state_manager.publish_discovery_event("dn_removed", site_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -93,7 +93,7 @@ async def delete_discovered_node(site_id: str, db: Session = Depends(get_db)) ->
 async def promote_discovered_node(
     site_id: str,
     payload: DnPromoteRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     """Promote a Discovered Node to an Anchor Node.
 
@@ -103,14 +103,14 @@ async def promote_discovered_node(
     from app.main import node_dashboard_backend, serialize_node
 
     # Verify DN exists
-    dn = db.get(DiscoveredNode, site_id)
+    dn = await db.get(DiscoveredNode, site_id)
     if not dn:
         raise HTTPException(status_code=404, detail="Discovered node not found")
 
     # Prevent duplicate promotion — check if AN with same node_id already exists
-    existing_an = db.scalars(
+    existing_an = (await db.scalars(
         select(Node).where(Node.node_id == site_id)
-    ).first()
+    )).first()
     if existing_an:
         raise HTTPException(
             status_code=409,
@@ -138,7 +138,7 @@ async def promote_discovered_node(
         charts_enabled=payload.charts_enabled,
     )
     db.add(node)
-    db.flush()  # get node.id before deleting DN
+    await db.flush()  # get node.id before deleting DN
 
     new_node_id = node.id
     logger.info(
@@ -147,11 +147,11 @@ async def promote_discovered_node(
     )
 
     # Delete the DN and related records
-    node_dashboard_backend.delete_discovered_node(db, site_id)
+    await node_dashboard_backend.delete_discovered_node(db, site_id)
 
     # Commit the new AN (DN deletion already committed inside delete_discovered_node)
-    db.commit()
-    db.refresh(node)
+    await db.commit()
+    await db.refresh(node)
 
     # Publish events
     await state_manager.publish_discovery_event("dn_removed", site_id)
@@ -177,7 +177,7 @@ async def promote_discovered_node(
 @router.post("/discovered-nodes/flush-unreachable")
 async def flush_unreachable_discovered_nodes(
     window_seconds: int = Query(default=60),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     from app.main import node_dashboard_backend, normalize_node_dashboard_window
     payload = node_dashboard_backend.get_cached_payload(normalize_node_dashboard_window(window_seconds))
@@ -187,7 +187,7 @@ async def flush_unreachable_discovered_nodes(
         if str(row.get("site_id", "")).strip()
         and str(row.get("ping") or "").strip().lower() != "up"
     ]
-    deleted_site_ids = node_dashboard_backend.delete_discovered_nodes(db, unreachable_site_ids)
+    deleted_site_ids = await node_dashboard_backend.delete_discovered_nodes(db, unreachable_site_ids)
     for sid in deleted_site_ids:
         await state_manager.publish_discovery_event("dn_removed", sid)
     return {
@@ -199,7 +199,7 @@ async def flush_unreachable_discovered_nodes(
 @router.post("/discovered-nodes/flush-discovery")
 async def flush_discovery(
     window_seconds: int = Query(default=60),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     from app.main import node_dashboard_backend, normalize_node_dashboard_window
     from app.node_discovery_service import refresh_discovered_inventory
@@ -209,8 +209,8 @@ async def flush_discovery(
         for row in existing_payload.get("discovered", [])
         if str(row.get("site_id") or "").strip()
     ]
-    node_dashboard_backend.clear_discovery(db)
-    nodes = db.scalars(select(Node).order_by(Node.name)).all()
+    await node_dashboard_backend.clear_discovery(db)
+    nodes = (await db.scalars(select(Node).order_by(Node.name))).all()
     await refresh_discovered_inventory(node_dashboard_backend, db, nodes)
     refreshed_payload = node_dashboard_backend.get_cached_payload(normalize_node_dashboard_window(window_seconds))
     refreshed_site_ids = [
@@ -242,21 +242,21 @@ def _resolve_dn_owner_anchor_id(
 @router.get("/topology/maps/{map_view_id}/discovery")
 async def get_submap_discovery(
     map_view_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     """Return tunnel peers for anchor nodes placed on this submap."""
     from app.main import dn_ping_snapshots, node_dashboard_backend, seeker_detail_cache
 
-    map_view = db.get(OperationalMapView, map_view_id)
+    map_view = await db.get(OperationalMapView, map_view_id)
     if not map_view:
         raise HTTPException(status_code=404, detail="Map view not found")
 
-    placed_objects = db.scalars(
+    placed_objects = (await db.scalars(
         select(OperationalMapObject).where(
             OperationalMapObject.map_view_id == map_view_id,
             OperationalMapObject.object_type == "node",
         )
-    ).all()
+    )).all()
 
     placed_anchor_ids: set[int] = set()
     for obj in placed_objects:
@@ -267,9 +267,9 @@ async def get_submap_discovery(
             except (ValueError, IndexError):
                 pass
 
-    anchor_nodes = db.scalars(
+    anchor_nodes = (await db.scalars(
         select(Node).where(Node.id.in_(placed_anchor_ids))
-    ).all() if placed_anchor_ids else []
+    )).all() if placed_anchor_ids else []
 
     anchor_site_id_map: dict[int, str] = {}
     for node in anchor_nodes:
@@ -277,7 +277,7 @@ async def get_submap_discovery(
         cfg = detail.get("config_summary") if isinstance(detail.get("config_summary"), dict) else {}
         anchor_site_id_map[node.id] = str(cfg.get("site_id") or node.node_id or node.id).strip()
 
-    all_inventory_nodes = db.scalars(select(Node)).all()
+    all_inventory_nodes = (await db.scalars(select(Node))).all()
     inventory_site_ids: set[str] = set()
     inventory_hosts: set[str] = set()
     for inv_node in all_inventory_nodes:
@@ -307,12 +307,12 @@ async def get_submap_discovery(
     seen_site_ids: dict[str, int] = {}
     discovery_links: list[dict[str, object]] = []
 
-    known_dns = db.scalars(
+    known_dns = (await db.scalars(
         select(DiscoveredNode).where(
             DiscoveredNode.map_view_id == map_view_id,
             DiscoveredNode.source_anchor_node_id.isnot(None),
         )
-    ).all()
+    )).all()
     for kdn in known_dns:
         if kdn.site_id not in seen_site_ids and kdn.source_anchor_node_id:
             seen_site_ids[kdn.site_id] = kdn.source_anchor_node_id
@@ -454,7 +454,7 @@ async def get_submap_discovery(
     newly_created_site_ids: set[str] = set()
     for peer in discovered_peers:
         site_id = str(peer["site_id"])
-        existing = db.get(DiscoveredNode, site_id)
+        existing = await db.get(DiscoveredNode, site_id)
         owner_anchor_id = seen_site_ids.get(site_id)
         if existing:
             existing.host = str(peer.get("host") or existing.host or "")
@@ -476,7 +476,7 @@ async def get_submap_discovery(
             db.add(dn)
             newly_created_site_ids.add(site_id)
 
-        obs = db.get(DiscoveredNodeObservation, site_id)
+        obs = await db.get(DiscoveredNodeObservation, site_id)
         ping_up = str(peer.get("ping") or "").strip().lower() == "up"
         if obs:
             obs.ping = "Up" if ping_up else "Down"
@@ -500,7 +500,7 @@ async def get_submap_discovery(
             )
             db.add(obs)
 
-    db.commit()
+    await db.commit()
 
     # Publish discovery events only for genuinely new peers (not updates)
     for peer in discovered_peers:
@@ -514,9 +514,9 @@ async def get_submap_discovery(
                 map_view_id=map_view_id,
             )
 
-    persisted_dns = db.scalars(
+    persisted_dns = (await db.scalars(
         select(DiscoveredNode).where(DiscoveredNode.map_view_id == map_view_id)
-    ).all()
+    )).all()
     saved_positions: dict[str, dict[str, int | None]] = {}
     for dn in persisted_dns:
         if dn.map_x is not None and dn.map_y is not None:
@@ -552,13 +552,13 @@ async def get_submap_discovery(
 async def save_dn_position(
     site_id: str,
     payload: dict[str, int | None],
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    dn = db.get(DiscoveredNode, site_id)
+    dn = await db.get(DiscoveredNode, site_id)
     if not dn:
         raise HTTPException(status_code=404, detail="Discovered node not found")
     dn.map_x = payload.get("x")
     dn.map_y = payload.get("y")
     dn.updated_at = datetime.now(timezone.utc)
-    db.commit()
+    await db.commit()
     return {"status": "ok"}

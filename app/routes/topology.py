@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.models import (
@@ -24,32 +24,32 @@ router = APIRouter(prefix="/api")
 @router.get("/topology/discovery")
 async def topology_discovery_payload(
     window_seconds: int = Query(default=60),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     from app.main import node_dashboard_backend, normalize_node_dashboard_window
-    db.commit()
+    await db.commit()
     return build_topology_discovery_payload(
         node_dashboard_backend.get_cached_payload(normalize_node_dashboard_window(window_seconds)),
-        node_dashboard_backend.get_topology_relationships(db),
+        await node_dashboard_backend.get_topology_relationships(db),
     )
 
 
 @router.get("/topology/editor-state")
-async def topology_editor_state_payload(db: Session = Depends(get_db)) -> dict[str, object]:
-    return get_topology_editor_state_payload(db)
+async def topology_editor_state_payload(db: AsyncSession = Depends(get_db)) -> dict[str, object]:
+    return await get_topology_editor_state_payload(db)
 
 
 @router.put("/topology/editor-state")
 async def update_topology_editor_state_route(
     payload: TopologyEditorStateUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
-    return upsert_topology_editor_state(payload, db)
+    return await upsert_topology_editor_state(payload, db)
 
 
 @router.get("/topology/links")
-async def list_topology_links(db: Session = Depends(get_db)) -> list[dict[str, object]]:
-    links = db.scalars(select(TopologyLink).order_by(TopologyLink.id)).all()
+async def list_topology_links(db: AsyncSession = Depends(get_db)) -> list[dict[str, object]]:
+    links = (await db.scalars(select(TopologyLink).order_by(TopologyLink.id))).all()
     return [
         {
             "id": link.id,
@@ -67,7 +67,7 @@ async def list_topology_links(db: Session = Depends(get_db)) -> list[dict[str, o
 @router.post("/topology/links", status_code=status.HTTP_201_CREATED)
 async def create_topology_link(
     payload: TopologyLinkCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     link = TopologyLink(
         source_entity_id=payload.source_entity_id,
@@ -78,8 +78,8 @@ async def create_topology_link(
         status_node_id=payload.status_node_id,
     )
     db.add(link)
-    db.commit()
-    db.refresh(link)
+    await db.commit()
+    await db.refresh(link)
     await state_manager.publish_topology_change("link_created", id=link.id)
     return {
         "id": link.id,
@@ -96,16 +96,16 @@ async def create_topology_link(
 async def update_topology_link(
     link_id: int,
     payload: TopologyLinkUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
-    link = db.get(TopologyLink, link_id)
+    link = await db.get(TopologyLink, link_id)
     if not link:
         raise HTTPException(status_code=404, detail="Link not found")
     update_data = payload.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(link, key, value)
-    db.commit()
-    db.refresh(link)
+    await db.commit()
+    await db.refresh(link)
     await state_manager.publish_topology_change("link_updated", id=link.id)
     return {
         "id": link.id,
@@ -121,14 +121,14 @@ async def update_topology_link(
 @router.delete("/topology/links/{link_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_topology_link(
     link_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> Response:
-    link = db.get(TopologyLink, link_id)
+    link = await db.get(TopologyLink, link_id)
     if not link:
         raise HTTPException(status_code=404, detail="Link not found")
     deleted_id = link.id
-    db.delete(link)
-    db.commit()
+    await db.delete(link)
+    await db.commit()
     await state_manager.publish_topology_change("link_deleted", id=deleted_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -136,10 +136,10 @@ async def delete_topology_link(
 @router.get("/topology")
 async def topology_payload(
     window_seconds: int = Query(default=60),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     from app.main import dn_ping_snapshots, node_dashboard_backend, normalize_node_dashboard_window
-    nodes = db.scalars(select(Node).order_by(Node.name)).all()
+    nodes = (await db.scalars(select(Node).order_by(Node.name))).all()
     dashboard_payload = node_dashboard_backend.get_cached_payload(normalize_node_dashboard_window(window_seconds))
     anchor_rows_by_id = {
         int(row.get("id")): row
@@ -172,7 +172,7 @@ async def topology_payload(
                 "web_scheme": anchor.get("web_scheme") or ("https" if node.api_use_https else "http"),
             }
         )
-    db_links = db.scalars(select(TopologyLink).order_by(TopologyLink.id)).all()
+    db_links = (await db.scalars(select(TopologyLink).order_by(TopologyLink.id))).all()
     authored_links = [
         {
             "id": f"topo-link-{link.id}",
@@ -188,15 +188,15 @@ async def topology_payload(
         }
         for link in db_links
     ]
-    submap_views = db.scalars(
+    submap_views = (await db.scalars(
         select(OperationalMapView).where(OperationalMapView.parent_map_id.is_(None)).order_by(OperationalMapView.name)
-    ).all()
-    submap_objects = db.scalars(
+    )).all()
+    submap_objects = (await db.scalars(
         select(OperationalMapObject).where(
             OperationalMapObject.object_type == "submap",
             OperationalMapObject.child_map_view_id.isnot(None),
         ).order_by(OperationalMapObject.id)
-    ).all()
+    )).all()
     submap_object_by_child_id = {obj.child_map_view_id: obj for obj in submap_objects}
 
     submap_view_ids = [view.id for view in submap_views]
@@ -205,12 +205,12 @@ async def topology_payload(
         for vid in submap_view_ids
     }
     if submap_view_ids:
-        submap_dns = db.scalars(
+        submap_dns = (await db.scalars(
             select(DiscoveredNode).where(
                 DiscoveredNode.map_view_id.in_(submap_view_ids),
                 DiscoveredNode.source_anchor_node_id.isnot(None),
             )
-        ).all()
+        )).all()
         for dn in submap_dns:
             vid = dn.map_view_id
             if vid not in submap_dn_counts:
@@ -243,7 +243,7 @@ async def topology_payload(
             "dn_up_names": counts["up_names"],
             "dn_down_names": counts["down_names"],
         })
-    db.commit()
+    await db.commit()
     result = build_mock_topology_payload(inventory_nodes)
     result["links"] = authored_links
     result["submaps"] = submaps

@@ -4,7 +4,7 @@ import asyncio
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import DiscoveredNode, DiscoveredNodeObservation, Node
 from app.schemas import NodeDashboardAnchorRow, NodeDashboardPayload
@@ -63,15 +63,15 @@ async def build_anchor_records(backend: Any, nodes: list[Node]) -> tuple[list[di
     return anchors, anchor_by_site_id
 
 
-async def build_projection(backend: Any, db: Session, nodes: list[Node]) -> dict[str, list[dict[str, object]]]:
+async def build_projection(backend: Any, db: AsyncSession, nodes: list[Node]) -> dict[str, list[dict[str, object]]]:
     anchors, anchor_by_site_id = await build_anchor_records(backend, nodes)
     inventory_records = {
         record.site_id: record
-        for record in db.scalars(select(DiscoveredNode).order_by(DiscoveredNode.site_id)).all()
+        for record in (await db.scalars(select(DiscoveredNode).order_by(DiscoveredNode.site_id))).all()
     }
     observation_records = {
         record.site_id: record
-        for record in db.scalars(select(DiscoveredNodeObservation).order_by(DiscoveredNodeObservation.site_id)).all()
+        for record in (await db.scalars(select(DiscoveredNodeObservation).order_by(DiscoveredNodeObservation.site_id))).all()
     }
     persisted_discovered = {
         site_id: backend._compose_discovered_row(inventory_record, observation_records.get(site_id))

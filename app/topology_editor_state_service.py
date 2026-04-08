@@ -4,7 +4,7 @@ import json
 from datetime import timezone
 from typing import Any
 
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import TopologyEditorState
 from app.schemas import TopologyEditorStatePayload, TopologyEditorStateUpdate
@@ -23,11 +23,11 @@ def _decode_json_object(raw_value: str | None, default: dict[str, Any] | None) -
     return parsed if isinstance(parsed, dict) else default
 
 
-def get_topology_editor_state_payload(
-    db: Session,
+async def get_topology_editor_state_payload(
+    db: AsyncSession,
     scope: str = TOPOLOGY_EDITOR_STATE_SCOPE,
 ) -> dict[str, Any]:
-    state = db.get(TopologyEditorState, scope)
+    state = await db.get(TopologyEditorState, scope)
     if not state:
         return TopologyEditorStatePayload(
             scope=scope,
@@ -51,12 +51,12 @@ def get_topology_editor_state_payload(
     ).model_dump()
 
 
-def upsert_topology_editor_state(
+async def upsert_topology_editor_state(
     payload: TopologyEditorStateUpdate,
-    db: Session,
+    db: AsyncSession,
     scope: str = TOPOLOGY_EDITOR_STATE_SCOPE,
 ) -> dict[str, Any]:
-    state = db.get(TopologyEditorState, scope)
+    state = await db.get(TopologyEditorState, scope)
     if not state:
         state = TopologyEditorState(scope=scope)
         db.add(state)
@@ -66,6 +66,6 @@ def upsert_topology_editor_state(
     state.link_anchor_assignments_json = json.dumps(payload.link_anchor_assignments or {})
     state.demo_mode_json = payload.demo_mode or "off"
 
-    db.commit()
-    db.refresh(state)
-    return get_topology_editor_state_payload(db, scope)
+    await db.commit()
+    await db.refresh(state)
+    return await get_topology_editor_state_payload(db, scope)
