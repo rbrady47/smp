@@ -7612,6 +7612,7 @@ function initDnPromotion() {
             api_username: document.getElementById("promote-api-username").value.trim(),
             api_password: document.getElementById("promote-api-password").value,
             api_use_https: document.getElementById("promote-api-use-https").checked,
+            topology_level: parseInt(document.getElementById("promote-topology-level").value) || 0,
             topology_unit: topologyUnit || null,
             include_in_topology: document.getElementById("promote-include-topology").checked,
             ping_enabled: document.getElementById("promote-ping-enabled").checked,

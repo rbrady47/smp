@@ -48,7 +48,7 @@ class DnPromoteRequest(BaseModel):
     api_password: str = Field(..., min_length=1, max_length=255)
     api_use_https: bool = False
     include_in_topology: bool = True
-    topology_level: TopologyLevel | None = 1
+    topology_level: TopologyLevel | None = 0
     topology_unit: TopologyUnit | None = None
     ping_enabled: bool = True
     ping_interval_seconds: int = Field(default=15, ge=1, le=300)
