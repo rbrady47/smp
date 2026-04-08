@@ -8802,6 +8802,12 @@ async function handleNodeActionClick(event) {
     const node = currentNodes.find((entry) => entry.id === nodeId);
 
     if (action === "edit") {
+        // Close inventory modal so the node form isn't hidden behind it
+        const inventoryShell = document.getElementById("topology-inventory-shell");
+        if (inventoryShell && !inventoryShell.hidden) {
+            inventoryShell.hidden = true;
+            document.body.classList.remove("modal-open");
+        }
         populateNodeForm(nodeId);
         return;
     }
