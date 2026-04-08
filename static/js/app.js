@@ -4674,10 +4674,22 @@ function getTopologyNodePosition(entity) {
     }
 
     if (entity.level === 0) {
-        return {
-            x: aggXs[entity.location] ?? width / 2,
-            y: aggYs[entity.location] ?? Math.round(height * 0.15),
-        };
+        const baseX = aggXs[entity.location] ?? width / 2;
+        const baseY = aggYs[entity.location] ?? Math.round(height * 0.15);
+        // Offset multiple level-0 nodes at the same location so they don't stack
+        const lvl0AtLocation = (topologyPayload?.lvl0_nodes ?? []).filter(
+            (n) => n.level === 0 && n.location === entity.location
+        );
+        if (lvl0AtLocation.length > 1) {
+            const idx = lvl0AtLocation.findIndex((n) => n.id === entity.id);
+            const spacing = 140;
+            const totalWidth = (lvl0AtLocation.length - 1) * spacing;
+            return {
+                x: baseX - totalWidth / 2 + (idx >= 0 ? idx : 0) * spacing,
+                y: baseY,
+            };
+        }
+        return { x: baseX, y: baseY };
     }
 
     if (entity.level === 1) {
