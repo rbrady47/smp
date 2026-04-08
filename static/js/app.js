@@ -4790,6 +4790,19 @@ function getTopologyEntities() {
         ...(topologyPayload.lvl2_clusters ?? []),
         ...(topologyPayload.submaps ?? []),
     ];
+
+    // Auto-place AN nodes that have include_in_topology but no saved layout
+    const isMainMap = !document.getElementById("topology-root")?.getAttribute("data-map-view-id");
+    if (isMainMap) {
+        for (const entity of authoredEntities) {
+            if (entity.kind === "services-cloud" || entity.kind === "submap") continue;
+            if (entity.include_in_topology && !topologyState.layoutOverrides?.[entity.id]) {
+                const pos = getTopologyNodePosition(entity);
+                setTopologyEntityLayout(entity.id, { x: pos.x, y: pos.y, size: getTopologyBubbleSize(entity, 0) });
+            }
+        }
+    }
+
     return authoredEntities.filter((entity) => entity.kind === "services-cloud" || Boolean(topologyState.layoutOverrides?.[entity.id]));
 }
 
