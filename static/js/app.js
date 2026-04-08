@@ -3558,9 +3558,12 @@ function resetNodeForm() {
     document.getElementById("node-id").value = "";
     document.getElementById("node-web-port").value = "443";
     document.getElementById("node-ssh-port").value = "22";
-    document.getElementById("node-ping-enabled").checked = true;
-    document.getElementById("node-charts-enabled").checked = true;
-    document.getElementById("node-ping-interval").value = "15";
+    const _pingEnabledEl = document.getElementById("node-ping-enabled");
+    if (_pingEnabledEl) _pingEnabledEl.checked = true;
+    const _chartsEnabledEl = document.getElementById("node-charts-enabled");
+    if (_chartsEnabledEl) _chartsEnabledEl.checked = true;
+    const _pingIntervalEl = document.getElementById("node-ping-interval");
+    if (_pingIntervalEl) _pingIntervalEl.value = "15";
     const topologyRoot = document.getElementById("topology-root");
     const defaultLevel = topologyRoot && topologyState.focusUnit ? "1" : "0";
     const defaultUnit = topologyRoot ? (topologyState.focusUnit || (defaultLevel === "0" ? "AGG" : "DIV HQ")) : "AGG";
@@ -3768,9 +3771,12 @@ function populateNodeForm(nodeId) {
     document.getElementById("node-api-username").value = node.api_username ?? "";
     document.getElementById("node-api-password").value = node.api_password ?? "";
     document.getElementById("node-api-use-https").checked = node.api_use_https;
-    document.getElementById("node-ping-enabled").checked = node.ping_enabled !== false;
-    document.getElementById("node-charts-enabled").checked = node.charts_enabled !== false;
-    document.getElementById("node-ping-interval").value = String(node.ping_interval_seconds ?? 15);
+    const _peEl = document.getElementById("node-ping-enabled");
+    if (_peEl) _peEl.checked = node.ping_enabled !== false;
+    const _ceEl = document.getElementById("node-charts-enabled");
+    if (_ceEl) _ceEl.checked = node.charts_enabled !== false;
+    const _piEl = document.getElementById("node-ping-interval");
+    if (_piEl) _piEl.value = String(node.ping_interval_seconds ?? 15);
     document.getElementById("node-form-title").textContent = `Edit ${node.name}`;
     document.getElementById("node-submit-button").textContent = "Save";
     document.getElementById("node-cancel-button").hidden = false;
@@ -8672,9 +8678,9 @@ function collectNodeFormPayload() {
         api_username: document.getElementById("node-api-username").value.trim() || null,
         api_password: document.getElementById("node-api-password").value.trim() || null,
         api_use_https: document.getElementById("node-api-use-https").checked,
-        ping_enabled: document.getElementById("node-ping-enabled").checked,
-        charts_enabled: document.getElementById("node-charts-enabled").checked,
-        ping_interval_seconds: Number(document.getElementById("node-ping-interval").value) || 15,
+        ping_enabled: document.getElementById("node-ping-enabled")?.checked ?? true,
+        charts_enabled: document.getElementById("node-charts-enabled")?.checked ?? true,
+        ping_interval_seconds: Number(document.getElementById("node-ping-interval")?.value) || 15,
     };
 }
 
