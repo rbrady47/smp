@@ -66,8 +66,10 @@ const TOPOLOGY_LOCATION_ALIASES = {
 };
 let topologyPayload = null;
 let topologySubmapDetail = null;
-let _topologyRefreshLock = false;
-let _topologyRefreshCooldownUntil = 0;
+// Generation counter: user-initiated refreshes increment this.
+// Background refreshes (SSE, timer) read it before fetching and
+// abort if it changed during their flight — user data always wins.
+let _topologyFetchGeneration = 0;
 let topologyDiscoveryPayload = { anchors: [], discovered: [], relationships: [], summary: {} };
 let topologyNodeDashboardPayload = { anchors: [], discovered: [] };
 let topologyDashboardServicesPayload = { summary: {}, services: [] };
@@ -2011,7 +2013,6 @@ function wireTopologyLayoutEditor(stage, layer, entityMap) {
                 const tgtCy = tgtRect ? tgtRect.top + tgtRect.height / 2 : endEvent.clientY;
                 const srcAnchor = pickAnchorPointFromSet(srcCx, srcCy, tgtCx, tgtCy, allKeys);
                 const tgtAnchor = pickAnchorPointFromSet(tgtCx, tgtCy, srcCx, srcCy, allKeys);
-                _topologyRefreshCooldownUntil = Date.now() + 3000;
                 const created = await createTopologyLink(drag.sourceEntityId, srcAnchor, finalTarget.entityId, tgtAnchor);
                 if (created) await refreshTopologyData();
                 renderTopologyStage();
@@ -5965,22 +5966,19 @@ function highlightTopologySnapTarget(target) {
 async function refreshTopologyData() {
     const root = document.getElementById("topology-root");
     if (root?.getAttribute("data-map-view-id")) {
-        await refreshTopologyPage();
+        // Submap: bump generation so background fetches don't overwrite
+        const gen = ++_topologyFetchGeneration;
+        await refreshTopologyPage(gen);
         return;
     }
-    if (_topologyRefreshLock) return;
-    _topologyRefreshLock = true;
-    // Block SSE/timer refreshes for 2s after a user-initiated action
-    _topologyRefreshCooldownUntil = Date.now() + 2000;
+    const gen = ++_topologyFetchGeneration;
     try {
         const result = await apiRequest(buildNodeDashboardRequestUrl("/api/topology"));
-        if (result) {
+        if (result && gen === _topologyFetchGeneration) {
             topologyPayload = result;
         }
     } catch (error) {
         console.error("Failed to refresh topology data:", error);
-    } finally {
-        _topologyRefreshLock = false;
     }
 }
 
@@ -6810,7 +6808,6 @@ function initTopologyLinkContextMenu() {
             const statusNodeVal = document.getElementById("topology-link-ctx-status-node")?.value;
             const statusNodeId = statusNodeVal ? Number(statusNodeVal) : null;
             closeTopologyLinkContextMenu();
-            _topologyRefreshCooldownUntil = Date.now() + 3000;
             await updateTopologyLink(dbId, { link_type: linkType, status_node_id: statusNodeId });
             await refreshTopologyData();
             renderTopologyStage();
@@ -6832,9 +6829,6 @@ function initTopologyLinkContextMenu() {
             topologyState.selectedId = null;
             topologyState.pinnedLinkTooltipId = null;
             hideTopologyLinkTooltip();
-            // Block SSE/timer refreshes before the API call to prevent
-            // stale data from overwriting our post-delete fetch
-            _topologyRefreshCooldownUntil = Date.now() + 3000;
             await deleteTopologyLink(dbId);
             await refreshTopologyData();
             renderTopologyStage();
@@ -7832,7 +7826,7 @@ function getNodeListRttState(latencyValue, row) {
     return row.ping_state || (String(row.ping || "").toLowerCase() === "up" ? "good" : "down");
 }
 
-async function refreshTopologyPage() {
+async function refreshTopologyPage(callerGeneration) {
     const root = document.getElementById("topology-root");
     if (!root) {
         return;
@@ -7841,16 +7835,16 @@ async function refreshTopologyPage() {
     if (topologyState.dragging) {
         return;
     }
-    // Skip if a user-initiated refresh is in progress or cooling down
-    if (_topologyRefreshLock || Date.now() < _topologyRefreshCooldownUntil) {
-        return;
-    }
+    // Record which generation we're fetching for
+    const gen = callerGeneration ?? _topologyFetchGeneration;
     const submapId = root.getAttribute("data-map-view-id");
     if (submapId) {
         const [, nodeDashResult] = await Promise.allSettled([
             refreshSubmapDiscovery(submapId),
             apiRequest(buildNodeDashboardRequestUrl("/api/node-dashboard")),
         ]);
+        // Abort if a user action bumped the generation while we were fetching
+        if (gen !== _topologyFetchGeneration) return;
         if (nodeDashResult.status === "fulfilled") {
             topologyNodeDashboardPayload = nodeDashResult.value;
         }
@@ -7868,8 +7862,8 @@ async function refreshTopologyPage() {
             apiRequest("/api/dashboard/services"),
         ]);
 
-        // Abort if a user-initiated refresh started while we were fetching
-        if (_topologyRefreshLock || Date.now() < _topologyRefreshCooldownUntil) {
+        // Abort if a user action bumped the generation while we were fetching
+        if (gen !== _topologyFetchGeneration) {
             return;
         }
 
@@ -7904,15 +7898,14 @@ async function refreshTopologyStructure() {
     const root = document.getElementById("topology-root");
     if (!root) return;
     if (topologyState.dragging) return;
-    if (_topologyRefreshLock || Date.now() < _topologyRefreshCooldownUntil) return;
 
     const submapId = root.getAttribute("data-map-view-id");
     if (submapId) {
-        // Submap discovery is loaded once on page load — don't re-fetch on timer
         if (topologyPayload) renderTopologyStage();
         return;
     }
 
+    const gen = _topologyFetchGeneration;
     try {
         const [topologyResult, discoveryResult, dashboardServicesResult] = await Promise.allSettled([
             apiRequest(buildNodeDashboardRequestUrl("/api/topology")),
@@ -7920,8 +7913,8 @@ async function refreshTopologyStructure() {
             apiRequest("/api/dashboard/services"),
         ]);
 
-        // Abort if a user-initiated refresh started while we were fetching
-        if (_topologyRefreshLock || Date.now() < _topologyRefreshCooldownUntil) {
+        // Abort if a user action bumped the generation while we were fetching
+        if (gen !== _topologyFetchGeneration) {
             return;
         }
 
