@@ -8,6 +8,41 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-08 — Session: System Health Page
+
+### Branch / commit
+- Branch: `claude/seeker-charts-polling-UAgpt`
+
+### What was built
+System Health page (`/health`) with chart data storage usage badge and platform diagnostics.
+
+### Files touched
+- `app/routes/system.py` — added `GET /api/health` endpoint (chart storage stats, per-node breakdown, poller intervals)
+- `app/routes/pages.py` — added `/health` page route
+- `templates/health.html` — new health page template with storage badges, per-node table, poller info
+- `static/js/app.js` — added `loadHealthPage()` with storage helpers, color-coded chip logic
+- `templates/*.html` (10 files) — updated nav links from `#health` to `/health`
+- `docs/USER_GUIDE.md` — added System Health section
+- `docs/CODE_DOCUMENTATION.md` — updated route table
+- `CHANGELOG.md` — added health page entry
+
+### API
+`GET /api/health` returns:
+- `chart_storage`: total_rows, estimated_bytes, oldest/newest timestamp, per_node breakdown
+- `nodes`: total count, charts_enabled count
+- `pollers`: seeker/charts/services interval_s
+
+### Storage badge thresholds
+- Green: < 1M rows
+- Yellow: 1M–5M rows
+- Red: > 5M rows
+
+### Next steps
+- Data retention policy (auto-purge old chart_samples)
+- Poller cycle health (last run time, errors per cycle)
+
+---
+
 ## 2026-04-08 — Session: Async SQLAlchemy Migration
 
 ### Branch / commit

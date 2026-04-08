@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page_title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260408-health1">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">SMP</div>
+        <nav class="nav">
+            <a href="/">Dashboard</a>
+            <a href="/services/dashboard">Services Dashboard</a>
+            <a href="/topology">Topology</a>
+            <a href="/discovery">Discovery</a>
+            <a href="/charts">Charts</a>
+            <a href="/health" class="active">Health</a>
+            <a href="#admin">Admin</a>
+        </nav>
+    </header>
+
+    <main class="container dashboard-container" id="health-root">
+        <section class="dashboard-toolbar">
+            <div>
+                <p class="eyebrow">Platform Diagnostics</p>
+                <h1>System Health</h1>
+                <p class="subtitle">Storage usage, poller status, and platform diagnostics at a glance.</p>
+            </div>
+            <div class="dashboard-toolbar-actions">
+                <button type="button" class="button-secondary" id="health-refresh-button">Refresh</button>
+            </div>
+        </section>
+
+        <section class="card dashboard-meta" id="health-summary-bar">
+            <div>
+                <span class="dashboard-meta-label">Status</span>
+                <strong id="health-status">Loading...</strong>
+            </div>
+            <div>
+                <span class="dashboard-meta-label">Hostname</span>
+                <strong id="health-hostname">--</strong>
+            </div>
+            <div>
+                <span class="dashboard-meta-label">Nodes</span>
+                <strong id="health-node-count">--</strong>
+            </div>
+            <div>
+                <span class="dashboard-meta-label">Charts Enabled</span>
+                <strong id="health-charts-enabled">--</strong>
+            </div>
+            <div>
+                <span class="dashboard-meta-label">Last Check</span>
+                <strong id="health-last-check">--</strong>
+            </div>
+        </section>
+
+        <section class="card">
+            <div class="inventory-header">
+                <div>
+                    <p class="eyebrow">Storage</p>
+                    <h2>Chart Data Usage</h2>
+                    <p class="section-copy">Accumulated time-series data from bwvChartStats polling. Each row stores one second of traffic counters per node.</p>
+                </div>
+            </div>
+
+            <div class="services-summary" id="health-storage-summary">
+                <div class="services-summary-chip" id="health-chip-rows">
+                    <span class="services-summary-label">Total Rows</span>
+                    <strong id="health-total-rows">--</strong>
+                </div>
+                <div class="services-summary-chip" id="health-chip-size">
+                    <span class="services-summary-label">Est. Size</span>
+                    <strong id="health-est-size">--</strong>
+                </div>
+                <div class="services-summary-chip">
+                    <span class="services-summary-label">Oldest Sample</span>
+                    <strong id="health-oldest">--</strong>
+                </div>
+                <div class="services-summary-chip">
+                    <span class="services-summary-label">Newest Sample</span>
+                    <strong id="health-newest">--</strong>
+                </div>
+                <div class="services-summary-chip">
+                    <span class="services-summary-label">Time Span</span>
+                    <strong id="health-span">--</strong>
+                </div>
+            </div>
+
+            <div class="table-wrap" style="margin-top: 1rem;">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Node</th>
+                            <th>Samples</th>
+                            <th>Oldest</th>
+                            <th>Newest</th>
+                            <th>Span</th>
+                        </tr>
+                    </thead>
+                    <tbody id="health-per-node-body">
+                        <tr>
+                            <td colspan="5" class="table-message">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="card">
+            <div class="inventory-header">
+                <div>
+                    <p class="eyebrow">Background Tasks</p>
+                    <h2>Poller Intervals</h2>
+                    <p class="section-copy">Configured polling cadences for background data collection.</p>
+                </div>
+            </div>
+
+            <div class="services-summary" id="health-poller-summary">
+                <div class="services-summary-chip">
+                    <span class="services-summary-label">Seeker Poll</span>
+                    <strong id="health-poller-seeker">--</strong>
+                </div>
+                <div class="services-summary-chip">
+                    <span class="services-summary-label">Charts Poll</span>
+                    <strong id="health-poller-charts">--</strong>
+                </div>
+                <div class="services-summary-chip">
+                    <span class="services-summary-label">Services Poll</span>
+                    <strong id="health-poller-services">--</strong>
+                </div>
+            </div>
+        </section>
+
+        <p id="health-error" class="status-error" hidden>Unable to load health data</p>
+    </main>
+
+    <script src="{{ url_for('static', path='js/app.js') }}?v=20260408-health1"></script>
+</body>
+</html>

@@ -127,6 +127,22 @@ Below the graphs, a **Summary Report** table shows:
 
 All summary statistics are computed from raw per-second samples (not min/max midpoints) for reporting accuracy.
 
+### System Health
+
+Path: `/health`
+
+The System Health page provides a diagnostic view of platform storage usage and background poller status.
+
+What operators can see here:
+
+- **Chart Data Usage**: Total rows in the `chart_samples` table, estimated storage size, oldest/newest sample timestamps, and time span covered
+- **Per-Node Breakdown**: Table showing sample count, date range, and time span for each node collecting chart data
+- **Storage Badges**: Color-coded chips — green (under 1M rows), yellow (1M–5M rows), red (over 5M rows) — for quick at-a-glance assessment
+- **Poller Intervals**: Configured polling cadences for Seeker, Charts, and Services background tasks
+- **Platform Info**: Hostname, total node count, charts-enabled node count
+
+A Refresh button allows manual re-fetch of health data.
+
 ### Fixed Topology View
 
 Path: `/topology`
@@ -247,6 +263,7 @@ The current backend exposes several relevant route groups:
 - `/api/topology/discovery`
 - `/api/discovered-nodes/{site_id}/promote` — promotes a Discovered Node to an Anchor Node (POST with API credentials)
 - `/api/nodes/{id}/chart-stats` — per-second traffic counters (user bytes/packets, channel data, tunnel data) collected every 60s from each Seeker node via `bwvChartStats`. Query with `?start=<epoch>&end=<epoch>&limit=N` for weekly reporting.
+- `/api/health` — platform health diagnostics: chart storage metrics (row counts, size estimate, date range, per-node breakdown), node counts, and poller intervals
 - Operational-map concepts are being folded back into `/topology` planning rather than exposed as a separate API/UI path for operators right now.
 
 Operational-map API coverage currently includes:

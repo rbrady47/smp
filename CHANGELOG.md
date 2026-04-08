@@ -12,6 +12,8 @@ The format is intentionally simple so diffs stay readable in version control.
 
 ### Added
 
+- **System Health page:** `/health` page with chart data storage usage badge (total rows, estimated size, date range, per-node breakdown), color-coded storage chips (green/yellow/red thresholds), poller interval display, and platform diagnostics. API: `GET /api/health`.
+- **Health nav link:** Updated all page navigation from placeholder `#health` to live `/health` route.
 - **DN promotion to Anchor Node:** `POST /api/discovered-nodes/{site_id}/promote` converts a Discovered Node into a managed Anchor Node. Operator provides API credentials via a modal form on the DN detail page. The DN record and related data are deleted after successful promotion. New AN is immediately available for polling, charts, and topology.
 - **Charts data polling:** 60-second polling loop fetches `bwvChartStats(startTime=0, entries=30)` per node — most recent 30 seconds of raw per-second data each cycle. No cursor tracking needed; duplicates handled by `ON CONFLICT DO NOTHING`. Stored in `chart_samples` table.
 - **Server-side 5-minute bucketing:** `GET /api/nodes/{node_id}/chart-stats` aggregates raw samples into 5-minute time buckets before sending to the browser. Each bucket emits 3 rows (min, max, avg) preserving envelope visualization while reducing 7-day payloads from 302K rows to ~6K. Tunnel and channel JSON pre-parsed server-side.

@@ -180,8 +180,8 @@ Route modules split by domain. Each creates an `APIRouter` and is included in `m
 
 | Module | Prefix | Routes |
 |--------|--------|--------|
-| `pages.py` | `/` | HTML page routes (9 routes) |
-| `system.py` | `/api` | `/api/status` |
+| `pages.py` | `/` | HTML page routes (10 routes including `/health`) |
+| `system.py` | `/api` | `/api/status`, `/api/health` (chart storage metrics, node counts, poller intervals) |
 | `nodes.py` | `/api` | `/api/nodes` CRUD, detail, refresh, telemetry, bwvstats, flush-all |
 | `services.py` | `/api` | `/api/services` CRUD, `/api/dashboard/services` |
 | `dashboard.py` | `/api` | `/api/dashboard/nodes`, `/api/node-dashboard` |

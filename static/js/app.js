@@ -9507,6 +9507,117 @@ let _chartPackets = null;
 let _chartChannel = null;
 let _chartSiteInstances = [];  // Array of {chart, siteId, title} for per-site charts
 let _chartsSelectedNodeId = null;
+/* ── Health page ────────────────────────────────────────── */
+
+function _formatStorageSize(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function _formatTimeSpan(seconds) {
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+    if (seconds < 86400) return `${(seconds / 3600).toFixed(1)}h`;
+    return `${(seconds / 86400).toFixed(1)}d`;
+}
+
+function _formatEpoch(ts) {
+    if (!ts) return "--";
+    const d = new Date(ts * 1000);
+    return d.toLocaleString();
+}
+
+function _numberWithCommas(n) {
+    return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+function _applyStorageChipColor(chipEl, totalRows) {
+    chipEl.classList.remove("healthy", "degraded", "failed");
+    if (totalRows > 5000000) {
+        chipEl.classList.add("failed");
+    } else if (totalRows > 1000000) {
+        chipEl.classList.add("degraded");
+    } else {
+        chipEl.classList.add("healthy");
+    }
+}
+
+function loadHealthPage() {
+    const root = document.getElementById("health-root");
+    if (!root) return;
+
+    const refreshBtn = document.getElementById("health-refresh-button");
+
+    function renderHealth(data) {
+        document.getElementById("health-status").textContent = data.status === "ok" ? "Healthy" : data.status;
+        document.getElementById("health-hostname").textContent = data.hostname || "--";
+        document.getElementById("health-node-count").textContent = data.nodes?.total ?? "--";
+        document.getElementById("health-charts-enabled").textContent = data.nodes?.charts_enabled ?? "--";
+        document.getElementById("health-last-check").textContent = new Date(data.time).toLocaleTimeString();
+
+        const cs = data.chart_storage || {};
+        document.getElementById("health-total-rows").textContent = _numberWithCommas(cs.total_rows || 0);
+        document.getElementById("health-est-size").textContent = _formatStorageSize(cs.estimated_bytes || 0);
+        document.getElementById("health-oldest").textContent = _formatEpoch(cs.oldest_timestamp);
+        document.getElementById("health-newest").textContent = _formatEpoch(cs.newest_timestamp);
+
+        const chipRows = document.getElementById("health-chip-rows");
+        const chipSize = document.getElementById("health-chip-size");
+        if (chipRows) _applyStorageChipColor(chipRows, cs.total_rows || 0);
+        if (chipSize) _applyStorageChipColor(chipSize, cs.total_rows || 0);
+
+        if (cs.oldest_timestamp && cs.newest_timestamp) {
+            const span = cs.newest_timestamp - cs.oldest_timestamp;
+            document.getElementById("health-span").textContent = _formatTimeSpan(span);
+        } else {
+            document.getElementById("health-span").textContent = "--";
+        }
+
+        // Per-node table
+        const tbody = document.getElementById("health-per-node-body");
+        if (!cs.per_node || cs.per_node.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="table-message">No chart data collected yet</td></tr>';
+        } else {
+            tbody.innerHTML = cs.per_node.map(n => {
+                const span = (n.newest_timestamp && n.oldest_timestamp)
+                    ? _formatTimeSpan(n.newest_timestamp - n.oldest_timestamp) : "--";
+                return `<tr>
+                    <td>${n.node_name}</td>
+                    <td>${_numberWithCommas(n.sample_count)}</td>
+                    <td>${_formatEpoch(n.oldest_timestamp)}</td>
+                    <td>${_formatEpoch(n.newest_timestamp)}</td>
+                    <td>${span}</td>
+                </tr>`;
+            }).join("");
+        }
+
+        // Pollers
+        const p = data.pollers || {};
+        document.getElementById("health-poller-seeker").textContent = p.seeker_interval_s ? `${p.seeker_interval_s}s` : "--";
+        document.getElementById("health-poller-charts").textContent = p.charts_interval_s ? `${p.charts_interval_s}s` : "--";
+        document.getElementById("health-poller-services").textContent = p.services_interval_s ? `${p.services_interval_s}s` : "--";
+
+        document.getElementById("health-error").hidden = true;
+    }
+
+    function fetchHealth() {
+        apiRequest("/api/health").then(data => {
+            renderHealth(data);
+        }).catch(() => {
+            document.getElementById("health-error").hidden = false;
+        });
+    }
+
+    fetchHealth();
+    if (refreshBtn) {
+        refreshBtn.addEventListener("click", fetchHealth);
+    }
+}
+
+/* ── Charts page ───────────────────────────────────────── */
+
 let _chartsSelectedRange = 3600;
 let _chartsNodeName = "";
 
@@ -10559,6 +10670,7 @@ window.addEventListener("DOMContentLoaded", () => {
     safeStart(loadTopologyPage, "topology");
     safeStart(loadDiscoveryPage, "discovery");
     safeStart(loadChartsPage, "charts");
+    safeStart(loadHealthPage, "health");
     safeStart(loadNodeDetailPage, "node-detail");
     initDnPromotion();
 
