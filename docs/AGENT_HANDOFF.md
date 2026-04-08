@@ -8,6 +8,39 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-08 — Session: Dynamic Link Attachment
+
+### Branch / commit
+- Branch: `claude/seeker-charts-polling-UAgpt`
+
+### What was built
+Replaced the 8 fixed anchor point dots on topology nodes with dynamic edge attachment. Links now connect to the nearest edge of each node based on relative position (angle-based for circles, ray-rect intersection for rectangles).
+
+### Files touched
+- `static/js/app.js`:
+  - Added `getEdgeAttachmentPoint()` — circle/rect edge intersection geometry
+  - Added `isCircularTopologyEntity()` — entity shape classifier
+  - Updated `drawTopologyLinks()` — uses dynamic edge attachment instead of fixed anchor lookup
+  - Replaced 8 anchor point `<span>` elements with single `topology-link-create-zone`
+  - Rewrote link creation UX — drag from edge zone, rubberband tracks angle dynamically
+  - Added `getTopologyNodeSnapTarget()` / `highlightTopologySnapTarget()` — node-level snap targeting
+  - Simplified `setTopologyActiveLinkHandleTarget()` — no more per-anchor highlighting
+  - Removed `connectedAnchorMap` / `discoveryWorstMap` usage (dead code with no anchor dots)
+- `static/css/style.css`:
+  - Replaced `.topology-anchor-point` styles with `.topology-link-create-zone` and `.is-link-snap-target`
+- `CHANGELOG.md` — added entry
+
+### Key decisions
+- **No backend changes** — `source_anchor`/`target_anchor` DB fields kept for backward compat
+- **pickAnchorPointFromSet()** still used to compute compass direction keys for API calls when creating links
+- **Real-time drag** works unchanged — `drawTopologyLinks()` was already called on every `pointermove`; only the endpoint calculation changed
+
+### Next steps
+- Consider removing dead anchor-point functions (`getTopologyAnchorPointDefinitions`, `getTopologyConnectedAnchorMap`, `getDiscoveryWorstAnchorMap`)
+- May want to add a small inset to edge attachment for visual padding between line end and icon
+
+---
+
 ## 2026-04-08 — Session: System Health Page
 
 ### Branch / commit

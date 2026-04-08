@@ -1599,58 +1599,27 @@ a {
     transform: translate(-50%, -50%);
 }
 
-.topology-anchor-point {
+/* Link-create zone: invisible edge ring shown in edit mode for initiating link creation */
+.topology-link-create-zone {
     position: absolute;
-    width: 0.72rem;
-    height: 0.72rem;
-    transform: translate(-50%, -50%);
-    border-radius: 999px;
-    border: 1px solid rgba(15, 23, 41, 0.7);
-    background: rgba(123, 214, 255, 0.16);
-    box-shadow: 0 0 0 1px rgba(123, 214, 255, 0.18);
-    opacity: 0;
+    inset: -8px;
+    border-radius: inherit;
     pointer-events: none;
-    transition: opacity 140ms ease, transform 140ms ease, background-color 140ms ease;
+    cursor: crosshair;
+    z-index: 2;
 }
 
-.topology-anchor-point.is-connected {
-    opacity: 1;
-}
-
-.topology-anchor-point.is-connected-healthy {
-    background: rgba(92, 255, 146, 0.86);
-    box-shadow: 0 0 0 1px rgba(92, 255, 146, 0.18), 0 0 10px rgba(92, 255, 146, 0.2);
-}
-
-.topology-anchor-point.is-connected-degraded {
-    background: rgba(247, 193, 77, 0.9);
-    box-shadow: 0 0 0 1px rgba(247, 193, 77, 0.18), 0 0 10px rgba(247, 193, 77, 0.24);
-}
-
-.topology-anchor-point.is-connected-down {
-    background: rgba(255, 42, 42, 0.94);
-    box-shadow: 0 0 0 1px rgba(255, 42, 42, 0.24), 0 0 10px rgba(255, 42, 42, 0.34);
-}
-
-.topology-anchor-point.is-connected-neutral {
-    background: rgba(102, 190, 255, 0.72);
-    box-shadow: 0 0 0 1px rgba(102, 190, 255, 0.16), 0 0 10px rgba(102, 190, 255, 0.2);
-}
-
-.topology-stage.is-editing .topology-anchor-point {
-    opacity: 1;
+.topology-stage.is-editing .topology-link-create-zone {
     pointer-events: auto;
 }
 
-.topology-stage.is-editing .topology-anchor-point:hover {
-    transform: translate(-50%, -50%) scale(1.18);
-    background: rgba(123, 214, 255, 0.88);
+.topology-stage.is-editing .topology-link-create-zone:hover {
+    box-shadow: 0 0 0 2px rgba(123, 214, 255, 0.28);
 }
 
-.topology-stage.is-editing .topology-anchor-point.is-targeted {
-    transform: translate(-50%, -50%) scale(1.28);
-    background: rgba(92, 255, 146, 0.96);
-    box-shadow: 0 0 0 2px rgba(92, 255, 146, 0.18), 0 0 18px rgba(92, 255, 146, 0.42);
+/* Snap target highlight during link creation drag */
+.topology-entity.is-link-snap-target {
+    box-shadow: 0 0 0 3px rgba(92, 255, 146, 0.5), 0 0 24px rgba(92, 255, 146, 0.2) !important;
 }
 
 .topology-link-tooltip {

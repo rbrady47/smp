@@ -8,6 +8,7 @@ The format is intentionally simple so diffs stay readable in version control.
 
 ### Changed
 
+- **Dynamic link attachment:** Topology links now connect to the nearest edge of each node icon based on relative position, replacing the 8 fixed anchor point dots. Links smoothly reposition in real-time during node drag. Link creation in edit mode uses an edge zone drag instead of clicking individual anchor points. Applies to both main map and submaps. No backend/DB changes — `source_anchor`/`target_anchor` fields preserved for backward compat.
 - **Async SQLAlchemy migration:** Migrated entire database layer from synchronous SQLAlchemy (`create_engine` + `Session`) to async SQLAlchemy 2.0 (`create_async_engine` + `AsyncSession`). All route handlers, service functions, and background pollers now use non-blocking async DB I/O. Eliminates event loop starvation that caused 15-20 second page load delays. Alembic migrations remain sync (own engine). Tests converted to `IsolatedAsyncioTestCase` with `aiosqlite`.
 
 ### Added

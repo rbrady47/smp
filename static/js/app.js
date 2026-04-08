@@ -4875,8 +4875,6 @@ function renderTopologyStage() {
     const entityMap = new Map(entities.map((entity) => [entity.id, entity]));
     const discoveryCounts = getTopologyDiscoveryCounts();
     const clusterStatusCounts = getTopologyClusterStatusCounts();
-    const connectedAnchorMap = getTopologyConnectedAnchorMap();
-    const discoveryWorstMap = getDiscoveryWorstAnchorMap();
 
     // NSL hidden from topology — will move to main dashboard later
     if (stateLogPreview) {
@@ -4992,26 +4990,10 @@ function renderTopologyStage() {
             const resizeHandle = topologyState.editMode
                 ? '<span class="topology-resize-handle" data-topology-resize-handle="true" aria-hidden="true"></span>'
                 : "";
-            const anchorPoints = getTopologyAnchorPointDefinitions().map((point) => {
-                const apKey = `${entity.id}::${point.key}`;
-                const authoredStatus = connectedAnchorMap.get(apKey) || null;
-                const discoveryWorst = discoveryWorstMap.get(apKey) || null;
-                // Use the worst discovery link status if it's "down" or "degraded"
-                const connectedStatus = (discoveryWorst === "down" || discoveryWorst === "degraded")
-                    ? discoveryWorst
-                    : authoredStatus || discoveryWorst;
-                const isConnected = Boolean(connectedStatus);
-                const isTargeted = topologyState.activeLinkHandleTarget?.entityId === entity.id
-                    && topologyState.activeLinkHandleTarget?.anchorKey === point.key;
-                return `
-                    <span
-                        class="topology-anchor-point ${isConnected ? `is-connected is-connected-${connectedStatus}` : ""} ${isTargeted ? "is-targeted" : ""}"
-                        data-topology-anchor-point="${point.key}"
-                        style="left:${point.x * 100}%; top:${point.y * 100}%;"
-                        aria-hidden="true"
-                    ></span>
-                `;
-            }).join("");
+            // Single invisible link-create zone for edit mode (replaces 8 anchor point dots)
+            const linkCreateZone = topologyState.editMode
+                ? '<span class="topology-link-create-zone" data-topology-link-zone="true" aria-hidden="true"></span>'
+                : "";
 
             const entityBody = isSubmap
                 ? `<span class="topology-node-name">${displayName}</span>${nodeIcon}`
@@ -5029,7 +5011,7 @@ function renderTopologyStage() {
                     ${entityBody}
                     ${clusterFooter}
                     ${hoverPanel}
-                    ${anchorPoints}
+                    ${linkCreateZone}
                     ${resizeHandle}
                 </button>
             `;
@@ -5079,14 +5061,15 @@ function renderTopologyStage() {
       });
 
       layer.querySelectorAll("[data-topology-id]").forEach((button) => {
-          button.querySelectorAll("[data-topology-anchor-point]").forEach((anchorPoint) => {
-              anchorPoint.addEventListener("pointerdown", (event) => {
+          // Link creation: pointerdown on the link-create zone (edge ring) in edit mode
+          const linkZone = button.querySelector("[data-topology-link-zone]");
+          if (linkZone) {
+              linkZone.addEventListener("pointerdown", (event) => {
                   if (!topologyState.editMode) {
                       return;
                   }
                   const entityId = button.getAttribute("data-topology-id");
-                  const anchorKey = anchorPoint.getAttribute("data-topology-anchor-point");
-                  if (!entityId || !anchorKey) {
+                  if (!entityId) {
                       return;
                   }
                   event.preventDefault();
@@ -5099,7 +5082,11 @@ function renderTopologyStage() {
                   }
                   const stageR = stageEl.getBoundingClientRect();
                   const fromRect = button.getBoundingClientRect();
-                  const startPt = getTopologyAnchorCoordinates(fromRect, stageR, anchorKey);
+                  // Start point: edge of source node toward cursor
+                  const cursorStageX = event.clientX - stageR.left;
+                  const cursorStageY = event.clientY - stageR.top;
+                  const entity = entityMap.get(entityId);
+                  const startPt = getEdgeAttachmentPoint(fromRect, stageR, cursorStageX, cursorStageY, isCircularTopologyEntity(entity));
 
                   const rubberband = document.createElementNS("http://www.w3.org/2000/svg", "line");
                   rubberband.setAttribute("x1", String(startPt.x));
@@ -5110,15 +5097,14 @@ function renderTopologyStage() {
                   rubberband.style.pointerEvents = "none";
                   svgEl.appendChild(rubberband);
 
-                  anchorPoint.classList.add("is-targeted");
-
                   topologyState.dragging = {
                       kind: "link-create",
                       pointerId: event.pointerId,
                       sourceEntityId: entityId,
-                      sourceAnchor: anchorKey,
+                      sourceAnchor: "e", // placeholder — computed from angle on drop
                       rubberband,
                       snapTarget: null,
+                      sourceButton: button,
                   };
 
                   const moveHandler = (moveEvent) => {
@@ -5126,25 +5112,37 @@ function renderTopologyStage() {
                       if (!drag || drag.kind !== "link-create" || drag.pointerId !== moveEvent.pointerId) {
                           return;
                       }
-                      const cursorX = moveEvent.clientX - stageR.left;
-                      const cursorY = moveEvent.clientY - stageR.top;
-                      const snapTarget = getAnyTopologyAnchorTargetFromPoint(moveEvent.clientX, moveEvent.clientY, entityId);
+                      const curX = moveEvent.clientX - stageR.left;
+                      const curY = moveEvent.clientY - stageR.top;
+
+                      // Dynamically update rubberband source endpoint to track angle
+                      const srcRect = drag.sourceButton.getBoundingClientRect();
+                      const srcEntity = entityMap.get(drag.sourceEntityId);
+                      const srcPt = getEdgeAttachmentPoint(srcRect, stageR, curX, curY, isCircularTopologyEntity(srcEntity));
+                      rubberband.setAttribute("x1", String(srcPt.x));
+                      rubberband.setAttribute("y1", String(srcPt.y));
+
+                      const snapTarget = getTopologyNodeSnapTarget(moveEvent.clientX, moveEvent.clientY, entityId);
                       drag.snapTarget = snapTarget;
-                      setAnyTopologyAnchorTargetHighlight(snapTarget);
+                      highlightTopologySnapTarget(snapTarget);
 
                       if (snapTarget) {
                           const targetBubble = stageEl.querySelector(`[data-topology-id="${CSS.escape(snapTarget.entityId)}"]`);
                           if (targetBubble instanceof HTMLElement) {
-                              const snapPt = getTopologyAnchorCoordinates(targetBubble.getBoundingClientRect(), stageR, snapTarget.anchorKey);
+                              const tgtRect = targetBubble.getBoundingClientRect();
+                              const tgtEntity = entityMap.get(snapTarget.entityId);
+                              const fromCx = srcRect.left + srcRect.width / 2 - stageR.left;
+                              const fromCy = srcRect.top + srcRect.height / 2 - stageR.top;
+                              const snapPt = getEdgeAttachmentPoint(tgtRect, stageR, fromCx, fromCy, isCircularTopologyEntity(tgtEntity));
                               rubberband.setAttribute("x2", String(snapPt.x));
                               rubberband.setAttribute("y2", String(snapPt.y));
                           } else {
-                              rubberband.setAttribute("x2", String(cursorX));
-                              rubberband.setAttribute("y2", String(cursorY));
+                              rubberband.setAttribute("x2", String(curX));
+                              rubberband.setAttribute("y2", String(curY));
                           }
                       } else {
-                          rubberband.setAttribute("x2", String(cursorX));
-                          rubberband.setAttribute("y2", String(cursorY));
+                          rubberband.setAttribute("x2", String(curX));
+                          rubberband.setAttribute("y2", String(curY));
                       }
                       moveEvent.preventDefault();
                   };
@@ -5155,8 +5153,7 @@ function renderTopologyStage() {
                       window.removeEventListener("pointerup", endHandler);
                       window.removeEventListener("pointercancel", endHandler);
                       rubberband.remove();
-                      setAnyTopologyAnchorTargetHighlight(null);
-                      anchorPoint.classList.remove("is-targeted");
+                      highlightTopologySnapTarget(null);
                       topologyState.dragging = null;
 
                       if (!drag || drag.kind !== "link-create") {
@@ -5164,24 +5161,31 @@ function renderTopologyStage() {
                       }
 
                       const finalTarget = drag.snapTarget
-                          || getAnyTopologyAnchorTargetFromPoint(endEvent.clientX, endEvent.clientY, entityId);
-                      if (finalTarget?.entityId && finalTarget?.anchorKey) {
-                          console.log("[link-create] Creating link:", drag.sourceEntityId, drag.sourceAnchor, "→", finalTarget.entityId, finalTarget.anchorKey);
+                          || getTopologyNodeSnapTarget(endEvent.clientX, endEvent.clientY, entityId);
+                      if (finalTarget?.entityId) {
+                          // Compute anchor keys from angle for DB compat
+                          const srcRect = drag.sourceButton.getBoundingClientRect();
+                          const tgtBubble = stageEl.querySelector(`[data-topology-id="${CSS.escape(finalTarget.entityId)}"]`);
+                          const tgtRect = tgtBubble?.getBoundingClientRect();
+                          const allKeys = ["n", "ne", "e", "se", "s", "sw", "w", "nw"];
+                          const srcCx = srcRect.left + srcRect.width / 2;
+                          const srcCy = srcRect.top + srcRect.height / 2;
+                          const tgtCx = tgtRect ? tgtRect.left + tgtRect.width / 2 : endEvent.clientX;
+                          const tgtCy = tgtRect ? tgtRect.top + tgtRect.height / 2 : endEvent.clientY;
+                          const srcAnchor = pickAnchorPointFromSet(srcCx, srcCy, tgtCx, tgtCy, allKeys);
+                          const tgtAnchor = pickAnchorPointFromSet(tgtCx, tgtCy, srcCx, srcCy, allKeys);
+
                           const created = await createTopologyLink(
                               drag.sourceEntityId,
-                              drag.sourceAnchor,
+                              srcAnchor,
                               finalTarget.entityId,
-                              finalTarget.anchorKey,
+                              tgtAnchor,
                           );
                           if (created) {
-                              console.log("[link-create] Link created:", created);
                               await refreshTopologyData();
-                          } else {
-                              console.warn("[link-create] API call failed — has the migration been run?");
                           }
                           renderTopologyStage();
                       } else {
-                          console.log("[link-create] No snap target found, link not created");
                           renderTopologyStage();
                       }
                       endEvent.preventDefault();
@@ -5191,28 +5195,7 @@ function renderTopologyStage() {
                   window.addEventListener("pointerup", endHandler);
                   window.addEventListener("pointercancel", endHandler);
               });
-              anchorPoint.addEventListener("click", (event) => {
-                  if (!topologyState.editMode || topologyState.selectedKind !== "link" || !topologyState.selectedId) {
-                      event.stopPropagation();
-                      return;
-                  }
-                  const entityId = button.getAttribute("data-topology-id");
-                  const anchorKey = anchorPoint.getAttribute("data-topology-anchor-point");
-                  const selectedLink = (topologyPayload?.links ?? []).find((item, index) => getTopologyLinkId(item, index) === topologyState.selectedId);
-                  if (!selectedLink || !entityId || !anchorKey) {
-                      event.stopPropagation();
-                      return;
-                  }
-                  if (selectedLink.from === entityId) {
-                      setTopologyLinkAnchorAssignment(topologyState.selectedId, "source", anchorKey);
-                  } else if (selectedLink.to === entityId) {
-                      setTopologyLinkAnchorAssignment(topologyState.selectedId, "target", anchorKey);
-                  }
-                  renderTopologyStage();
-                  event.preventDefault();
-                  event.stopPropagation();
-              });
-          });
+          }
           button.addEventListener("click", (event) => {
               if (topologyState.editMode) {
                   const nextId = button.getAttribute("data-topology-id");
@@ -5475,13 +5458,13 @@ function drawTopologyLinks(entityMap) {
         const linkId = getTopologyLinkId(link, index);
         const fromRect = fromNode.getBoundingClientRect();
         const toRect = toNode.getBoundingClientRect();
-        const savedAssignment = getTopologyLinkAnchorAssignment(link, index);
-        const anchorAssignment = {
-            source: savedAssignment.source || link.source_anchor || null,
-            target: savedAssignment.target || link.target_anchor || null,
-        };
-        const sourcePoint = getTopologyAnchorCoordinates(fromRect, stageRect, anchorAssignment.source);
-        const targetPoint = getTopologyAnchorCoordinates(toRect, stageRect, anchorAssignment.target);
+        // Dynamic edge attachment: compute where center-to-center line meets each node's boundary
+        const fromCx = fromRect.left + fromRect.width / 2 - stageRect.left;
+        const fromCy = fromRect.top + fromRect.height / 2 - stageRect.top;
+        const toCx = toRect.left + toRect.width / 2 - stageRect.left;
+        const toCy = toRect.top + toRect.height / 2 - stageRect.top;
+        const sourcePoint = getEdgeAttachmentPoint(fromRect, stageRect, toCx, toCy, isCircularTopologyEntity(fromEntity));
+        const targetPoint = getEdgeAttachmentPoint(toRect, stageRect, fromCx, fromCy, isCircularTopologyEntity(toEntity));
         // Pre-reveal discovery links for pinned node or edit mode at creation
         // so they don't flash/fade-in on every SVG rebuild.
         const shouldPreReveal = link.kind === "discovery" && (
@@ -5640,30 +5623,9 @@ function drawTopologyLinks(entityMap) {
                     if (!(line instanceof SVGLineElement) || !(activeHandle instanceof HTMLElement)) {
                         return;
                     }
-                    const anchorTarget = getTopologyAnchorTargetFromPoint(
-                        moveEvent.clientX,
-                        moveEvent.clientY,
-                        drag.entityId,
-                    );
+                    // Link handle follows cursor freely — final position computed dynamically
                     let pointX = moveEvent.clientX - stageRect.left;
                     let pointY = moveEvent.clientY - stageRect.top;
-                    if (anchorTarget?.anchorKey) {
-                        const anchorBubble = stage.querySelector(`[data-topology-id="${CSS.escape(drag.entityId)}"]`);
-                        if (anchorBubble instanceof HTMLElement) {
-                            const snapPoint = getTopologyAnchorCoordinates(
-                                anchorBubble.getBoundingClientRect(),
-                                stageRect,
-                                anchorTarget.anchorKey,
-                            );
-                            pointX = snapPoint.x;
-                            pointY = snapPoint.y;
-                            setTopologyActiveLinkHandleTarget(anchorTarget);
-                            activeHandle.classList.add("is-snapped");
-                        }
-                    } else {
-                        setTopologyActiveLinkHandleTarget(null);
-                        activeHandle.classList.remove("is-snapped");
-                    }
                     activeHandle.style.left = `${pointX}px`;
                     activeHandle.style.top = `${pointY}px`;
                     if (side === "source") {
@@ -5681,12 +5643,7 @@ function drawTopologyLinks(entityMap) {
                     if (!drag || drag.kind !== "link-handle" || drag.pointerId !== endEvent.pointerId) {
                         return;
                     }
-                    const anchorTarget = topologyState.activeLinkHandleTarget?.entityId === drag.entityId
-                        ? topologyState.activeLinkHandleTarget
-                        : getTopologyAnchorTargetFromPoint(endEvent.clientX, endEvent.clientY, drag.entityId);
-                    if (anchorTarget?.anchorKey) {
-                        setTopologyLinkAnchorAssignment(linkId, side, anchorTarget.anchorKey);
-                    }
+                    // Dynamic edge attachment — no anchor reassignment needed; just redraw
                     setTopologyActiveLinkHandleTarget(null);
                     topologyState.dragging = null;
                     window.removeEventListener("pointermove", move);
@@ -5888,55 +5845,95 @@ function getTopologyAnchorCoordinates(nodeRect, stageRect, anchorKey) {
     };
 }
 
-function setTopologyActiveLinkHandleTarget(target) {
-    topologyState.activeLinkHandleTarget = target || null;
-    document.querySelectorAll(".topology-anchor-point.is-targeted").forEach((point) => {
-        point.classList.remove("is-targeted");
-    });
-    if (!target?.entityId || !target?.anchorKey) {
-        return;
-    }
-    const bubble = document.querySelector(`[data-topology-id="${CSS.escape(target.entityId)}"]`);
-    const anchorPoint = bubble?.querySelector(
-        `[data-topology-anchor-point="${CSS.escape(target.anchorKey)}"]`,
-    );
-    if (anchorPoint instanceof HTMLElement) {
-        anchorPoint.classList.add("is-targeted");
-    }
+/**
+ * Returns true if the entity renders as a circle (border-radius: 999px).
+ * Submaps, clusters (level 2), and services-cloud are rectangular.
+ */
+function isCircularTopologyEntity(entity) {
+    if (!entity) return true;
+    if (entity.kind === "submap" || entity.kind === "services-cloud") return false;
+    if (entity.level === 2) return false; // cluster
+    return true;
 }
 
-function getTopologyAnchorTargetFromPoint(clientX, clientY, entityId) {
-    const elements = document.elementsFromPoint(clientX, clientY);
-    for (const element of elements) {
-        if (!(element instanceof Element)) {
-            continue;
-        }
-        const anchorPoint = element.closest("[data-topology-anchor-point]");
-        const bubble = anchorPoint?.closest("[data-topology-id]");
-        if (!(anchorPoint instanceof HTMLElement) || !(bubble instanceof HTMLElement)) {
-            continue;
-        }
-        if ((bubble.getAttribute("data-topology-id") || "") !== entityId) {
-            continue;
-        }
-        const anchorKey = anchorPoint.getAttribute("data-topology-anchor-point") || null;
-        if (!anchorKey) {
-            continue;
-        }
+/**
+ * Compute the point on a node's boundary closest to a target point.
+ * For circular nodes: angle-based edge point on the circle.
+ * For rectangular nodes: ray-rect intersection from center toward target.
+ * Returns {x, y} in stage-relative coordinates.
+ */
+function getEdgeAttachmentPoint(nodeRect, stageRect, targetX, targetY, isCircular) {
+    const cx = nodeRect.left + nodeRect.width / 2 - stageRect.left;
+    const cy = nodeRect.top + nodeRect.height / 2 - stageRect.top;
+    const dx = targetX - cx;
+    const dy = targetY - cy;
+
+    // If nodes overlap at center, default to right edge
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) {
+        return { x: cx + nodeRect.width / 2, y: cy };
+    }
+
+    if (isCircular) {
+        // Circle: radius is half the smaller dimension (nodes are square buttons)
+        const radius = Math.min(nodeRect.width, nodeRect.height) / 2;
+        const angle = Math.atan2(dy, dx);
         return {
-            entityId,
-            anchorKey,
+            x: cx + radius * Math.cos(angle),
+            y: cy + radius * Math.sin(angle),
         };
     }
-    return null;
+
+    // Rectangle: find intersection of ray from center toward (targetX, targetY)
+    // with the node bounding box.
+    const hw = nodeRect.width / 2;
+    const hh = nodeRect.height / 2;
+
+    // Parametric ray: P = center + t * (dx, dy).  Find smallest t > 0 hitting a box edge.
+    let t = Infinity;
+    if (dx !== 0) {
+        const tRight = hw / Math.abs(dx);
+        if (tRight < t) t = tRight;
+    }
+    if (dy !== 0) {
+        const tBottom = hh / Math.abs(dy);
+        if (tBottom < t) t = tBottom;
+    }
+    if (!isFinite(t)) t = 1;
+
+    return {
+        x: cx + dx * t,
+        y: cy + dy * t,
+    };
 }
 
-function getAnyTopologyAnchorTargetFromPoint(clientX, clientY, excludeEntityId) {
+function setTopologyActiveLinkHandleTarget(target) {
+    topologyState.activeLinkHandleTarget = target || null;
+    // Highlight the snap target node (no individual anchor dots)
+    highlightTopologySnapTarget(target);
+}
+
+/**
+ * Find the nearest node to a point (for link-create snap targeting).
+ * Returns { entityId } or null.  No anchor key needed — attachment is dynamic.
+ */
+function getTopologyNodeSnapTarget(clientX, clientY, excludeEntityId) {
     const stage = document.getElementById("topology-stage");
     if (!stage) {
         return null;
     }
-    const snapRadius = 18;
+    // Check if cursor is over any node
+    const elements = document.elementsFromPoint(clientX, clientY);
+    for (const el of elements) {
+        if (!(el instanceof Element)) continue;
+        const bubble = el.closest("[data-topology-id]");
+        if (!(bubble instanceof HTMLElement)) continue;
+        const eid = bubble.getAttribute("data-topology-id") || "";
+        if (eid && eid !== excludeEntityId) {
+            return { entityId: eid };
+        }
+    }
+    // Fallback: snap to nearest node within radius
+    const snapRadius = 40;
     let best = null;
     let bestDist = snapRadius;
     stage.querySelectorAll("[data-topology-id]").forEach((bubble) => {
@@ -5944,33 +5941,32 @@ function getAnyTopologyAnchorTargetFromPoint(clientX, clientY, excludeEntityId) 
         if (!entityId || entityId === excludeEntityId) {
             return;
         }
-        bubble.querySelectorAll("[data-topology-anchor-point]").forEach((ap) => {
-            const rect = ap.getBoundingClientRect();
-            const cx = rect.left + rect.width / 2;
-            const cy = rect.top + rect.height / 2;
-            const dist = Math.hypot(clientX - cx, clientY - cy);
-            if (dist < bestDist) {
-                bestDist = dist;
-                best = { entityId, anchorKey: ap.getAttribute("data-topology-anchor-point") };
-            }
-        });
+        const rect = bubble.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const dist = Math.hypot(clientX - cx, clientY - cy);
+        if (dist < bestDist) {
+            bestDist = dist;
+            best = { entityId };
+        }
     });
     return best;
 }
 
-function setAnyTopologyAnchorTargetHighlight(target) {
-    document.querySelectorAll(".topology-anchor-point.is-targeted").forEach((point) => {
-        point.classList.remove("is-targeted");
+/**
+ * Highlight the snap target node during link creation.
+ * Adds a CSS class to the entire node button (no individual anchor dots).
+ */
+function highlightTopologySnapTarget(target) {
+    document.querySelectorAll(".topology-entity.is-link-snap-target").forEach((el) => {
+        el.classList.remove("is-link-snap-target");
     });
-    if (!target?.entityId || !target?.anchorKey) {
+    if (!target?.entityId) {
         return;
     }
     const bubble = document.querySelector(`[data-topology-id="${CSS.escape(target.entityId)}"]`);
-    const anchorPoint = bubble?.querySelector(
-        `[data-topology-anchor-point="${CSS.escape(target.anchorKey)}"]`,
-    );
-    if (anchorPoint instanceof HTMLElement) {
-        anchorPoint.classList.add("is-targeted");
+    if (bubble instanceof HTMLElement) {
+        bubble.classList.add("is-link-snap-target");
     }
 }
 
