@@ -125,6 +125,22 @@
             </div>
         </section>
 
+        <!-- Diag Console -->
+        <section class="card" id="diag-console-section">
+            <div class="inventory-header">
+                <div>
+                    <p class="eyebrow">Diagnostic Console</p>
+                    <h2>Run Diag Code</h2>
+                </div>
+            </div>
+            <div class="diag-console-input-row">
+                <input type="text" id="diag-console-input" class="form-input" placeholder="Type a diag code (e.g. help, poller:status, cache:stats)" autocomplete="off" spellcheck="false">
+                <button type="button" class="button-primary" id="diag-console-run">Run</button>
+            </div>
+            <div class="diag-console-history" id="diag-console-history"></div>
+            <pre class="diag-console-output" id="diag-console-output" hidden></pre>
+        </section>
+
         <p id="health-error" class="status-error" hidden>Unable to load health data</p>
     </main>
 

@@ -9813,6 +9813,78 @@ function loadHealthPage() {
     if (refreshBtn) {
         refreshBtn.addEventListener("click", fetchHealth);
     }
+
+    // --- Diag Console ---
+    const diagInput = document.getElementById("diag-console-input");
+    const diagRunBtn = document.getElementById("diag-console-run");
+    const diagOutput = document.getElementById("diag-console-output");
+    const diagHistory = document.getElementById("diag-console-history");
+    const diagCodes = [];
+
+    async function runDiagCode() {
+        if (!diagInput || !diagOutput) return;
+        const raw = diagInput.value.trim();
+        if (!raw) return;
+
+        // Add to history (dedup, max 20)
+        const idx = diagCodes.indexOf(raw);
+        if (idx !== -1) diagCodes.splice(idx, 1);
+        diagCodes.unshift(raw);
+        if (diagCodes.length > 20) diagCodes.pop();
+        renderDiagHistory();
+
+        diagOutput.hidden = false;
+        diagOutput.className = "diag-console-output";
+        diagOutput.textContent = `> ${raw}\nRunning...`;
+
+        try {
+            const response = await fetch("/api/diag", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ input: raw }),
+            });
+            const data = await response.json();
+            if (data.ok) {
+                diagOutput.className = "diag-console-output";
+                diagOutput.textContent = `> ${raw}\n${JSON.stringify(data.result, null, 2)}`;
+            } else {
+                diagOutput.className = "diag-console-output diag-error";
+                diagOutput.textContent = `> ${raw}\nError: ${data.error}`;
+                if (data.available_codes) {
+                    diagOutput.textContent += `\n\nAvailable codes: ${data.available_codes.join(", ")}`;
+                }
+            }
+        } catch (err) {
+            diagOutput.className = "diag-console-output diag-error";
+            diagOutput.textContent = `> ${raw}\nFetch error: ${err.message}`;
+        }
+
+        diagInput.value = "";
+        diagInput.focus();
+    }
+
+    function renderDiagHistory() {
+        if (!diagHistory) return;
+        diagHistory.innerHTML = diagCodes.map((code) =>
+            `<span class="diag-console-history-chip" data-diag-code="${code.replace(/"/g, "&quot;")}">${code}</span>`
+        ).join("");
+    }
+
+    if (diagInput && diagRunBtn) {
+        diagRunBtn.addEventListener("click", runDiagCode);
+        diagInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") runDiagCode();
+        });
+    }
+    if (diagHistory) {
+        diagHistory.addEventListener("click", (e) => {
+            const chip = e.target.closest(".diag-console-history-chip");
+            if (chip && diagInput) {
+                diagInput.value = chip.getAttribute("data-diag-code") || "";
+                diagInput.focus();
+            }
+        });
+    }
 }
 
 /* ── Charts page ───────────────────────────────────────── */

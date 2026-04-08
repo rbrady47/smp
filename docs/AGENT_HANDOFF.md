@@ -8,6 +8,46 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-08 — Session: Diagnostic Console + Link Bug Fixes
+
+### Branch / commit
+- Branch: `claude/seeker-charts-polling-UAgpt`
+
+### What was built
+
+**Diagnostic Console**
+- Created `app/diag.py` — handler registry with 9 starter codes:
+  - `help` — list all codes
+  - `poller:status` — task states, intervals
+  - `cache:stats` — entry counts for all in-memory caches
+  - `cache:detail name=X` — dump specific cache contents
+  - `db:pool` — SQLAlchemy connection pool stats
+  - `redis:status` — Redis connection, version, memory
+  - `system:info` — Python version, uptime, PID
+  - `node:detail node_id=X` — cached seeker detail for a node
+  - `ping:detail node_id=X` — ping snapshot and samples
+- Added `POST /api/diag` endpoint in `app/routes/system.py`
+- Added console UI to `/health` page: text input, Run button, JSON output, history chips
+- Created `docs/DIAG_CODES.md` catalog
+
+**Link bug fixes**
+- Fixed link delete tooltip not clearing
+- Fixed submap link creation delay (refreshTopologyData early return)
+- Fixed Link Config panel staying open (close before API call)
+- Fixed race condition: SSE/timer refreshes overwriting user data (generation counter)
+- Optimistic link add/delete/save: instant local update, rollback on API failure
+
+### Files touched
+- `app/diag.py` (new) — handler registry
+- `app/routes/system.py` — POST /api/diag endpoint
+- `templates/health.html` — diag console section
+- `static/css/style.css` — console styles
+- `static/js/app.js` — console wiring + all link fixes
+- `docs/DIAG_CODES.md` (new) — code catalog
+- `CHANGELOG.md`, `docs/AGENT_HANDOFF.md`
+
+---
+
 ## 2026-04-08 — Session: Link Bug Fixes
 
 ### Branch / commit

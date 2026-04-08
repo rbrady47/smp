@@ -143,6 +143,21 @@ What operators can see here:
 
 A Refresh button allows manual re-fetch of health data.
 
+#### Diagnostic Console
+
+At the bottom of the Diag page is a **Diagnostic Console** for running diag codes. Type a code and press Enter or click Run to query runtime diagnostics.
+
+Useful codes:
+- `help` — list all available codes
+- `poller:status` — check if all background pollers are running
+- `cache:stats` — see how many entries are in each in-memory cache
+- `db:pool` — check database connection pool utilization
+- `redis:status` — verify Redis connectivity and memory usage
+- `node:detail node_id=42` — inspect cached Seeker data for a specific node
+- `ping:detail node_id=42` — inspect ping state for a node
+
+Results display as formatted JSON. Recently-used codes appear as clickable chips for quick re-runs. See `docs/DIAG_CODES.md` for the full catalog.
+
 ### Fixed Topology View
 
 Path: `/topology`

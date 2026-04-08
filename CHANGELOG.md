@@ -6,10 +6,16 @@ The format is intentionally simple so diffs stay readable in version control.
 
 ## Unreleased
 
+### Added
+
+- **Diagnostic Console:** New diag code system on the Diag page (`/health`). Operators type codes like `poller:status`, `cache:stats`, `db:pool` into a console input to query runtime diagnostics. Results display as formatted JSON. History chips allow quick re-runs. 9 starter codes covering pollers, caches, DB pool, Redis, system info, and per-node detail. Catalog in `docs/DIAG_CODES.md`.
+
 ### Fixed
 
 - **Link delete tooltip:** Deleting a topology link now clears the pinned link tooltip instead of leaving it stuck on screen.
 - **Submap link creation delay:** New links created in submap views now appear immediately instead of waiting for the next polling cycle.
+- **Optimistic link operations:** Link add/delete/save now update local data instantly instead of awaiting the slow `/api/topology` refetch. Rollback on API failure.
+- **Topology refresh race condition:** Generation counter prevents SSE/timer background fetches from overwriting user-initiated data.
 
 ### Changed
 

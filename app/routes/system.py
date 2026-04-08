@@ -1,17 +1,24 @@
-"""System routes — /api/status, /api/health."""
+"""System routes — /api/status, /api/health, /api/diag."""
 
 import os
 import socket
 from datetime import datetime
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
+from app.diag import DIAG_HANDLERS, parse_diag_input
 from app.models import ChartSample, Node
 
 router = APIRouter(prefix="/api")
+
+
+class DiagRequest(BaseModel):
+    """Request body for POST /api/diag."""
+    input: str
 
 
 def _read_proc_cpu() -> dict[str, object]:
@@ -156,3 +163,25 @@ async def health_view(db: AsyncSession = Depends(get_db)) -> dict[str, object]:
             "services_interval_s": SERVICE_POLL_INTERVAL_SECONDS,
         },
     }
+
+
+@router.post("/diag")
+async def run_diag(payload: DiagRequest) -> dict[str, object]:
+    """Execute a diagnostic code and return results."""
+    from app.main import _ps
+
+    raw_input = payload.input.strip()
+    if not raw_input:
+        return {"ok": False, "error": "Empty input. Type 'help' for available codes."}
+
+    code, args = parse_diag_input(raw_input)
+    handler = DIAG_HANDLERS.get(code)
+    if handler is None:
+        available = list(DIAG_HANDLERS.keys())
+        return {"ok": False, "error": f"Unknown code: {code}", "available_codes": available}
+
+    try:
+        result = await handler(args, _ps)
+        return {"ok": True, "code": code, "result": result}
+    except Exception as e:
+        return {"ok": False, "code": code, "error": str(e)}

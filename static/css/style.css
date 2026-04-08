@@ -5598,3 +5598,58 @@ body.modal-open {
     font-weight: 700;
     color: var(--text);
 }
+
+/* Diag Console */
+.diag-console-input-row {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+}
+.diag-console-input-row .form-input {
+    flex: 1;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.85rem;
+}
+.diag-console-history {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-top: 0.6rem;
+    min-height: 0;
+}
+.diag-console-history-chip {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    font-size: 0.72rem;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: var(--text-secondary, #8899aa);
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.diag-console-history-chip:hover {
+    background: rgba(255,255,255,0.12);
+    color: var(--text);
+}
+.diag-console-output {
+    margin-top: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: rgba(0,0,0,0.3);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    color: var(--text);
+    overflow-x: auto;
+    max-height: 500px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.diag-console-output.diag-error {
+    border-color: rgba(255, 80, 80, 0.3);
+    color: #ff6b6b;
+}
