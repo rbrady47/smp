@@ -2014,7 +2014,21 @@ function wireTopologyLayoutEditor(stage, layer, entityMap) {
                 const srcAnchor = pickAnchorPointFromSet(srcCx, srcCy, tgtCx, tgtCy, allKeys);
                 const tgtAnchor = pickAnchorPointFromSet(tgtCx, tgtCy, srcCx, srcCy, allKeys);
                 const created = await createTopologyLink(drag.sourceEntityId, srcAnchor, finalTarget.entityId, tgtAnchor);
-                if (created) await refreshTopologyData();
+                if (created && topologyPayload?.links) {
+                    // Optimistic: add the new link to local data immediately
+                    topologyPayload.links.push({
+                        id: `topo-link-${created.id}`,
+                        db_id: created.id,
+                        from: created.source_entity_id,
+                        to: created.target_entity_id,
+                        source_anchor: created.source_anchor,
+                        target_anchor: created.target_anchor,
+                        link_type: created.link_type || "solid",
+                        status_node_id: created.status_node_id || null,
+                        kind: "authored",
+                        status: "neutral",
+                    });
+                }
                 renderTopologyStage();
             } else {
                 renderTopologyStage();
@@ -6808,9 +6822,17 @@ function initTopologyLinkContextMenu() {
             const statusNodeVal = document.getElementById("topology-link-ctx-status-node")?.value;
             const statusNodeId = statusNodeVal ? Number(statusNodeVal) : null;
             closeTopologyLinkContextMenu();
-            await updateTopologyLink(dbId, { link_type: linkType, status_node_id: statusNodeId });
-            await refreshTopologyData();
+            // Optimistic: update the link in local data immediately
+            if (topologyPayload?.links) {
+                const local = topologyPayload.links.find((l) => String(l.db_id) === String(dbId));
+                if (local) {
+                    local.link_type = linkType;
+                    local.status_node_id = statusNodeId;
+                }
+            }
             renderTopologyStage();
+            // Fire-and-forget
+            updateTopologyLink(dbId, { link_type: linkType, status_node_id: statusNodeId });
         };
     }
 
@@ -6829,9 +6851,15 @@ function initTopologyLinkContextMenu() {
             topologyState.selectedId = null;
             topologyState.pinnedLinkTooltipId = null;
             hideTopologyLinkTooltip();
-            await deleteTopologyLink(dbId);
-            await refreshTopologyData();
+            // Optimistic: remove the link from local data immediately
+            if (topologyPayload?.links) {
+                topologyPayload.links = topologyPayload.links.filter(
+                    (l) => String(l.db_id) !== String(dbId)
+                );
+            }
             renderTopologyStage();
+            // Fire-and-forget — don't block on the API call
+            deleteTopologyLink(dbId);
         };
     }
 
