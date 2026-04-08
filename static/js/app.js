@@ -9879,24 +9879,24 @@ function renderThroughputChart(samples) {
                 // Min/max envelope — max line (top of band)
                 {
                     label: "TX Range", data: txMm.max, _isDetail: true,
-                    borderColor: "#3B82F633", backgroundColor: "#3B82F618",
-                    fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 0.5,
+                    borderColor: "#3B82F666", backgroundColor: "#3B82F630",
+                    fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 1,
                 },
                 // Min line (bottom of band, fill goes up to previous dataset)
                 {
                     label: "TX Min", data: txMm.min, _isDetail: true,
-                    borderColor: "#3B82F633",
-                    fill: false, tension: 0.2, pointRadius: 0, borderWidth: 0.5,
+                    borderColor: "#3B82F666",
+                    fill: false, tension: 0.2, pointRadius: 0, borderWidth: 1,
                 },
                 {
                     label: "RX Range", data: rxMm.max, _isDetail: true,
-                    borderColor: "#22C55E33", backgroundColor: "#22C55E18",
-                    fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 0.5,
+                    borderColor: "#22C55E66", backgroundColor: "#22C55E30",
+                    fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 1,
                 },
                 {
                     label: "RX Min", data: rxMm.min, _isDetail: true,
-                    borderColor: "#22C55E33",
-                    fill: false, tension: 0.2, pointRadius: 0, borderWidth: 0.5,
+                    borderColor: "#22C55E66",
+                    fill: false, tension: 0.2, pointRadius: 0, borderWidth: 1,
                 },
             ],
         },
@@ -9943,10 +9943,10 @@ function renderPacketsChart(samples) {
             labels: txMm.timestamps,
             datasets: [
                 avgTxDs, avgRxDs,
-                { label: "TX Range", data: txMm.max, _isDetail: true, borderColor: "#A855F733", backgroundColor: "#A855F718", fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 0.5 },
-                { label: "TX Min", data: txMm.min, _isDetail: true, borderColor: "#A855F733", fill: false, tension: 0.2, pointRadius: 0, borderWidth: 0.5 },
-                { label: "RX Range", data: rxMm.max, _isDetail: true, borderColor: "#FB923C33", backgroundColor: "#FB923C18", fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 0.5 },
-                { label: "RX Min", data: rxMm.min, _isDetail: true, borderColor: "#FB923C33", fill: false, tension: 0.2, pointRadius: 0, borderWidth: 0.5 },
+                { label: "TX Range", data: txMm.max, _isDetail: true, borderColor: "#A855F766", backgroundColor: "#A855F730", fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 1 },
+                { label: "TX Min", data: txMm.min, _isDetail: true, borderColor: "#A855F766", fill: false, tension: 0.2, pointRadius: 0, borderWidth: 1 },
+                { label: "RX Range", data: rxMm.max, _isDetail: true, borderColor: "#FB923C66", backgroundColor: "#FB923C30", fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 1 },
+                { label: "RX Min", data: rxMm.min, _isDetail: true, borderColor: "#FB923C66", fill: false, tension: 0.2, pointRadius: 0, borderWidth: 1 },
             ],
         },
         options: _commonChartOptions(theme),
@@ -10006,10 +10006,10 @@ function renderChannelChart(samples) {
         datasets.push(avgTxDs);
         datasets.push(avgRxDs);
         // Min/max envelope (detail)
-        datasets.push({ label: `Ch${chIdx} TX Range`, data: txMm.max, _isDetail: true, borderColor: txCol + "33", backgroundColor: txCol + "18", fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 0.5 });
-        datasets.push({ label: `Ch${chIdx} TX Min`, data: txMm.min, _isDetail: true, borderColor: txCol + "33", fill: false, tension: 0.2, pointRadius: 0, borderWidth: 0.5 });
-        datasets.push({ label: `Ch${chIdx} RX Range`, data: rxMm.max, _isDetail: true, borderColor: rxCol + "33", backgroundColor: rxCol + "18", fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 0.5 });
-        datasets.push({ label: `Ch${chIdx} RX Min`, data: rxMm.min, _isDetail: true, borderColor: rxCol + "33", fill: false, tension: 0.2, pointRadius: 0, borderWidth: 0.5 });
+        datasets.push({ label: `Ch${chIdx} TX Range`, data: txMm.max, _isDetail: true, borderColor: txCol + "66", backgroundColor: txCol + "30", fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 1 });
+        datasets.push({ label: `Ch${chIdx} TX Min`, data: txMm.min, _isDetail: true, borderColor: txCol + "66", fill: false, tension: 0.2, pointRadius: 0, borderWidth: 1 });
+        datasets.push({ label: `Ch${chIdx} RX Range`, data: rxMm.max, _isDetail: true, borderColor: rxCol + "66", backgroundColor: rxCol + "30", fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 1 });
+        datasets.push({ label: `Ch${chIdx} RX Min`, data: rxMm.min, _isDetail: true, borderColor: rxCol + "66", fill: false, tension: 0.2, pointRadius: 0, borderWidth: 1 });
     });
 
     _chartChannel = new Chart(ctx, {
@@ -10146,23 +10146,23 @@ function renderSiteCharts(samples, mateMap) {
             // Min/max envelope (detail, visible by default)
             datasets.push({
                 label: `TX Range${tunSfx}`, data: txMm.max, _isDetail: true,
-                borderColor: txCol + "33", backgroundColor: txCol + "18",
-                fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 0.5, yAxisID: "y",
+                borderColor: txCol + "66", backgroundColor: txCol + "30",
+                fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 1, yAxisID: "y",
             });
             datasets.push({
                 label: `TX Min${tunSfx}`, data: txMm.min, _isDetail: true,
-                borderColor: txCol + "33", fill: false,
-                tension: 0.2, pointRadius: 0, borderWidth: 0.5, yAxisID: "y",
+                borderColor: txCol + "66", fill: false,
+                tension: 0.2, pointRadius: 0, borderWidth: 1, yAxisID: "y",
             });
             datasets.push({
                 label: `RX Range${tunSfx}`, data: rxMm.max, _isDetail: true,
-                borderColor: rxCol + "33", backgroundColor: rxCol + "18",
-                fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 0.5, yAxisID: "y",
+                borderColor: rxCol + "66", backgroundColor: rxCol + "30",
+                fill: "+1", tension: 0.2, pointRadius: 0, borderWidth: 1, yAxisID: "y",
             });
             datasets.push({
                 label: `RX Min${tunSfx}`, data: rxMm.min, _isDetail: true,
-                borderColor: rxCol + "33", fill: false,
-                tension: 0.2, pointRadius: 0, borderWidth: 0.5, yAxisID: "y",
+                borderColor: rxCol + "66", fill: false,
+                tension: 0.2, pointRadius: 0, borderWidth: 1, yAxisID: "y",
             });
 
             // Stat badge data
