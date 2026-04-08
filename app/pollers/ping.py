@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
-from app.db import SessionLocal
+from app.db import AsyncSessionLocal
 from app.models import DiscoveredNode, Node
 
 if TYPE_CHECKING:
@@ -169,14 +169,8 @@ async def ping_monitor_loop(ps: PollerState) -> None:
         try:
             now = _time.monotonic()
 
-            def _query_ping_nodes():
-                db = SessionLocal()
-                try:
-                    return db.scalars(select(Node).order_by(Node.id)).all()
-                finally:
-                    db.close()
-
-            nodes = await asyncio.to_thread(_query_ping_nodes)
+            async with AsyncSessionLocal() as db:
+                nodes = (await db.scalars(select(Node).order_by(Node.id))).all()
 
             pingable = [n for n in nodes if n.enabled and n.ping_enabled]
 
@@ -200,19 +194,13 @@ async def ping_monitor_loop(ps: PollerState) -> None:
                     else:
                         build_ping_snapshot(ps, node.id, result)
 
-            def _query_ping_dns():
-                db2 = SessionLocal()
-                try:
-                    return db2.scalars(
-                        select(DiscoveredNode).where(
-                            DiscoveredNode.host.isnot(None),
-                            DiscoveredNode.map_view_id.isnot(None),
-                        )
-                    ).all()
-                finally:
-                    db2.close()
-
-            dns = await asyncio.to_thread(_query_ping_dns)
+            async with AsyncSessionLocal() as db2:
+                dns = (await db2.scalars(
+                    select(DiscoveredNode).where(
+                        DiscoveredNode.host.isnot(None),
+                        DiscoveredNode.map_view_id.isnot(None),
+                    )
+                )).all()
             dn_due: list[tuple[str, str]] = []
             for dn in dns:
                 if not dn.host:
