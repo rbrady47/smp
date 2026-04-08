@@ -12,16 +12,117 @@ from app.models import ChartSample, Node
 
 router = APIRouter(prefix="/api")
 
+BUCKET_SECONDS = 300  # 5-minute buckets for server-side downsampling
+
+
+def _bucket_samples(samples: list, bucket_size: int) -> list[dict]:
+    """Aggregate raw samples into time buckets with true averages.
+
+    Groups samples by ``timestamp // bucket_size``, computes mean for
+    each numeric field, and merges tunnel/channel JSON into averaged
+    structures so the browser never parses raw JSON blobs.
+    """
+    if not samples:
+        return []
+
+    buckets: dict[int, dict] = {}  # bucket_ts → accumulator
+
+    for s in samples:
+        bts = (s.timestamp // bucket_size) * bucket_size
+        if bts not in buckets:
+            buckets[bts] = {
+                "timestamp": bts,
+                "count": 0,
+                "user_tx_bytes": 0, "user_tx_pkts": 0,
+                "user_rx_bytes": 0, "user_rx_pkts": 0,
+                "tunnels": defaultdict(lambda: {"tx": 0, "rx": 0, "delay_us": 0, "n": 0}),
+                "channels": defaultdict(lambda: {"tx": 0, "rx": 0, "n": 0}),
+            }
+        b = buckets[bts]
+        b["count"] += 1
+        if s.user_tx_bytes is not None:
+            b["user_tx_bytes"] += s.user_tx_bytes
+        if s.user_tx_pkts is not None:
+            b["user_tx_pkts"] += s.user_tx_pkts
+        if s.user_rx_bytes is not None:
+            b["user_rx_bytes"] += s.user_rx_bytes
+        if s.user_rx_pkts is not None:
+            b["user_rx_pkts"] += s.user_rx_pkts
+
+        if s.tunnel_data:
+            try:
+                for t in json.loads(s.tunnel_data):
+                    key = (t["site"], t["tunnel"])
+                    acc = b["tunnels"][key]
+                    acc["tx"] += t.get("tx", 0)
+                    acc["rx"] += t.get("rx", 0)
+                    acc["delay_us"] += t.get("delay_us", 0)
+                    acc["n"] += 1
+            except (json.JSONDecodeError, KeyError, TypeError):
+                pass
+
+        if s.channel_data:
+            try:
+                for c in json.loads(s.channel_data):
+                    acc = b["channels"][c["ch"]]
+                    acc["tx"] += c.get("tx", 0)
+                    acc["rx"] += c.get("rx", 0)
+                    acc["n"] += 1
+            except (json.JSONDecodeError, KeyError, TypeError):
+                pass
+
+    # Build output rows with averaged values and pre-serialized JSON
+    result = []
+    for bts in sorted(buckets):
+        b = buckets[bts]
+        n = b["count"]
+        if n == 0:
+            continue
+
+        # Average tunnel data
+        tunnel_list = []
+        for (site, tunnel), acc in sorted(b["tunnels"].items()):
+            if acc["n"] > 0:
+                tunnel_list.append({
+                    "site": site, "tunnel": tunnel,
+                    "tx": acc["tx"] // acc["n"],
+                    "rx": acc["rx"] // acc["n"],
+                    "delay_us": acc["delay_us"] // acc["n"],
+                })
+
+        # Average channel data
+        channel_list = []
+        for ch in sorted(b["channels"]):
+            acc = b["channels"][ch]
+            if acc["n"] > 0:
+                channel_list.append({
+                    "ch": ch,
+                    "tx": acc["tx"] // acc["n"],
+                    "rx": acc["rx"] // acc["n"],
+                })
+
+        result.append({
+            "timestamp": bts,
+            "sample_type": "avg",
+            "user_tx_bytes": b["user_tx_bytes"] // n,
+            "user_tx_pkts": b["user_tx_pkts"] // n,
+            "user_rx_bytes": b["user_rx_bytes"] // n,
+            "user_rx_pkts": b["user_rx_pkts"] // n,
+            "channel_data": json.dumps(channel_list) if channel_list else None,
+            "tunnel_data": json.dumps(tunnel_list) if tunnel_list else None,
+        })
+
+    return result
+
 
 @router.get("/nodes/{node_id}/chart-stats")
 async def get_chart_stats(
     node_id: int,
     start: int | None = Query(default=None, description="Start epoch (inclusive)"),
     end: int | None = Query(default=None, description="End epoch (inclusive)"),
-    limit: int = Query(default=3600, ge=1, le=604800, description="Max rows to return"),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    """Return stored chart samples for a node within an optional time range."""
+    """Return chart samples for a node, bucketed into 5-minute averages."""
     node = db.get(Node, node_id)
     if node is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Node not found")
@@ -31,27 +132,18 @@ async def get_chart_stats(
         stmt = stmt.where(ChartSample.timestamp >= start)
     if end is not None:
         stmt = stmt.where(ChartSample.timestamp <= end)
-    stmt = stmt.order_by(ChartSample.timestamp).limit(limit)
+    stmt = stmt.order_by(ChartSample.timestamp)
 
     samples = db.scalars(stmt).all()
+    bucketed = _bucket_samples(samples, BUCKET_SECONDS)
 
     return {
         "node_id": node_id,
         "node_name": node.name,
-        "count": len(samples),
-        "samples": [
-            {
-                "timestamp": s.timestamp,
-                "sample_type": s.sample_type,
-                "user_tx_bytes": s.user_tx_bytes,
-                "user_tx_pkts": s.user_tx_pkts,
-                "user_rx_bytes": s.user_rx_bytes,
-                "user_rx_pkts": s.user_rx_pkts,
-                "channel_data": s.channel_data,
-                "tunnel_data": s.tunnel_data,
-            }
-            for s in samples
-        ],
+        "count": len(bucketed),
+        "raw_count": len(samples),
+        "bucket_seconds": BUCKET_SECONDS,
+        "samples": bucketed,
     }
 
 
