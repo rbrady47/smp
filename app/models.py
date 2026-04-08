@@ -30,6 +30,7 @@ class Node(Base):
     api_use_https: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     ping_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     ping_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=5, server_default="5")
+    charts_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     last_checked: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
 

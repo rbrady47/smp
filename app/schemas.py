@@ -24,6 +24,7 @@ class NodeBase(BaseModel):
     api_use_https: bool = False
     ping_enabled: bool = True
     ping_interval_seconds: int = Field(default=15, ge=1, le=300)
+    charts_enabled: bool = True
 
 
 class NodeCreate(NodeBase):

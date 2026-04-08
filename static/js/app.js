@@ -3559,6 +3559,7 @@ function resetNodeForm() {
     document.getElementById("node-web-port").value = "443";
     document.getElementById("node-ssh-port").value = "22";
     document.getElementById("node-ping-enabled").checked = true;
+    document.getElementById("node-charts-enabled").checked = true;
     document.getElementById("node-ping-interval").value = "15";
     const topologyRoot = document.getElementById("topology-root");
     const defaultLevel = topologyRoot && topologyState.focusUnit ? "1" : "0";
@@ -3768,6 +3769,7 @@ function populateNodeForm(nodeId) {
     document.getElementById("node-api-password").value = node.api_password ?? "";
     document.getElementById("node-api-use-https").checked = node.api_use_https;
     document.getElementById("node-ping-enabled").checked = node.ping_enabled !== false;
+    document.getElementById("node-charts-enabled").checked = node.charts_enabled !== false;
     document.getElementById("node-ping-interval").value = String(node.ping_interval_seconds ?? 15);
     document.getElementById("node-form-title").textContent = `Edit ${node.name}`;
     document.getElementById("node-submit-button").textContent = "Save";
@@ -8576,6 +8578,7 @@ function collectNodeFormPayload() {
         api_password: document.getElementById("node-api-password").value.trim() || null,
         api_use_https: document.getElementById("node-api-use-https").checked,
         ping_enabled: document.getElementById("node-ping-enabled").checked,
+        charts_enabled: document.getElementById("node-charts-enabled").checked,
         ping_interval_seconds: Number(document.getElementById("node-ping-interval").value) || 15,
     };
 }

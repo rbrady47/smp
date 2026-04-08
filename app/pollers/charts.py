@@ -233,7 +233,7 @@ async def charts_polling_loop(ps: PollerState) -> None:
 
             enabled_nodes = [
                 node for node in nodes
-                if node.enabled and node.api_username and node.api_password
+                if node.enabled and node.api_username and node.api_password and node.charts_enabled
             ]
 
             if enabled_nodes:
