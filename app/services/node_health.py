@@ -53,6 +53,7 @@ def serialize_node(ps: PollerState, node: Node, health: dict[str, object]) -> di
         "api_use_https": node.api_use_https,
         "ping_enabled": node.ping_enabled,
         "ping_interval_seconds": node.ping_interval_seconds,
+        "charts_enabled": node.charts_enabled,
         "status": health["status"],
         "latency_ms": node.latency_ms,
         "last_checked": node.last_checked.isoformat() if node.last_checked else None,

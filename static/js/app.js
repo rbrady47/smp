@@ -9509,7 +9509,7 @@ function loadChartsPage() {
 
     // Populate node dropdown from /api/nodes
     apiRequest("/api/nodes").then(nodes => {
-        const enabled = (nodes || []).filter(n => n.enabled && n.api_username);
+        const enabled = (nodes || []).filter(n => n.enabled && n.api_username && n.charts_enabled !== false);
         enabled.forEach(n => {
             const opt = document.createElement("option");
             opt.value = n.id;
