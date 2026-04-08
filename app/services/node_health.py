@@ -7,7 +7,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Node
 from app.pollers.ping import get_ping_snapshot
@@ -77,7 +77,7 @@ async def refresh_node(ps: PollerState, node: Node) -> dict[str, object]:
     return serialize_node(ps, node, health)
 
 
-async def refresh_nodes(ps: PollerState, nodes: list[Node], db: Session) -> list[dict[str, object]]:
+async def refresh_nodes(ps: PollerState, nodes: list[Node], db: AsyncSession) -> list[dict[str, object]]:
     payloads: list[dict[str, object]] = []
     for node in nodes:
         if node.enabled and node.api_username and node.api_password:
@@ -106,15 +106,15 @@ async def refresh_nodes(ps: PollerState, nodes: list[Node], db: Session) -> list
     except Exception:
         logger.exception("Node dashboard cache refresh failed during node refresh")
         ps.dashboard_backend.mark_cache_refresh_failed()
-    db.commit()
+    await db.commit()
     return sorted(
         payloads,
         key=lambda node: (STATUS_PRIORITY.get(str(node["status"]), 99), str(node["name"]).lower()),
     )
 
 
-def get_node_or_404(node_id: int, db: Session) -> Node:
-    node = db.get(Node, node_id)
+async def get_node_or_404(node_id: int, db: AsyncSession) -> Node:
+    node = await db.get(Node, node_id)
     if node is None:
         raise HTTPException(status_code=404, detail="Node not found")
     return node
