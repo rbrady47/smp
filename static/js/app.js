@@ -6823,16 +6823,28 @@ function initTopologyLinkContextMenu() {
             const statusNodeId = statusNodeVal ? Number(statusNodeVal) : null;
             closeTopologyLinkContextMenu();
             // Optimistic: update the link in local data immediately
+            let prevLinkType = null;
+            let prevStatusNodeId = null;
             if (topologyPayload?.links) {
                 const local = topologyPayload.links.find((l) => String(l.db_id) === String(dbId));
                 if (local) {
+                    prevLinkType = local.link_type;
+                    prevStatusNodeId = local.status_node_id;
                     local.link_type = linkType;
                     local.status_node_id = statusNodeId;
                 }
             }
             renderTopologyStage();
-            // Fire-and-forget
-            updateTopologyLink(dbId, { link_type: linkType, status_node_id: statusNodeId });
+            // API call — rollback if it fails
+            const ok = await updateTopologyLink(dbId, { link_type: linkType, status_node_id: statusNodeId });
+            if (!ok && topologyPayload?.links) {
+                const local = topologyPayload.links.find((l) => String(l.db_id) === String(dbId));
+                if (local) {
+                    local.link_type = prevLinkType;
+                    local.status_node_id = prevStatusNodeId;
+                    renderTopologyStage();
+                }
+            }
         };
     }
 
@@ -6852,14 +6864,20 @@ function initTopologyLinkContextMenu() {
             topologyState.pinnedLinkTooltipId = null;
             hideTopologyLinkTooltip();
             // Optimistic: remove the link from local data immediately
+            let removedLink = null;
             if (topologyPayload?.links) {
-                topologyPayload.links = topologyPayload.links.filter(
-                    (l) => String(l.db_id) !== String(dbId)
-                );
+                const idx = topologyPayload.links.findIndex((l) => String(l.db_id) === String(dbId));
+                if (idx !== -1) {
+                    removedLink = topologyPayload.links.splice(idx, 1)[0];
+                }
             }
             renderTopologyStage();
-            // Fire-and-forget — don't block on the API call
-            deleteTopologyLink(dbId);
+            // API call — rollback if it fails
+            const ok = await deleteTopologyLink(dbId);
+            if (!ok && removedLink && topologyPayload?.links) {
+                topologyPayload.links.push(removedLink);
+                renderTopologyStage();
+            }
         };
     }
 
