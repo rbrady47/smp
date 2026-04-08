@@ -66,6 +66,8 @@ const TOPOLOGY_LOCATION_ALIASES = {
 };
 let topologyPayload = null;
 let topologySubmapDetail = null;
+let _topologyRefreshLock = false;
+let _topologyRefreshCooldownUntil = 0;
 let topologyDiscoveryPayload = { anchors: [], discovered: [], relationships: [], summary: {} };
 let topologyNodeDashboardPayload = { anchors: [], discovered: [] };
 let topologyDashboardServicesPayload = { summary: {}, services: [] };
@@ -5965,6 +5967,10 @@ async function refreshTopologyData() {
         await refreshTopologyPage();
         return;
     }
+    if (_topologyRefreshLock) return;
+    _topologyRefreshLock = true;
+    // Block SSE/timer refreshes for 2s after a user-initiated action
+    _topologyRefreshCooldownUntil = Date.now() + 2000;
     try {
         const result = await apiRequest(buildNodeDashboardRequestUrl("/api/topology"));
         if (result) {
@@ -5972,6 +5978,8 @@ async function refreshTopologyData() {
         }
     } catch (error) {
         console.error("Failed to refresh topology data:", error);
+    } finally {
+        _topologyRefreshLock = false;
     }
 }
 
@@ -7828,6 +7836,10 @@ async function refreshTopologyPage() {
     if (topologyState.dragging) {
         return;
     }
+    // Skip if a user-initiated refresh is in progress or cooling down
+    if (_topologyRefreshLock || Date.now() < _topologyRefreshCooldownUntil) {
+        return;
+    }
     const submapId = root.getAttribute("data-map-view-id");
     if (submapId) {
         const [, nodeDashResult] = await Promise.allSettled([
@@ -7882,6 +7894,7 @@ async function refreshTopologyStructure() {
     const root = document.getElementById("topology-root");
     if (!root) return;
     if (topologyState.dragging) return;
+    if (_topologyRefreshLock || Date.now() < _topologyRefreshCooldownUntil) return;
 
     const submapId = root.getAttribute("data-map-view-id");
     if (submapId) {
