@@ -8787,7 +8787,7 @@ async function refreshAllNodes() {
 async function handleNodeActionClick(event) {
     const rawTarget = event.target;
 
-    if (!(rawTarget instanceof HTMLElement)) {
+    if (!(rawTarget instanceof Element)) {
         return;
     }
 
