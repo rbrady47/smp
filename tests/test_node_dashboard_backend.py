@@ -1,13 +1,8 @@
-import asyncio
 from collections import deque
 from datetime import datetime, timedelta, timezone
-import os
 import unittest
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
-os.environ.setdefault("DATABASE_URL", "sqlite:///smp-test.db")
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.db import Base
 from app.models import DiscoveredNode, DiscoveredNodeObservation, Node, NodeRelationship
@@ -22,14 +17,19 @@ def _unused_sync(*args, **kwargs):
     raise AssertionError("Unexpected sync dependency call")
 
 
-class NodeDashboardBackendTest(unittest.TestCase):
-    def setUp(self) -> None:
-        engine = create_engine("sqlite:///:memory:")
-        Base.metadata.create_all(bind=engine)
-        self.session = sessionmaker(bind=engine, autoflush=False, autocommit=False)()
+class NodeDashboardBackendTest(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with self.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        self.async_session_factory = async_sessionmaker(
+            bind=self.engine, class_=AsyncSession, expire_on_commit=False,
+        )
+        self.session = self.async_session_factory()
 
-    def tearDown(self) -> None:
-        self.session.close()
+    async def asyncTearDown(self) -> None:
+        await self.session.close()
+        await self.engine.dispose()
 
     def _build_backend(self) -> NodeDashboardBackend:
         return NodeDashboardBackend(
@@ -43,7 +43,7 @@ class NodeDashboardBackendTest(unittest.TestCase):
             build_detail_payload=lambda *args, **kwargs: {},
         )
 
-    def test_ensure_discovered_node_cached_uses_persisted_record(self) -> None:
+    async def test_ensure_discovered_node_cached_uses_persisted_record(self) -> None:
         backend = self._build_backend()
         self.session.add(
             DiscoveredNode(
@@ -67,9 +67,9 @@ class NodeDashboardBackendTest(unittest.TestCase):
                 last_ping_up=datetime.now(timezone.utc),
             )
         )
-        self.session.commit()
+        await self.session.commit()
 
-        row = backend.ensure_discovered_node_cached(self.session, "4001")
+        row = await backend.ensure_discovered_node_cached(self.session, "4001")
 
         self.assertIsNotNone(row)
         self.assertEqual(row["site_id"], "4001")
@@ -78,7 +78,7 @@ class NodeDashboardBackendTest(unittest.TestCase):
         self.assertEqual(row["surfaced_by_names"], ["Anchor A"])
         self.assertIn("4001", backend.discovered_node_cache)
 
-    def test_refresh_discovered_inventory_persists_discovered_inventory(self) -> None:
+    async def test_refresh_discovered_inventory_persists_discovered_inventory(self) -> None:
         anchor = Node(
             id=1,
             name="Anchor A",
@@ -151,10 +151,10 @@ class NodeDashboardBackendTest(unittest.TestCase):
             "checked_at": datetime.now(timezone.utc).isoformat(),
         }
 
-        asyncio.run(backend.refresh_discovered_inventory(self.session, [anchor]))
-        record = self.session.get(DiscoveredNode, "4001")
-        observation = self.session.get(DiscoveredNodeObservation, "4001")
-        relationship = self.session.get(NodeRelationship, {
+        await backend.refresh_discovered_inventory(self.session, [anchor])
+        record = await self.session.get(DiscoveredNode, "4001")
+        observation = await self.session.get(DiscoveredNodeObservation, "4001")
+        relationship = await self.session.get(NodeRelationship, {
             "source_site_id": "1001",
             "target_site_id": "4001",
             "relationship_kind": "surfaced_by",
@@ -169,7 +169,7 @@ class NodeDashboardBackendTest(unittest.TestCase):
         self.assertEqual(observation.latency_ms, 15)
         self.assertEqual(relationship.target_unit, "DIV HQ")
 
-    def test_build_projection_uses_persisted_and_cached_state_without_discovery_side_effects(self) -> None:
+    async def test_build_projection_uses_persisted_and_cached_state_without_discovery_side_effects(self) -> None:
         anchor = Node(
             id=1,
             name="Anchor A",
@@ -250,9 +250,9 @@ class NodeDashboardBackendTest(unittest.TestCase):
                 last_ping_up=datetime.now(timezone.utc),
             )
         )
-        self.session.commit()
+        await self.session.commit()
 
-        payload = asyncio.run(backend.build_projection(self.session, [anchor]))
+        payload = await backend.build_projection(self.session, [anchor])
 
         self.assertEqual(len(payload["anchors"]), 1)
         self.assertEqual(len(payload["discovered"]), 1)
@@ -332,7 +332,7 @@ class NodeDashboardBackendTest(unittest.TestCase):
         self.assertIsNone(metrics["latest_latency_ms"])
         self.assertEqual(metrics["rtt_state"], "good")
 
-    def test_refresh_discovered_inventory_does_not_churn_projection_when_ping_snapshot_is_unchanged(self) -> None:
+    async def test_refresh_discovered_inventory_does_not_churn_projection_when_ping_snapshot_is_unchanged(self) -> None:
         anchor = Node(
             id=1,
             name="Anchor A",
@@ -406,16 +406,16 @@ class NodeDashboardBackendTest(unittest.TestCase):
             "checked_at": checked_at,
         }
 
-        asyncio.run(backend.refresh_discovered_inventory(self.session, [anchor]))
+        await backend.refresh_discovered_inventory(self.session, [anchor])
         first_last_seen = backend.discovered_node_cache["4001"]["last_seen"]
 
         backend.projection_dirty = False
-        asyncio.run(backend.refresh_discovered_inventory(self.session, [anchor]))
+        await backend.refresh_discovered_inventory(self.session, [anchor])
 
         self.assertEqual(backend.discovered_node_cache["4001"]["last_seen"], first_last_seen)
         self.assertFalse(backend.projection_dirty)
 
-    def test_delete_discovered_node_removes_inventory_observation_and_relationships(self) -> None:
+    async def test_delete_discovered_node_removes_inventory_observation_and_relationships(self) -> None:
         backend = self._build_backend()
         self.session.add(DiscoveredNode(site_id="4001", site_name="Delta"))
         self.session.add(DiscoveredNodeObservation(site_id="4001", ping="Up"))
@@ -428,14 +428,14 @@ class NodeDashboardBackendTest(unittest.TestCase):
                 target_row_type="discovered",
             )
         )
-        self.session.commit()
+        await self.session.commit()
 
-        backend.delete_discovered_node(self.session, "4001")
+        await backend.delete_discovered_node(self.session, "4001")
 
-        self.assertIsNone(self.session.get(DiscoveredNode, "4001"))
-        self.assertIsNone(self.session.get(DiscoveredNodeObservation, "4001"))
+        self.assertIsNone(await self.session.get(DiscoveredNode, "4001"))
+        self.assertIsNone(await self.session.get(DiscoveredNodeObservation, "4001"))
         self.assertIsNone(
-            self.session.get(
+            await self.session.get(
                 NodeRelationship,
                 {
                     "source_site_id": "1001",
@@ -445,7 +445,7 @@ class NodeDashboardBackendTest(unittest.TestCase):
             )
         )
 
-    def test_get_discovered_ping_snapshot_does_not_reuse_stale_positive_cache(self) -> None:
+    async def test_get_discovered_ping_snapshot_does_not_reuse_stale_positive_cache(self) -> None:
         backend = self._build_backend()
         stale_checked_at = datetime.now(timezone.utc).replace(year=2025).isoformat()
         backend.discovered_ping_cache["4001"] = {
@@ -455,12 +455,12 @@ class NodeDashboardBackendTest(unittest.TestCase):
             "checked_at": stale_checked_at,
         }
 
-        snapshot = asyncio.run(backend.get_discovered_ping_snapshot("4001", "10.10.10.10"))
+        snapshot = await backend.get_discovered_ping_snapshot("4001", "10.10.10.10")
 
         self.assertFalse(snapshot["reachable"])
         self.assertIsNone(snapshot["latency_ms"])
 
-    def test_refresh_discovered_inventory_marks_node_down_when_ping_fails(self) -> None:
+    async def test_refresh_discovered_inventory_marks_node_down_when_ping_fails(self) -> None:
         anchor = Node(
             id=1,
             name="Anchor A",
@@ -565,7 +565,7 @@ class NodeDashboardBackendTest(unittest.TestCase):
             "surfaced_by_name": "Anchor A",
         }
 
-        asyncio.run(backend.refresh_discovered_inventory(self.session, [anchor]))
+        await backend.refresh_discovered_inventory(self.session, [anchor])
 
         row = backend.discovered_node_cache["4001"]
         self.assertEqual(row["ping"], "Down")
@@ -575,7 +575,7 @@ class NodeDashboardBackendTest(unittest.TestCase):
         self.assertEqual(row["tx_display"], "--")
         self.assertEqual(row["rx_display"], "--")
 
-    def test_refresh_discovered_inventory_forces_stale_persisted_rows_down_when_not_refreshed(self) -> None:
+    async def test_refresh_discovered_inventory_forces_stale_persisted_rows_down_when_not_refreshed(self) -> None:
         anchor = Node(
             id=1,
             name="Anchor A",
@@ -669,11 +669,11 @@ class NodeDashboardBackendTest(unittest.TestCase):
                 last_ping_up=datetime.now(timezone.utc),
             )
         )
-        self.session.commit()
+        await self.session.commit()
 
-        asyncio.run(backend.refresh_discovered_inventory(self.session, [anchor]))
+        await backend.refresh_discovered_inventory(self.session, [anchor])
 
-        row = backend.ensure_discovered_node_cached(self.session, "4001")
+        row = await backend.ensure_discovered_node_cached(self.session, "4001")
         self.assertIsNotNone(row)
         self.assertEqual(row["ping"], "Down")
         self.assertFalse(row["web_ok"])
@@ -682,7 +682,7 @@ class NodeDashboardBackendTest(unittest.TestCase):
         self.assertEqual(row["tx_display"], "--")
         self.assertEqual(row["rx_display"], "--")
 
-    def test_discovered_version_persists_when_refresh_only_has_placeholder(self) -> None:
+    async def test_discovered_version_persists_when_refresh_only_has_placeholder(self) -> None:
         backend = self._build_backend()
         self.session.add(
             DiscoveredNode(
@@ -698,9 +698,9 @@ class NodeDashboardBackendTest(unittest.TestCase):
                 surfaced_by_names_json='["Anchor A"]',
             )
         )
-        self.session.commit()
+        await self.session.commit()
 
-        backend._upsert_discovered_inventory_record(self.session, {
+        await backend._upsert_discovered_inventory_record(self.session, {
             "site_id": "4001",
             "site_name": "Delta",
             "host": "10.10.10.10",
@@ -712,13 +712,13 @@ class NodeDashboardBackendTest(unittest.TestCase):
             "discovered_parent_name": "Anchor A",
             "surfaced_by_names": ["Anchor A"],
         })
-        self.session.commit()
+        await self.session.commit()
 
-        record = self.session.get(DiscoveredNode, "4001")
+        record = await self.session.get(DiscoveredNode, "4001")
         self.assertIsNotNone(record)
         self.assertEqual(record.version, "1.2.3")
 
-    def test_anchor_version_persists_when_summary_version_is_placeholder(self) -> None:
+    async def test_anchor_version_persists_when_summary_version_is_placeholder(self) -> None:
         anchor = Node(
             id=1,
             name="Anchor A",
@@ -818,6 +818,6 @@ class NodeDashboardBackendTest(unittest.TestCase):
             "rx_display": "2.0 Kbps",
         }]
 
-        payload = asyncio.run(backend.build_projection(self.session, [anchor]))
+        payload = await backend.build_projection(self.session, [anchor])
 
         self.assertEqual(payload["anchors"][0]["version"], "v1.15.2")

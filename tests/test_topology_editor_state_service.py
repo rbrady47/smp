@@ -1,10 +1,6 @@
-import os
 import unittest
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
-os.environ.setdefault("DATABASE_URL", "sqlite:///smp-test.db")
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.db import Base
 from app.schemas import TopologyEditorStateUpdate
@@ -14,17 +10,22 @@ from app.topology_editor_state_service import (
 )
 
 
-class TopologyEditorStateServiceTest(unittest.TestCase):
-    def setUp(self) -> None:
-        engine = create_engine("sqlite:///:memory:")
-        Base.metadata.create_all(bind=engine)
-        self.session = sessionmaker(bind=engine, autoflush=False, autocommit=False)()
+class TopologyEditorStateServiceTest(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with self.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        self.async_session_factory = async_sessionmaker(
+            bind=self.engine, class_=AsyncSession, expire_on_commit=False,
+        )
+        self.session = self.async_session_factory()
 
-    def tearDown(self) -> None:
-        self.session.close()
+    async def asyncTearDown(self) -> None:
+        await self.session.close()
+        await self.engine.dispose()
 
-    def test_get_returns_empty_payload_when_state_not_created(self) -> None:
-        payload = get_topology_editor_state_payload(self.session)
+    async def test_get_returns_empty_payload_when_state_not_created(self) -> None:
+        payload = await get_topology_editor_state_payload(self.session)
 
         self.assertEqual(payload["scope"], "default")
         self.assertFalse(payload["exists"])
@@ -33,8 +34,8 @@ class TopologyEditorStateServiceTest(unittest.TestCase):
         self.assertEqual(payload["link_anchor_assignments"], {})
         self.assertEqual(payload["demo_mode"], "off")
 
-    def test_upsert_round_trips_layout_log_link_assignments_and_demo_mode(self) -> None:
-        saved = upsert_topology_editor_state(
+    async def test_upsert_round_trips_layout_log_link_assignments_and_demo_mode(self) -> None:
+        saved = await upsert_topology_editor_state(
             TopologyEditorStateUpdate(
                 layout_overrides={
                     "lvl0-cloud": {"x": 320, "y": 180, "size": 156},
@@ -50,7 +51,7 @@ class TopologyEditorStateServiceTest(unittest.TestCase):
             self.session,
         )
 
-        fetched = get_topology_editor_state_payload(self.session)
+        fetched = await get_topology_editor_state_payload(self.session)
 
         self.assertTrue(saved["exists"])
         self.assertEqual(fetched["layout_overrides"]["lvl0-cloud"]["x"], 320)
