@@ -8,11 +8,12 @@ The format is intentionally simple so diffs stay readable in version control.
 
 ### Added
 
-- **Charts data polling (hybrid):** 60-second polling loop makes two fetches per node: (1) decimated `bwvChartStats(df=30)` for min/max envelope visualization, (2) raw `bwvChartStats(df=0, entries=30)` for accurate per-second averages. Data stored in `chart_samples` table with `sample_type` column (`min`/`max`/`raw`).
-- **Chart stats API:** `GET /api/nodes/{node_id}/chart-stats` returns all sample types for chart rendering. `GET /api/nodes/{node_id}/chart-summary` aggregates raw samples only for accurate reporting.
-- **ChartSample model:** `chart_samples` table with unique constraint on `(node_id, timestamp, sample_type)`. Migration 0016 adds `sample_type` column.
-- **get_bwv_chart_stats():** Seeker API function with `df` and `entries` parameters for decimated and raw fetches.
-- **Charts UI page:** `/charts` page with Chart.js dual-axis graphs. Per-node user throughput, packet counts, WAN channels, and per-site tunnel charts. Envelope bands show min/max range, rolling average shows trend. Clickable stat badges (Avg TX/RX, Peak TX/RX, Avg Latency). "Smooth"/"Envelope" toggle per chart.
+- **Charts data polling:** 60-second polling loop fetches `bwvChartStats(startTime=0, entries=30)` per node — most recent 30 seconds of raw per-second data each cycle. No cursor tracking needed; duplicates handled by `ON CONFLICT DO NOTHING`. Stored in `chart_samples` table.
+- **Server-side 5-minute bucketing:** `GET /api/nodes/{node_id}/chart-stats` aggregates raw samples into 5-minute time buckets before sending to the browser. Each bucket emits 3 rows (min, max, avg) preserving envelope visualization while reducing 7-day payloads from 302K rows to ~6K. Tunnel and channel JSON pre-parsed server-side.
+- **Chart stats API:** `GET /api/nodes/{node_id}/chart-stats?start=&end=` returns bucketed samples. `GET /api/nodes/{node_id}/chart-summary?start=&end=` aggregates raw samples for accurate reporting.
+- **ChartSample model:** `chart_samples` table with `sample_type` column and unique constraint on `(node_id, timestamp, sample_type)`.
+- **get_bwv_chart_stats():** Seeker API function with `df` and `entries` parameters.
+- **Charts UI page:** `/charts` page with Chart.js dual-axis graphs. Per-node user throughput, packet counts, WAN channels, and per-site tunnel charts. Envelope bands show min/max range within each 5-minute bucket, rolling average shows trend. Clickable stat badges (Avg TX/RX, Peak TX/RX, Avg Latency). "Smooth"/"Envelope" toggle per chart.
 - **PDF export:** Client-side via jsPDF. Chart images + summary report with per-site tunnel table.
 - **Charts nav link:** Added "Charts" to navigation bar on all pages.
 - **Per-site tunnel charts:** One dual-axis chart per mate site with throughput (left, bps) + latency (right, ms in yellow). All tunnels overlaid with high-contrast color pairs. Up to 4 tunnels supported.

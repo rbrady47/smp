@@ -100,7 +100,7 @@ Typical uses:
 
 Path: `/charts`
 
-The Charts page provides time-series traffic visualization for anchor nodes. The backend polls each Seeker node every 60 seconds using two `bwvChartStats` requests: a decimated fetch (df=30) for min/max envelope visualization, and a raw fetch (30 entries) for accurate averages.
+The Charts page provides time-series traffic visualization for anchor nodes. The backend polls each Seeker node every 60 seconds, collecting the most recent 30 seconds of raw per-second traffic data. When serving to the browser, the API aggregates raw samples into 5-minute time buckets with min/max/avg values for efficient rendering and envelope visualization.
 
 What operators can do here:
 
