@@ -1599,23 +1599,7 @@ a {
     transform: translate(-50%, -50%);
 }
 
-/* Link-create zone: invisible edge ring shown in edit mode for initiating link creation */
-.topology-link-create-zone {
-    position: absolute;
-    inset: -8px;
-    border-radius: inherit;
-    pointer-events: none;
-    cursor: crosshair;
-    z-index: 2;
-}
-
-.topology-stage.is-editing .topology-link-create-zone {
-    pointer-events: auto;
-}
-
-.topology-stage.is-editing .topology-link-create-zone:hover {
-    box-shadow: 0 0 0 2px rgba(123, 214, 255, 0.28);
-}
+/* Link-create zone removed — link creation now triggered by edge-distance check in JS */
 
 /* Snap target highlight during link creation drag */
 .topology-entity.is-link-snap-target {

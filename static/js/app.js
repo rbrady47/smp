@@ -1912,6 +1912,117 @@ function wireTopologyLayoutEditor(stage, layer, entityMap) {
         renderTopologyStage();
     });
 
+    /**
+     * Start link creation from a node edge click.
+     * Called when pointerdown is detected near the edge of a circular node in edit mode.
+     */
+    function _startLinkCreationFromNode(event, button, entityId, entity, entityMap) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const svgEl = document.getElementById("topology-links");
+        const stageEl = document.getElementById("topology-stage");
+        if (!svgEl || !stageEl) return;
+
+        const stageR = stageEl.getBoundingClientRect();
+        const fromRect = button.getBoundingClientRect();
+        const cursorStageX = event.clientX - stageR.left;
+        const cursorStageY = event.clientY - stageR.top;
+        const startPt = getEdgeAttachmentPoint(fromRect, stageR, cursorStageX, cursorStageY, isCircularTopologyEntity(entity));
+
+        const rubberband = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        rubberband.setAttribute("x1", String(startPt.x));
+        rubberband.setAttribute("y1", String(startPt.y));
+        rubberband.setAttribute("x2", String(startPt.x));
+        rubberband.setAttribute("y2", String(startPt.y));
+        rubberband.setAttribute("class", "topology-link topology-link-neutral");
+        rubberband.style.pointerEvents = "none";
+        svgEl.appendChild(rubberband);
+
+        topologyState.dragging = {
+            kind: "link-create",
+            pointerId: event.pointerId,
+            sourceEntityId: entityId,
+            sourceAnchor: "e",
+            rubberband,
+            snapTarget: null,
+            sourceButton: button,
+        };
+
+        const moveHandler = (moveEvent) => {
+            const drag = topologyState.dragging;
+            if (!drag || drag.kind !== "link-create" || drag.pointerId !== moveEvent.pointerId) return;
+
+            const curX = moveEvent.clientX - stageR.left;
+            const curY = moveEvent.clientY - stageR.top;
+            const srcRect = drag.sourceButton.getBoundingClientRect();
+            const srcEntity = entityMap.get(drag.sourceEntityId);
+            const srcPt = getEdgeAttachmentPoint(srcRect, stageR, curX, curY, isCircularTopologyEntity(srcEntity));
+            rubberband.setAttribute("x1", String(srcPt.x));
+            rubberband.setAttribute("y1", String(srcPt.y));
+
+            const snapTarget = getTopologyNodeSnapTarget(moveEvent.clientX, moveEvent.clientY, entityId);
+            drag.snapTarget = snapTarget;
+            highlightTopologySnapTarget(snapTarget);
+
+            if (snapTarget) {
+                const targetBubble = stageEl.querySelector(`[data-topology-id="${CSS.escape(snapTarget.entityId)}"]`);
+                if (targetBubble instanceof HTMLElement) {
+                    const tgtRect = targetBubble.getBoundingClientRect();
+                    const tgtEntity = entityMap.get(snapTarget.entityId);
+                    const fromCx = srcRect.left + srcRect.width / 2 - stageR.left;
+                    const fromCy = srcRect.top + srcRect.height / 2 - stageR.top;
+                    const snapPt = getEdgeAttachmentPoint(tgtRect, stageR, fromCx, fromCy, isCircularTopologyEntity(tgtEntity));
+                    rubberband.setAttribute("x2", String(snapPt.x));
+                    rubberband.setAttribute("y2", String(snapPt.y));
+                } else {
+                    rubberband.setAttribute("x2", String(curX));
+                    rubberband.setAttribute("y2", String(curY));
+                }
+            } else {
+                rubberband.setAttribute("x2", String(curX));
+                rubberband.setAttribute("y2", String(curY));
+            }
+            moveEvent.preventDefault();
+        };
+
+        const endHandler = async (endEvent) => {
+            const drag = topologyState.dragging;
+            window.removeEventListener("pointermove", moveHandler);
+            window.removeEventListener("pointerup", endHandler);
+            window.removeEventListener("pointercancel", endHandler);
+            rubberband.remove();
+            highlightTopologySnapTarget(null);
+            topologyState.dragging = null;
+
+            if (!drag || drag.kind !== "link-create") return;
+
+            const finalTarget = drag.snapTarget || getTopologyNodeSnapTarget(endEvent.clientX, endEvent.clientY, entityId);
+            if (finalTarget?.entityId) {
+                const srcRect = drag.sourceButton.getBoundingClientRect();
+                const tgtBubble = stageEl.querySelector(`[data-topology-id="${CSS.escape(finalTarget.entityId)}"]`);
+                const tgtRect = tgtBubble?.getBoundingClientRect();
+                const allKeys = ["n", "ne", "e", "se", "s", "sw", "w", "nw"];
+                const srcCx = srcRect.left + srcRect.width / 2;
+                const srcCy = srcRect.top + srcRect.height / 2;
+                const tgtCx = tgtRect ? tgtRect.left + tgtRect.width / 2 : endEvent.clientX;
+                const tgtCy = tgtRect ? tgtRect.top + tgtRect.height / 2 : endEvent.clientY;
+                const srcAnchor = pickAnchorPointFromSet(srcCx, srcCy, tgtCx, tgtCy, allKeys);
+                const tgtAnchor = pickAnchorPointFromSet(tgtCx, tgtCy, srcCx, srcCy, allKeys);
+                const created = await createTopologyLink(drag.sourceEntityId, srcAnchor, finalTarget.entityId, tgtAnchor);
+                if (created) await refreshTopologyData();
+                renderTopologyStage();
+            } else {
+                renderTopologyStage();
+            }
+            endEvent.preventDefault();
+        };
+
+        window.addEventListener("pointermove", moveHandler);
+        window.addEventListener("pointerup", endHandler);
+        window.addEventListener("pointercancel", endHandler);
+    }
+
     stage.addEventListener("pointerdown", (event) => {
         if (!topologyState.editMode) {
             return;
@@ -1982,6 +2093,22 @@ function wireTopologyLayoutEditor(stage, layer, entityMap) {
         }
 
         const resizeHandle = target instanceof Element ? target.closest("[data-topology-resize-handle]") : null;
+
+        // Edge-distance check: if click is near the outer edge of the node, start link creation
+        if (!resizeHandle && !event.shiftKey) {
+            const btnRect = button.getBoundingClientRect();
+            const cx = btnRect.left + btnRect.width / 2;
+            const cy = btnRect.top + btnRect.height / 2;
+            const radius = Math.min(btnRect.width, btnRect.height) / 2;
+            const distFromCenter = Math.hypot(event.clientX - cx, event.clientY - cy);
+            const edgeThreshold = 18; // px from edge to trigger link creation
+            if (isCircularTopologyEntity(entity) && distFromCenter > radius - edgeThreshold) {
+                // Near the edge of a circular node — start link creation
+                _startLinkCreationFromNode(event, button, entityId, entity, entityMap);
+                return;
+            }
+        }
+
         const startLayout = getTopologyEntityLayout(entity);
         if (!resizeHandle) {
             if (!topologyState.selectedEntityIds.has(entityId)) {
@@ -4990,10 +5117,7 @@ function renderTopologyStage() {
             const resizeHandle = topologyState.editMode
                 ? '<span class="topology-resize-handle" data-topology-resize-handle="true" aria-hidden="true"></span>'
                 : "";
-            // Single invisible link-create zone for edit mode (replaces 8 anchor point dots)
-            const linkCreateZone = topologyState.editMode
-                ? '<span class="topology-link-create-zone" data-topology-link-zone="true" aria-hidden="true"></span>'
-                : "";
+            // Link creation in edit mode is handled by edge-distance check in the pointerdown handler
 
             const entityBody = isSubmap
                 ? `<span class="topology-node-name">${displayName}</span>${nodeIcon}`
@@ -5011,7 +5135,6 @@ function renderTopologyStage() {
                     ${entityBody}
                     ${clusterFooter}
                     ${hoverPanel}
-                    ${linkCreateZone}
                     ${resizeHandle}
                 </button>
             `;
@@ -5061,141 +5184,7 @@ function renderTopologyStage() {
       });
 
       layer.querySelectorAll("[data-topology-id]").forEach((button) => {
-          // Link creation: pointerdown on the link-create zone (edge ring) in edit mode
-          const linkZone = button.querySelector("[data-topology-link-zone]");
-          if (linkZone) {
-              linkZone.addEventListener("pointerdown", (event) => {
-                  if (!topologyState.editMode) {
-                      return;
-                  }
-                  const entityId = button.getAttribute("data-topology-id");
-                  if (!entityId) {
-                      return;
-                  }
-                  event.preventDefault();
-                  event.stopPropagation();
-
-                  const svgEl = document.getElementById("topology-links");
-                  const stageEl = document.getElementById("topology-stage");
-                  if (!svgEl || !stageEl) {
-                      return;
-                  }
-                  const stageR = stageEl.getBoundingClientRect();
-                  const fromRect = button.getBoundingClientRect();
-                  // Start point: edge of source node toward cursor
-                  const cursorStageX = event.clientX - stageR.left;
-                  const cursorStageY = event.clientY - stageR.top;
-                  const entity = entityMap.get(entityId);
-                  const startPt = getEdgeAttachmentPoint(fromRect, stageR, cursorStageX, cursorStageY, isCircularTopologyEntity(entity));
-
-                  const rubberband = document.createElementNS("http://www.w3.org/2000/svg", "line");
-                  rubberband.setAttribute("x1", String(startPt.x));
-                  rubberband.setAttribute("y1", String(startPt.y));
-                  rubberband.setAttribute("x2", String(startPt.x));
-                  rubberband.setAttribute("y2", String(startPt.y));
-                  rubberband.setAttribute("class", "topology-link topology-link-neutral");
-                  rubberband.style.pointerEvents = "none";
-                  svgEl.appendChild(rubberband);
-
-                  topologyState.dragging = {
-                      kind: "link-create",
-                      pointerId: event.pointerId,
-                      sourceEntityId: entityId,
-                      sourceAnchor: "e", // placeholder — computed from angle on drop
-                      rubberband,
-                      snapTarget: null,
-                      sourceButton: button,
-                  };
-
-                  const moveHandler = (moveEvent) => {
-                      const drag = topologyState.dragging;
-                      if (!drag || drag.kind !== "link-create" || drag.pointerId !== moveEvent.pointerId) {
-                          return;
-                      }
-                      const curX = moveEvent.clientX - stageR.left;
-                      const curY = moveEvent.clientY - stageR.top;
-
-                      // Dynamically update rubberband source endpoint to track angle
-                      const srcRect = drag.sourceButton.getBoundingClientRect();
-                      const srcEntity = entityMap.get(drag.sourceEntityId);
-                      const srcPt = getEdgeAttachmentPoint(srcRect, stageR, curX, curY, isCircularTopologyEntity(srcEntity));
-                      rubberband.setAttribute("x1", String(srcPt.x));
-                      rubberband.setAttribute("y1", String(srcPt.y));
-
-                      const snapTarget = getTopologyNodeSnapTarget(moveEvent.clientX, moveEvent.clientY, entityId);
-                      drag.snapTarget = snapTarget;
-                      highlightTopologySnapTarget(snapTarget);
-
-                      if (snapTarget) {
-                          const targetBubble = stageEl.querySelector(`[data-topology-id="${CSS.escape(snapTarget.entityId)}"]`);
-                          if (targetBubble instanceof HTMLElement) {
-                              const tgtRect = targetBubble.getBoundingClientRect();
-                              const tgtEntity = entityMap.get(snapTarget.entityId);
-                              const fromCx = srcRect.left + srcRect.width / 2 - stageR.left;
-                              const fromCy = srcRect.top + srcRect.height / 2 - stageR.top;
-                              const snapPt = getEdgeAttachmentPoint(tgtRect, stageR, fromCx, fromCy, isCircularTopologyEntity(tgtEntity));
-                              rubberband.setAttribute("x2", String(snapPt.x));
-                              rubberband.setAttribute("y2", String(snapPt.y));
-                          } else {
-                              rubberband.setAttribute("x2", String(curX));
-                              rubberband.setAttribute("y2", String(curY));
-                          }
-                      } else {
-                          rubberband.setAttribute("x2", String(curX));
-                          rubberband.setAttribute("y2", String(curY));
-                      }
-                      moveEvent.preventDefault();
-                  };
-
-                  const endHandler = async (endEvent) => {
-                      const drag = topologyState.dragging;
-                      window.removeEventListener("pointermove", moveHandler);
-                      window.removeEventListener("pointerup", endHandler);
-                      window.removeEventListener("pointercancel", endHandler);
-                      rubberband.remove();
-                      highlightTopologySnapTarget(null);
-                      topologyState.dragging = null;
-
-                      if (!drag || drag.kind !== "link-create") {
-                          return;
-                      }
-
-                      const finalTarget = drag.snapTarget
-                          || getTopologyNodeSnapTarget(endEvent.clientX, endEvent.clientY, entityId);
-                      if (finalTarget?.entityId) {
-                          // Compute anchor keys from angle for DB compat
-                          const srcRect = drag.sourceButton.getBoundingClientRect();
-                          const tgtBubble = stageEl.querySelector(`[data-topology-id="${CSS.escape(finalTarget.entityId)}"]`);
-                          const tgtRect = tgtBubble?.getBoundingClientRect();
-                          const allKeys = ["n", "ne", "e", "se", "s", "sw", "w", "nw"];
-                          const srcCx = srcRect.left + srcRect.width / 2;
-                          const srcCy = srcRect.top + srcRect.height / 2;
-                          const tgtCx = tgtRect ? tgtRect.left + tgtRect.width / 2 : endEvent.clientX;
-                          const tgtCy = tgtRect ? tgtRect.top + tgtRect.height / 2 : endEvent.clientY;
-                          const srcAnchor = pickAnchorPointFromSet(srcCx, srcCy, tgtCx, tgtCy, allKeys);
-                          const tgtAnchor = pickAnchorPointFromSet(tgtCx, tgtCy, srcCx, srcCy, allKeys);
-
-                          const created = await createTopologyLink(
-                              drag.sourceEntityId,
-                              srcAnchor,
-                              finalTarget.entityId,
-                              tgtAnchor,
-                          );
-                          if (created) {
-                              await refreshTopologyData();
-                          }
-                          renderTopologyStage();
-                      } else {
-                          renderTopologyStage();
-                      }
-                      endEvent.preventDefault();
-                  };
-
-                  window.addEventListener("pointermove", moveHandler);
-                  window.addEventListener("pointerup", endHandler);
-                  window.addEventListener("pointercancel", endHandler);
-              });
-          }
+          // Link creation now handled via edge-distance check in the stage pointerdown handler
           button.addEventListener("click", (event) => {
               if (topologyState.editMode) {
                   const nextId = button.getAttribute("data-topology-id");
