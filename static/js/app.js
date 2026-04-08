@@ -9559,7 +9559,7 @@ function loadHealthPage() {
 
         const cs = data.chart_storage || {};
         document.getElementById("health-total-rows").textContent = _numberWithCommas(cs.total_rows || 0);
-        document.getElementById("health-est-size").textContent = _formatStorageSize(cs.estimated_bytes || 0);
+        document.getElementById("health-est-size").textContent = _formatStorageSize(cs.table_bytes || 0);
         document.getElementById("health-oldest").textContent = _formatEpoch(cs.oldest_timestamp);
         document.getElementById("health-newest").textContent = _formatEpoch(cs.newest_timestamp);
 

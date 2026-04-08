@@ -4,7 +4,7 @@ import socket
 from datetime import datetime
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
@@ -63,8 +63,14 @@ async def health_view(db: AsyncSession = Depends(get_db)) -> dict[str, object]:
         for r in per_node_rows
     ]
 
-    # Rough size estimate: ~120 bytes per row (int fields + JSON text avg)
-    estimated_bytes = total_rows * 120
+    # Actual PG table size (data + indexes + toast)
+    try:
+        table_bytes = (await db.scalar(text(
+            "SELECT pg_total_relation_size('chart_samples')"
+        ))) or 0
+    except Exception:
+        # Fallback for non-PG databases (e.g. SQLite in tests)
+        table_bytes = total_rows * 120
 
     # --- Node counts ---
     total_nodes = (await db.scalar(select(func.count(Node.id)))) or 0
@@ -87,7 +93,7 @@ async def health_view(db: AsyncSession = Depends(get_db)) -> dict[str, object]:
         },
         "chart_storage": {
             "total_rows": total_rows,
-            "estimated_bytes": estimated_bytes,
+            "table_bytes": table_bytes,
             "oldest_timestamp": oldest_ts,
             "newest_timestamp": newest_ts,
             "per_node": per_node,
