@@ -50,6 +50,12 @@
             {% endif %}
         </section>
 
+        {% if detail_kind == "discovered" and embedded %}
+        <div style="margin-bottom: 0.75rem; text-align: right;">
+            <button type="button" class="button-primary" id="promote-dn-button">Promote to Anchor Node</button>
+        </div>
+        {% endif %}
+
         <section class="card detail-header-card">
             <div class="detail-header-grid">
                 <div>

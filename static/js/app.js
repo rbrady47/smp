@@ -7625,11 +7625,13 @@ function initDnPromotion() {
                 { method: "POST", body: JSON.stringify(payload) },
             );
             // Success — redirect to the new anchor node detail page
+            // Use top-level window in case we're inside an iframe (embedded detail)
+            const nav = window.top || window;
             const newNodeId = result.node?.id;
             if (newNodeId) {
-                window.location.href = `/nodes/${newNodeId}`;
+                nav.location.href = `/nodes/${newNodeId}`;
             } else {
-                window.location.href = "/nodes";
+                nav.location.href = "/nodes";
             }
         } catch (err) {
             errorEl.textContent = err.message || "Promotion failed";
