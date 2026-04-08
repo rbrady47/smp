@@ -4,7 +4,7 @@
 
 SMP is a centralized dashboard, monitoring, and topology visualization platform for Seeker SDN nodes. It provides operators with real-time status, health monitoring, auto-discovery, and SNMPc-style authored operational maps.
 
-**Tech stack:** Python 3.11+ · FastAPI · SQLAlchemy 2.0 · PostgreSQL · Alembic · Jinja2 · vanilla JS/CSS frontend
+**Tech stack:** Python 3.11+ · FastAPI · Async SQLAlchemy 2.0 (`AsyncSession`) · PostgreSQL (psycopg 3.x async) · Alembic · Jinja2 · vanilla JS/CSS frontend
 
 **Status:** Prototype — actively evolving (current version ~v0.10)
 
@@ -79,17 +79,21 @@ DATABASE_URL="postgresql+psycopg://..." uvicorn app.main:app --host 127.0.0.1 --
 
 - **Framework:** Python `unittest` (no pytest)
 - **Location:** `tests/test_*.py`
-- **Database:** Tests use SQLite in-memory (`sqlite:///:memory:`) for isolation
+- **Database:** Tests use async SQLite in-memory (`sqlite+aiosqlite:///:memory:`) with `IsolatedAsyncioTestCase`
 - **Run all tests:** `python -m unittest discover -s tests`
 - **Always run tests and compile check before committing**
 
 ## Database
 
-- **Engine:** PostgreSQL (required for production; SQLite used in tests only)
+- **Engine:** PostgreSQL with async SQLAlchemy 2.0 (`create_async_engine` + `AsyncSession`)
+- **Driver:** psycopg 3.x in async mode (same `postgresql+psycopg://` URL for both sync Alembic and async app)
 - **ORM:** SQLAlchemy 2.0 with `Mapped[]` type annotations
-- **Migrations:** Alembic — migrations live in `alembic/versions/`
+- **Session:** `AsyncSessionLocal` with `expire_on_commit=False` — prevents detached-instance errors
+- **Dependency:** `async def get_db()` yields `AsyncSession` via `async with AsyncSessionLocal()`
+- **Migrations:** Alembic — uses its own sync engine via `engine_from_config()`, imports only `DATABASE_URL` and `Base`
 - **Connection:** Set `DATABASE_URL` environment variable (see `.env.example`)
 - **Key tables:** `nodes`, `discovered_nodes`, `discovered_node_observations`, `service_checks`, `node_relationships`, `topology_links`, `topology_editor_state`, `chart_samples`, `operational_map_*`
+- **CRITICAL:** All DB operations in async functions MUST be awaited (`await db.scalars()`, `await db.commit()`, etc.). Only `db.add()` remains sync. See `docs/CODE_DOCUMENTATION.md` Anti-Pattern #6.
 
 ### Creating Migrations
 
@@ -102,7 +106,7 @@ alembic upgrade head
 
 ### Python Style
 - **Type hints everywhere** — use Python 3.10+ union syntax (`str | None`, not `Optional[str]`)
-- **Async/await** for I/O-bound operations (ping, HTTP calls, polling)
+- **Async/await** for ALL I/O-bound operations (DB queries, ping, HTTP calls, polling)
 - **Pydantic models** with `ConfigDict(extra="forbid")` for strict validation
 - **SQLAlchemy mapped classes** with `Mapped[]` type annotations
 - **snake_case** for functions and variables; **PascalCase** for classes
@@ -112,7 +116,8 @@ alembic upgrade head
 - **Service layer:** `*_service.py` modules contain business logic
 - **Projection services:** `*_projection_service.py` build derived API views
 - **In-memory caches:** Dashboard backend maintains caches refreshed on intervals
-- **Dependency injection:** Database sessions via FastAPI `Depends(get_db)`
+- **Dependency injection:** `AsyncSession` via FastAPI `Depends(get_db)`
+- **Poller DB access:** `async with AsyncSessionLocal() as db:` — never use sync `SessionLocal`
 
 ### API Routes
 - RESTful JSON APIs under `/api/`
@@ -192,3 +197,5 @@ Every change must be fully documented for follow-on development and end users. T
 - Do not change the testing framework from unittest
 - Do not modify `alembic/env.py` without understanding the migration chain
 - Do not add unnecessary abstractions or speculative features
+- Do not use synchronous `create_engine` or `SessionLocal` in application code — all DB access must be async
+- Do not call `db.scalars()`, `db.commit()`, `db.execute()`, etc. without `await` in async functions

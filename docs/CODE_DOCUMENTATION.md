@@ -1,6 +1,6 @@
 # SMP Code Documentation
 
-> Current state as of 2026-04-06 — branch `main`
+> Current state as of 2026-04-08 — branch `async_SQLAlchemy_refactor`
 
 ---
 
@@ -24,7 +24,7 @@ Browser ──HTTP──> FastAPI (app/main.py)
                     │     └── pages.py    — /charts (Charts UI page)
                     ├── Background tasks (ping, Seeker polling, service checks)
                     ├── Redis pub/sub (state_manager.py)
-                    └── SQLAlchemy ──> PostgreSQL
+                    └── Async SQLAlchemy (AsyncSession) ──> PostgreSQL (psycopg async)
 ```
 
 ### Data Flow
@@ -83,7 +83,17 @@ All Seeker API rate fields (`txChanRate`, `rxChanRate`, `txTotRateIf`, `rxTotRat
 
 **Where enforced:** `app/seeker_api.py` — `normalize_bwv_stats()` and `_format_rate()` apply the x8 conversion.
 
-### 6. Seeker API: use single-session login
+### 6. NEVER use synchronous DB operations on the async event loop
+
+**Wrong:** Using `create_engine()` + `Session` in `async def` route handlers or pollers. Every `db.scalars()`, `db.commit()`, `db.execute()` blocks the entire event loop — no HTTP requests served during DB I/O.
+
+**Right:** Use `create_async_engine()` + `AsyncSession`. All DB calls must be awaited: `await db.scalars()`, `await db.commit()`, etc. Pollers use `async with AsyncSessionLocal() as db:` context managers.
+
+**Where enforced:** `app/db.py` exports only `async_engine`, `AsyncSessionLocal`, and async `get_db()`. The sync `SessionLocal` has been removed. Alembic creates its own sync engine independently.
+
+**History:** The original sync DB layer caused 15-20 second intermittent page load delays with 7 pollers executing 10+ blocking DB calls per second on a single-threaded uvicorn worker.
+
+### 7. Seeker API: use single-session login
 
 **Wrong:** Making 3 separate `seeker_post_bwv()` calls per node per cycle (each one logs in independently). With 20+ concurrent polls, this triggers Seeker rate limiting on the login endpoint.
 
@@ -95,9 +105,20 @@ All Seeker API rate fields (`txChanRate`, `rxChanRate`, `txTotRateIf`, `rxTotRat
 
 ## Backend Files
 
+### `app/db.py`
+
+Async database layer. Exports:
+- `DATABASE_URL` — from environment variable
+- `Base` — SQLAlchemy `DeclarativeBase` for all models
+- `async_engine` — `create_async_engine(DATABASE_URL, pool_pre_ping=True)`
+- `AsyncSessionLocal` — `async_sessionmaker(expire_on_commit=False)` producing `AsyncSession` instances
+- `get_db()` — async generator dependency for FastAPI route handlers
+
+Alembic uses its own sync engine via `engine_from_config()` — it imports only `DATABASE_URL` and `Base`.
+
 ### `app/main.py` (~220 lines)
 
-Thin application entry point. Creates a `PollerState` instance, initializes the `NodeDashboardBackend`, starts/stops background polling loops via a FastAPI lifespan context manager, and mounts route modules. Also exports backward-compatible wrapper functions so route modules can import directly from `app.main`.
+Thin application entry point. Creates a `PollerState` instance, initializes the `NodeDashboardBackend`, starts/stops background polling loops via a FastAPI lifespan context manager, and mounts route modules. Startup uses `async_engine` for `Base.metadata.create_all` via `conn.run_sync()`. Also exports backward-compatible wrapper functions so route modules can import directly from `app.main`.
 
 ### `app/state_manager.py`
 
@@ -128,9 +149,9 @@ Key functions: `update_node_state()`, `update_dn_state()`, `publish_service_stat
 
 `PollerState` dataclass holding all mutable in-memory state: 11 cache dicts (ping, seeker, services, DN ping) + 6 task handles (including `site_name_resolution_task`) + dashboard backend reference. A single instance (`_ps`) is created at module load in `main.py` and passed to every poller and service function.
 
-### `app/pollers/` (5 files)
+### `app/pollers/` (6 files)
 
-Background polling loops, each receiving `PollerState` as first parameter:
+Background polling loops, each receiving `PollerState` as first parameter. All DB access uses `async with AsyncSessionLocal() as db:` — fully non-blocking:
 
 | Module | Loop function | Interval | Purpose |
 |--------|--------------|----------|---------|
@@ -151,7 +172,7 @@ Also contains stateless helpers: `ping_host`, `check_tcp_port`, `compute_node_st
 
 ### `app/services/node_health.py`
 
-Node-level business logic: `serialize_node`, `refresh_nodes`, `get_node_or_404`, `request_node_telemetry`. Functions that take `PollerState` + DB session + Node and return serialized dicts.
+Node-level business logic: `serialize_node` (sync), `refresh_nodes` (async), `get_node_or_404` (async), `request_node_telemetry` (async). Functions that take `PollerState` + `AsyncSession` + `Node` and return serialized dicts. All DB-touching functions are async.
 
 ### `app/routes/` (10 files)
 

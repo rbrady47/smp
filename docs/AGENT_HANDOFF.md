@@ -8,6 +8,60 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-08 — Session: Async SQLAlchemy Migration
+
+### Branch / commit
+- Branch: `async_SQLAlchemy_refactor` (off `claude/seeker-charts-polling-UAgpt`)
+
+### What was built
+Complete migration from synchronous SQLAlchemy to async SQLAlchemy 2.0. All DB I/O is now non-blocking.
+
+### Architecture
+- **Engine**: `create_async_engine(DATABASE_URL, pool_pre_ping=True)` with `async_sessionmaker(expire_on_commit=False)`
+- **Route handlers**: All ~60 handlers use `db: AsyncSession = Depends(get_db)` with `await` on every DB call
+- **Service functions**: All ~30 service functions accept `AsyncSession`, return awaitable results
+- **Pollers**: All 6 pollers use `async with AsyncSessionLocal() as db:` — no more `asyncio.to_thread()` wrappers
+- **Alembic**: Untouched — creates its own sync engine via `engine_from_config()`, imports only `DATABASE_URL` and `Base`
+- **Tests**: Converted to `IsolatedAsyncioTestCase` with `aiosqlite` for async SQLite
+
+### Why
+The app had 7 background pollers executing 10+ synchronous DB calls per second on a single-threaded uvicorn event loop. Every `db.scalars()`, `db.commit()`, `db.execute()` blocked the event loop — HTTP requests queued behind poller operations, causing 15-20 second intermittent page load delays.
+
+### Key decisions
+- **Keep psycopg**: psycopg 3.x supports async natively with same `postgresql+psycopg://` URL — no driver change needed
+- **`expire_on_commit=False`**: Prevents detached-instance errors when accessing model attributes after commit
+- **No `relationship()`**: No lazy-loading concerns — all data access is explicit via queries
+- **Alembic isolation**: Alembic imports only `DATABASE_URL` and `Base`, builds its own sync engine — zero coupling to async migration
+
+### Files touched (25 files)
+- `app/db.py` — replaced sync engine/session with async equivalents
+- `app/main.py` — async startup `create_all`, async wrapper functions
+- `app/services/node_health.py` — `get_node_or_404`, `refresh_nodes` now async
+- `app/operational_map_service.py` — all 15 functions now async
+- `app/topology_editor_state_service.py` — 2 functions now async
+- `app/node_projection_service.py` — DB calls now awaited
+- `app/node_discovery_service.py` — discovery functions now async
+- `app/node_dashboard_backend.py` — 9 methods converted to async
+- `app/routes/{nodes,maps,services,dashboard,topology,discovery,charts,pages}.py` — all handlers converted
+- `app/pollers/{seeker,ping,services,dashboard,dn_seeker,charts}.py` — native AsyncSession
+- `requirements.txt` — added `aiosqlite`
+- `tests/test_{node_dashboard_backend,operational_map_service,topology_editor_state_service}.py` — async tests
+
+### Verification
+1. Docker build succeeds with `python -m compileall app tests alembic`
+2. Container starts, pollers cycle without errors (10 nodes in 3.0s)
+3. Page navigation dramatically faster — no more 15-20s delays
+4. Alembic `upgrade head` still works
+5. All API endpoints return 200
+
+### Gaps / next steps
+- **Remaining sync DB in routes**: Route handlers still run sync `db.add()` (which is fine — `add` doesn't do I/O) but the `get_db()` session scope means transactions are handled correctly
+- **Connection pool tuning**: Default pool size may need adjustment under higher load — monitor with `pool_size` and `max_overflow` params
+- **Data retention**: `chart_samples` table grows indefinitely — needs cleanup policy
+- **CDN vendoring**: Chart.js/jsPDF still loaded from CDN
+
+---
+
 ## 2026-04-08 — Session: DN Promotion to Anchor Node
 
 ### Branch / commit

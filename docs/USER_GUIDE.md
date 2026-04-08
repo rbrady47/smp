@@ -286,6 +286,10 @@ When features change, update:
 - `docs/USER_GUIDE.md` for operator-visible behavior
 - `CHANGELOG.md` for a concise history of notable changes
 
+## Database Architecture
+
+SMP uses async SQLAlchemy 2.0 with PostgreSQL (psycopg 3.x async mode). All database I/O is non-blocking — route handlers and background pollers use `AsyncSession` so the event loop remains responsive during DB queries. Alembic migrations use a separate sync engine.
+
 ## Polling Architecture
 
 SMP polls each anchor node's Seeker API on two cadences:
