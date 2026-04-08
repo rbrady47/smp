@@ -6781,38 +6781,56 @@ function initTopologyLinkContextMenu() {
         return;
     }
 
-    document.getElementById("topology-link-context-menu-close")?.addEventListener("click", () => {
-        closeTopologyLinkContextMenu();
-    });
+    const closeBtn = document.getElementById("topology-link-context-menu-close");
+    if (closeBtn) {
+        closeBtn.onclick = () => {
+            closeTopologyLinkContextMenu();
+        };
+    }
 
-    document.getElementById("topology-link-ctx-save")?.addEventListener("click", async () => {
-        const dbId = menu.dataset.dbId;
-        if (!dbId) {
-            return;
-        }
-        const linkType = document.getElementById("topology-link-ctx-type")?.value || "solid";
-        const statusNodeVal = document.getElementById("topology-link-ctx-status-node")?.value;
-        const statusNodeId = statusNodeVal ? Number(statusNodeVal) : null;
-        await updateTopologyLink(dbId, { link_type: linkType, status_node_id: statusNodeId });
-        closeTopologyLinkContextMenu();
-        await refreshTopologyData();
-        renderTopologyStage();
-    });
+    const saveBtn = document.getElementById("topology-link-ctx-save");
+    if (saveBtn) {
+        saveBtn.onclick = async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const dbId = menu.dataset.dbId;
+            if (!dbId) {
+                return;
+            }
+            const linkType = document.getElementById("topology-link-ctx-type")?.value || "solid";
+            const statusNodeVal = document.getElementById("topology-link-ctx-status-node")?.value;
+            const statusNodeId = statusNodeVal ? Number(statusNodeVal) : null;
+            await updateTopologyLink(dbId, { link_type: linkType, status_node_id: statusNodeId });
+            closeTopologyLinkContextMenu();
+            await refreshTopologyData();
+            renderTopologyStage();
+        };
+    }
 
-    document.getElementById("topology-link-ctx-delete")?.addEventListener("click", async () => {
-        const dbId = menu.dataset.dbId;
-        if (!dbId) {
-            return;
-        }
-        await deleteTopologyLink(dbId);
-        closeTopologyLinkContextMenu();
-        topologyState.selectedKind = null;
-        topologyState.selectedId = null;
-        topologyState.pinnedLinkTooltipId = null;
-        hideTopologyLinkTooltip();
-        await refreshTopologyData();
-        renderTopologyStage();
-    });
+    const deleteBtn = document.getElementById("topology-link-ctx-delete");
+    if (deleteBtn) {
+        deleteBtn.onclick = async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const dbId = menu.dataset.dbId;
+            if (!dbId) {
+                console.warn("[LinkConfig] Delete clicked but no dbId in menu dataset");
+                return;
+            }
+            console.log("[LinkConfig] Deleting link dbId=", dbId);
+            const ok = await deleteTopologyLink(dbId);
+            if (!ok) {
+                console.error("[LinkConfig] Delete API call failed for dbId=", dbId);
+            }
+            closeTopologyLinkContextMenu();
+            topologyState.selectedKind = null;
+            topologyState.selectedId = null;
+            topologyState.pinnedLinkTooltipId = null;
+            hideTopologyLinkTooltip();
+            await refreshTopologyData();
+            renderTopologyStage();
+        };
+    }
 
     document.addEventListener("pointerdown", (event) => {
         if (menu.hidden) {
