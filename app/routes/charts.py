@@ -16,62 +16,97 @@ BUCKET_SECONDS = 300  # 5-minute buckets for server-side downsampling
 
 
 def _bucket_samples(samples: list, bucket_size: int) -> list[dict]:
-    """Aggregate raw samples into time buckets with true averages.
+    """Aggregate raw samples into time buckets.
 
-    Groups samples by ``timestamp // bucket_size``, computes mean for
-    each numeric field, and merges tunnel/channel JSON into averaged
-    structures so the browser never parses raw JSON blobs.
+    Returns 3 rows per bucket (min, max, avg) so the frontend can
+    render envelope bands (min/max) with an average line through
+    the middle — same visual as raw data but with far fewer rows.
     """
     if not samples:
         return []
 
-    buckets: dict[int, dict] = {}  # bucket_ts → accumulator
+    buckets: dict[int, dict] = {}
 
     for s in samples:
         bts = (s.timestamp // bucket_size) * bucket_size
         if bts not in buckets:
             buckets[bts] = {
-                "timestamp": bts,
-                "count": 0,
-                "user_tx_bytes": 0, "user_tx_pkts": 0,
-                "user_rx_bytes": 0, "user_rx_pkts": 0,
-                "tunnels": defaultdict(lambda: {"tx": 0, "rx": 0, "delay_us": 0, "n": 0}),
-                "channels": defaultdict(lambda: {"tx": 0, "rx": 0, "n": 0}),
+                "timestamp": bts, "count": 0,
+                "tx_sum": 0, "tx_min": float("inf"), "tx_max": 0,
+                "rx_sum": 0, "rx_min": float("inf"), "rx_max": 0,
+                "txp_sum": 0, "txp_min": float("inf"), "txp_max": 0,
+                "rxp_sum": 0, "rxp_min": float("inf"), "rxp_max": 0,
+                "tunnels": defaultdict(lambda: {
+                    "tx_s": 0, "tx_mn": float("inf"), "tx_mx": 0,
+                    "rx_s": 0, "rx_mn": float("inf"), "rx_mx": 0,
+                    "dl_s": 0, "dl_mn": float("inf"), "dl_mx": 0, "n": 0,
+                }),
+                "channels": defaultdict(lambda: {
+                    "tx_s": 0, "tx_mn": float("inf"), "tx_mx": 0,
+                    "rx_s": 0, "rx_mn": float("inf"), "rx_mx": 0, "n": 0,
+                }),
             }
         b = buckets[bts]
         b["count"] += 1
-        if s.user_tx_bytes is not None:
-            b["user_tx_bytes"] += s.user_tx_bytes
-        if s.user_tx_pkts is not None:
-            b["user_tx_pkts"] += s.user_tx_pkts
-        if s.user_rx_bytes is not None:
-            b["user_rx_bytes"] += s.user_rx_bytes
-        if s.user_rx_pkts is not None:
-            b["user_rx_pkts"] += s.user_rx_pkts
+
+        v = s.user_tx_bytes or 0
+        b["tx_sum"] += v; b["tx_min"] = min(b["tx_min"], v); b["tx_max"] = max(b["tx_max"], v)
+        v = s.user_rx_bytes or 0
+        b["rx_sum"] += v; b["rx_min"] = min(b["rx_min"], v); b["rx_max"] = max(b["rx_max"], v)
+        v = s.user_tx_pkts or 0
+        b["txp_sum"] += v; b["txp_min"] = min(b["txp_min"], v); b["txp_max"] = max(b["txp_max"], v)
+        v = s.user_rx_pkts or 0
+        b["rxp_sum"] += v; b["rxp_min"] = min(b["rxp_min"], v); b["rxp_max"] = max(b["rxp_max"], v)
 
         if s.tunnel_data:
             try:
                 for t in json.loads(s.tunnel_data):
                     key = (t["site"], t["tunnel"])
-                    acc = b["tunnels"][key]
-                    acc["tx"] += t.get("tx", 0)
-                    acc["rx"] += t.get("rx", 0)
-                    acc["delay_us"] += t.get("delay_us", 0)
-                    acc["n"] += 1
+                    a = b["tunnels"][key]
+                    tv = t.get("tx", 0); a["tx_s"] += tv; a["tx_mn"] = min(a["tx_mn"], tv); a["tx_mx"] = max(a["tx_mx"], tv)
+                    rv = t.get("rx", 0); a["rx_s"] += rv; a["rx_mn"] = min(a["rx_mn"], rv); a["rx_mx"] = max(a["rx_mx"], rv)
+                    dv = t.get("delay_us", 0); a["dl_s"] += dv; a["dl_mn"] = min(a["dl_mn"], dv); a["dl_mx"] = max(a["dl_mx"], dv)
+                    a["n"] += 1
             except (json.JSONDecodeError, KeyError, TypeError):
                 pass
 
         if s.channel_data:
             try:
                 for c in json.loads(s.channel_data):
-                    acc = b["channels"][c["ch"]]
-                    acc["tx"] += c.get("tx", 0)
-                    acc["rx"] += c.get("rx", 0)
-                    acc["n"] += 1
+                    a = b["channels"][c["ch"]]
+                    tv = c.get("tx", 0); a["tx_s"] += tv; a["tx_mn"] = min(a["tx_mn"], tv); a["tx_mx"] = max(a["tx_mx"], tv)
+                    rv = c.get("rx", 0); a["rx_s"] += rv; a["rx_mn"] = min(a["rx_mn"], rv); a["rx_mx"] = max(a["rx_mx"], rv)
+                    a["n"] += 1
             except (json.JSONDecodeError, KeyError, TypeError):
                 pass
 
-    # Build output rows with averaged values and pre-serialized JSON
+    def _tun_json(b, mode):
+        out = []
+        for (site, tunnel), a in sorted(b["tunnels"].items()):
+            if a["n"] == 0:
+                continue
+            if mode == "avg":
+                out.append({"site": site, "tunnel": tunnel, "tx": a["tx_s"] // a["n"], "rx": a["rx_s"] // a["n"], "delay_us": a["dl_s"] // a["n"]})
+            elif mode == "min":
+                out.append({"site": site, "tunnel": tunnel, "tx": a["tx_mn"], "rx": a["rx_mn"], "delay_us": a["dl_mn"]})
+            else:
+                out.append({"site": site, "tunnel": tunnel, "tx": a["tx_mx"], "rx": a["rx_mx"], "delay_us": a["dl_mx"]})
+        return json.dumps(out) if out else None
+
+    def _ch_json(b, mode):
+        out = []
+        for ch in sorted(b["channels"]):
+            a = b["channels"][ch]
+            if a["n"] == 0:
+                continue
+            if mode == "avg":
+                out.append({"ch": ch, "tx": a["tx_s"] // a["n"], "rx": a["rx_s"] // a["n"]})
+            elif mode == "min":
+                out.append({"ch": ch, "tx": a["tx_mn"], "rx": a["rx_mn"]})
+            else:
+                out.append({"ch": ch, "tx": a["tx_mx"], "rx": a["rx_mx"]})
+        return json.dumps(out) if out else None
+
     result = []
     for bts in sorted(buckets):
         b = buckets[bts]
@@ -79,38 +114,22 @@ def _bucket_samples(samples: list, bucket_size: int) -> list[dict]:
         if n == 0:
             continue
 
-        # Average tunnel data
-        tunnel_list = []
-        for (site, tunnel), acc in sorted(b["tunnels"].items()):
-            if acc["n"] > 0:
-                tunnel_list.append({
-                    "site": site, "tunnel": tunnel,
-                    "tx": acc["tx"] // acc["n"],
-                    "rx": acc["rx"] // acc["n"],
-                    "delay_us": acc["delay_us"] // acc["n"],
-                })
-
-        # Average channel data
-        channel_list = []
-        for ch in sorted(b["channels"]):
-            acc = b["channels"][ch]
-            if acc["n"] > 0:
-                channel_list.append({
-                    "ch": ch,
-                    "tx": acc["tx"] // acc["n"],
-                    "rx": acc["rx"] // acc["n"],
-                })
-
-        result.append({
-            "timestamp": bts,
-            "sample_type": "avg",
-            "user_tx_bytes": b["user_tx_bytes"] // n,
-            "user_tx_pkts": b["user_tx_pkts"] // n,
-            "user_rx_bytes": b["user_rx_bytes"] // n,
-            "user_rx_pkts": b["user_rx_pkts"] // n,
-            "channel_data": json.dumps(channel_list) if channel_list else None,
-            "tunnel_data": json.dumps(tunnel_list) if tunnel_list else None,
-        })
+        # Emit min, max, avg rows — frontend pairs min/max for envelope
+        for stype, tx, rx, txp, rxp in [
+            ("min", b["tx_min"], b["rx_min"], b["txp_min"], b["rxp_min"]),
+            ("max", b["tx_max"], b["rx_max"], b["txp_max"], b["rxp_max"]),
+            ("raw", b["tx_sum"] // n, b["rx_sum"] // n, b["txp_sum"] // n, b["rxp_sum"] // n),
+        ]:
+            result.append({
+                "timestamp": bts,
+                "sample_type": stype,
+                "user_tx_bytes": int(tx) if tx != float("inf") else 0,
+                "user_tx_pkts": int(txp) if txp != float("inf") else 0,
+                "user_rx_bytes": int(rx) if rx != float("inf") else 0,
+                "user_rx_pkts": int(rxp) if rxp != float("inf") else 0,
+                "channel_data": _ch_json(b, stype if stype != "raw" else "avg"),
+                "tunnel_data": _tun_json(b, stype if stype != "raw" else "avg"),
+            })
 
     return result
 
