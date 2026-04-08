@@ -2011,6 +2011,7 @@ function wireTopologyLayoutEditor(stage, layer, entityMap) {
                 const tgtCy = tgtRect ? tgtRect.top + tgtRect.height / 2 : endEvent.clientY;
                 const srcAnchor = pickAnchorPointFromSet(srcCx, srcCy, tgtCx, tgtCy, allKeys);
                 const tgtAnchor = pickAnchorPointFromSet(tgtCx, tgtCy, srcCx, srcCy, allKeys);
+                _topologyRefreshCooldownUntil = Date.now() + 3000;
                 const created = await createTopologyLink(drag.sourceEntityId, srcAnchor, finalTarget.entityId, tgtAnchor);
                 if (created) await refreshTopologyData();
                 renderTopologyStage();
@@ -6809,6 +6810,7 @@ function initTopologyLinkContextMenu() {
             const statusNodeVal = document.getElementById("topology-link-ctx-status-node")?.value;
             const statusNodeId = statusNodeVal ? Number(statusNodeVal) : null;
             closeTopologyLinkContextMenu();
+            _topologyRefreshCooldownUntil = Date.now() + 3000;
             await updateTopologyLink(dbId, { link_type: linkType, status_node_id: statusNodeId });
             await refreshTopologyData();
             renderTopologyStage();
@@ -6830,6 +6832,9 @@ function initTopologyLinkContextMenu() {
             topologyState.selectedId = null;
             topologyState.pinnedLinkTooltipId = null;
             hideTopologyLinkTooltip();
+            // Block SSE/timer refreshes before the API call to prevent
+            // stale data from overwriting our post-delete fetch
+            _topologyRefreshCooldownUntil = Date.now() + 3000;
             await deleteTopologyLink(dbId);
             await refreshTopologyData();
             renderTopologyStage();
@@ -7863,6 +7868,11 @@ async function refreshTopologyPage() {
             apiRequest("/api/dashboard/services"),
         ]);
 
+        // Abort if a user-initiated refresh started while we were fetching
+        if (_topologyRefreshLock || Date.now() < _topologyRefreshCooldownUntil) {
+            return;
+        }
+
         if (topologyResult.status === "fulfilled") {
             topologyPayload = topologyResult.value;
         }
@@ -7909,6 +7919,11 @@ async function refreshTopologyStructure() {
             apiRequest(buildNodeDashboardRequestUrl("/api/topology/discovery")),
             apiRequest("/api/dashboard/services"),
         ]);
+
+        // Abort if a user-initiated refresh started while we were fetching
+        if (_topologyRefreshLock || Date.now() < _topologyRefreshCooldownUntil) {
+            return;
+        }
 
         if (topologyResult.status === "fulfilled") {
             topologyPayload = topologyResult.value;
