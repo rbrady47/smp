@@ -30,9 +30,7 @@ logger = logging.getLogger(__name__)
 
 CHARTS_POLL_INTERVAL_SECONDS = 60.0
 CHARTS_POLL_CONCURRENCY = 10
-CHARTS_DECIMATION_FACTOR = 30       # 30-second buckets → 2 rows (min+max) per bucket
-CHARTS_ENTRIES_PER_REQUEST = 65     # entries to request for decimated fetch
-CHARTS_RAW_ENTRIES = 30             # raw 1-second entries per poll for accurate averages
+CHARTS_ENTRIES_PER_REQUEST = 30     # most recent 30 seconds of raw data per poll
 
 
 def _safe_int(value: str | None) -> int | None:
@@ -193,65 +191,29 @@ async def _poll_node_chart_stats(
 ) -> None:
     """Fetch and store chart stats for a single node.
 
-    Two fetches per cycle:
-    1. Decimated (df=30): min/max envelope data for visualization
-    2. Raw (df=0, 30 entries): accurate per-second samples for reporting
+    Single fetch: startTime=0 (Seeker auto-computes now - entries),
+    entries=30. Returns the most recent 30 seconds of raw per-second
+    data. No cursor tracking needed — duplicates handled by ON CONFLICT.
     """
-    # --- Fetch 1: Decimated min/max for chart envelopes ---
-    last_le = ps.charts_last_le.get(node.id)
-    start_time = (last_le + 1) if last_le is not None else 0
-
     result = await get_bwv_chart_stats(
         node,
-        start_time=start_time,
+        start_time=0,
         entries=CHARTS_ENTRIES_PER_REQUEST,
-        df=CHARTS_DECIMATION_FACTOR,
     )
 
     if result.get("status") != "ok":
         logger.warning(
-            "Chart stats (decimated) fetch failed for node %s (id=%d): %s",
+            "Chart stats fetch failed for node %s (id=%d): %s",
             node.name, node.id, result.get("message", "unknown error"),
         )
-    else:
-        raw = result.get("raw") or {}
-        log_entries_str = raw.get("logEntries", "")
-        le = _safe_int(raw.get("le"))
+        return
 
-        if log_entries_str:
-            rows = parse_log_entries(log_entries_str, node.id, decimated=True)
-            _insert_rows(rows, node.name, node.id)
+    raw = result.get("raw") or {}
+    log_entries_str = raw.get("logEntries", "")
 
-        if le is not None:
-            ps.charts_last_le[node.id] = le
-
-    # --- Fetch 2: Raw samples for accurate averages ---
-    raw_last_le = ps.charts_raw_last_le.get(node.id)
-    raw_start = (raw_last_le + 1) if raw_last_le is not None else 0
-
-    raw_result = await get_bwv_chart_stats(
-        node,
-        start_time=raw_start,
-        entries=CHARTS_RAW_ENTRIES,
-        df=0,
-    )
-
-    if raw_result.get("status") != "ok":
-        logger.warning(
-            "Chart stats (raw) fetch failed for node %s (id=%d): %s",
-            node.name, node.id, raw_result.get("message", "unknown error"),
-        )
-    else:
-        raw_data = raw_result.get("raw") or {}
-        raw_log = raw_data.get("logEntries", "")
-        raw_le = _safe_int(raw_data.get("le"))
-
-        if raw_log:
-            raw_rows = parse_log_entries(raw_log, node.id, decimated=False)
-            _insert_rows(raw_rows, node.name, node.id)
-
-        if raw_le is not None:
-            ps.charts_raw_last_le[node.id] = raw_le
+    if log_entries_str:
+        rows = parse_log_entries(log_entries_str, node.id)
+        _insert_rows(rows, node.name, node.id)
 
 
 async def charts_polling_loop(ps: PollerState) -> None:
