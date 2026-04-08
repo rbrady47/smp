@@ -4794,12 +4794,17 @@ function getTopologyEntities() {
     // Auto-place AN nodes that have include_in_topology but no saved layout
     const isMainMap = !document.getElementById("topology-root")?.getAttribute("data-map-view-id");
     if (isMainMap) {
+        let didAutoPlace = false;
         for (const entity of authoredEntities) {
             if (entity.kind === "services-cloud" || entity.kind === "submap") continue;
             if (entity.include_in_topology && !topologyState.layoutOverrides?.[entity.id]) {
                 const pos = getTopologyNodePosition(entity);
-                setTopologyEntityLayout(entity.id, { x: pos.x, y: pos.y, size: getTopologyBubbleSize(entity, 0) });
+                setTopologyEntityLayout(entity.id, { x: pos.x, y: pos.y, size: getTopologyBubbleSize(entity, 0) }, { persist: false });
+                didAutoPlace = true;
             }
+        }
+        if (didAutoPlace) {
+            saveTopologyLayoutOverrides();
         }
     }
 

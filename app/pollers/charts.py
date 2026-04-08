@@ -213,7 +213,7 @@ async def _poll_node_chart_stats(
 
     if log_entries_str:
         rows = parse_log_entries(log_entries_str, node.id)
-        _insert_rows(rows, node.name, node.id)
+        await asyncio.to_thread(_insert_rows, rows, node.name, node.id)
 
 
 async def charts_polling_loop(ps: PollerState) -> None:
@@ -225,11 +225,14 @@ async def charts_polling_loop(ps: PollerState) -> None:
     while True:
         t0 = time.monotonic()
         try:
-            db = SessionLocal()
-            try:
-                nodes = db.scalars(select(Node).order_by(Node.id)).all()
-            finally:
-                db.close()
+            def _query_nodes():
+                db = SessionLocal()
+                try:
+                    return db.scalars(select(Node).order_by(Node.id)).all()
+                finally:
+                    db.close()
+
+            nodes = await asyncio.to_thread(_query_nodes)
 
             enabled_nodes = [
                 node for node in nodes
