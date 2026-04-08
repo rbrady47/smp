@@ -9507,9 +9507,10 @@ let _chartPackets = null;
 let _chartChannel = null;
 let _chartSiteInstances = [];  // Array of {chart, siteId, title} for per-site charts
 let _chartsSelectedNodeId = null;
-/* ── Health page ────────────────────────────────────────── */
+/* ── Diag page ─────────────────────────────────────────── */
 
 function _formatStorageSize(bytes) {
+    if (bytes == null) return "--";
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -9525,23 +9526,45 @@ function _formatTimeSpan(seconds) {
 
 function _formatEpoch(ts) {
     if (!ts) return "--";
-    const d = new Date(ts * 1000);
-    return d.toLocaleString();
+    return new Date(ts * 1000).toLocaleString();
 }
 
 function _numberWithCommas(n) {
     return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
-function _applyStorageChipColor(chipEl, totalRows) {
-    chipEl.classList.remove("healthy", "degraded", "failed");
-    if (totalRows > 5000000) {
-        chipEl.classList.add("failed");
-    } else if (totalRows > 1000000) {
-        chipEl.classList.add("degraded");
-    } else {
-        chipEl.classList.add("healthy");
-    }
+function _diagBadgeClass(pct) {
+    if (pct == null) return "";
+    if (pct >= 90) return "badge-crit";
+    if (pct >= 70) return "badge-warn";
+    return "badge-ok";
+}
+
+function _diagBarClass(pct) {
+    if (pct == null) return "bar-ok";
+    if (pct >= 90) return "bar-crit";
+    if (pct >= 70) return "bar-warn";
+    return "bar-ok";
+}
+
+function _storageBadgeClass(totalRows) {
+    if (totalRows > 5000000) return "badge-crit";
+    if (totalRows > 1000000) return "badge-warn";
+    return "badge-ok";
+}
+
+function _openDiagModal(name) {
+    const modal = document.getElementById(`diag-${name}-modal`);
+    if (!modal) return;
+    modal.hidden = false;
+    document.body.classList.add("modal-open");
+}
+
+function _closeDiagModal(name) {
+    const modal = document.getElementById(`diag-${name}-modal`);
+    if (!modal) return;
+    modal.hidden = true;
+    document.body.classList.remove("modal-open");
 }
 
 function loadHealthPage() {
@@ -9550,54 +9573,161 @@ function loadHealthPage() {
 
     const refreshBtn = document.getElementById("health-refresh-button");
 
+    // Wire card clicks
+    const cardMap = { "diag-card-storage": "storage", "diag-card-cpu": "cpu", "diag-card-memory": "memory" };
+    for (const [cardId, modalName] of Object.entries(cardMap)) {
+        const card = document.getElementById(cardId);
+        if (card) {
+            card.addEventListener("click", () => _openDiagModal(modalName));
+            card.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); _openDiagModal(modalName); } });
+        }
+    }
+
+    // Wire modal close (backdrop click, close button, ESC)
+    for (const name of ["storage", "cpu", "memory"]) {
+        const modal = document.getElementById(`diag-${name}-modal`);
+        if (!modal) continue;
+        modal.addEventListener("click", (e) => {
+            if (e.target instanceof HTMLElement && e.target.dataset.diagClose === name) {
+                _closeDiagModal(name);
+            }
+        });
+    }
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+            for (const name of ["storage", "cpu", "memory"]) {
+                const modal = document.getElementById(`diag-${name}-modal`);
+                if (modal && !modal.hidden) { _closeDiagModal(name); break; }
+            }
+        }
+    });
+
     function renderHealth(data) {
+        // Summary bar
         document.getElementById("health-status").textContent = data.status === "ok" ? "Healthy" : data.status;
         document.getElementById("health-hostname").textContent = data.hostname || "--";
         document.getElementById("health-node-count").textContent = data.nodes?.total ?? "--";
         document.getElementById("health-charts-enabled").textContent = data.nodes?.charts_enabled ?? "--";
         document.getElementById("health-last-check").textContent = new Date(data.time).toLocaleTimeString();
 
+        // --- Storage card ---
         const cs = data.chart_storage || {};
-        document.getElementById("health-total-rows").textContent = _numberWithCommas(cs.total_rows || 0);
-        document.getElementById("health-est-size").textContent = _formatStorageSize(cs.table_bytes || 0);
-        document.getElementById("health-oldest").textContent = _formatEpoch(cs.oldest_timestamp);
-        document.getElementById("health-newest").textContent = _formatEpoch(cs.newest_timestamp);
+        const storageStat = document.getElementById("diag-storage-stat");
+        const storageSub = document.getElementById("diag-storage-sub");
+        const storageBadge = document.getElementById("diag-storage-badge");
+        storageStat.textContent = _formatStorageSize(cs.table_bytes);
+        storageSub.textContent = `${_numberWithCommas(cs.total_rows || 0)} rows`;
+        storageBadge.className = `diag-card-badge ${_storageBadgeClass(cs.total_rows || 0)}`;
 
-        const chipRows = document.getElementById("health-chip-rows");
-        const chipSize = document.getElementById("health-chip-size");
-        if (chipRows) _applyStorageChipColor(chipRows, cs.total_rows || 0);
-        if (chipSize) _applyStorageChipColor(chipSize, cs.total_rows || 0);
+        // Storage modal detail
+        const _set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+        _set("diag-modal-total-rows", _numberWithCommas(cs.total_rows || 0));
+        _set("diag-modal-table-size", _formatStorageSize(cs.table_bytes));
+        _set("diag-modal-oldest", _formatEpoch(cs.oldest_timestamp));
+        _set("diag-modal-newest", _formatEpoch(cs.newest_timestamp));
+        _set("diag-modal-span", (cs.oldest_timestamp && cs.newest_timestamp)
+            ? _formatTimeSpan(cs.newest_timestamp - cs.oldest_timestamp) : "--");
 
-        if (cs.oldest_timestamp && cs.newest_timestamp) {
-            const span = cs.newest_timestamp - cs.oldest_timestamp;
-            document.getElementById("health-span").textContent = _formatTimeSpan(span);
-        } else {
-            document.getElementById("health-span").textContent = "--";
+        const tbody = document.getElementById("diag-modal-per-node-body");
+        if (tbody) {
+            if (!cs.per_node || cs.per_node.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" class="table-message">No chart data collected yet</td></tr>';
+            } else {
+                tbody.innerHTML = cs.per_node.map(n => {
+                    const span = (n.newest_timestamp && n.oldest_timestamp)
+                        ? _formatTimeSpan(n.newest_timestamp - n.oldest_timestamp) : "--";
+                    return `<tr>
+                        <td>${n.node_name}</td>
+                        <td>${_numberWithCommas(n.sample_count)}</td>
+                        <td>${_formatEpoch(n.oldest_timestamp)}</td>
+                        <td>${_formatEpoch(n.newest_timestamp)}</td>
+                        <td>${span}</td>
+                    </tr>`;
+                }).join("");
+            }
         }
 
-        // Per-node table
-        const tbody = document.getElementById("health-per-node-body");
-        if (!cs.per_node || cs.per_node.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" class="table-message">No chart data collected yet</td></tr>';
-        } else {
-            tbody.innerHTML = cs.per_node.map(n => {
-                const span = (n.newest_timestamp && n.oldest_timestamp)
-                    ? _formatTimeSpan(n.newest_timestamp - n.oldest_timestamp) : "--";
-                return `<tr>
-                    <td>${n.node_name}</td>
-                    <td>${_numberWithCommas(n.sample_count)}</td>
-                    <td>${_formatEpoch(n.oldest_timestamp)}</td>
-                    <td>${_formatEpoch(n.newest_timestamp)}</td>
-                    <td>${span}</td>
-                </tr>`;
-            }).join("");
+        // --- CPU card ---
+        const cpu = data.cpu || {};
+        const cpuPct = cpu.usage_pct;
+        document.getElementById("diag-cpu-stat").textContent = cpuPct != null ? `${cpuPct}%` : "--";
+        document.getElementById("diag-cpu-sub").textContent = cpu.cpu_count != null ? `${cpu.cpu_count} cores` : "load average";
+        const cpuBadge = document.getElementById("diag-cpu-badge");
+        cpuBadge.className = `diag-card-badge ${_diagBadgeClass(cpuPct)}`;
+
+        // CPU modal detail
+        _set("diag-modal-cpu-usage", cpuPct != null ? `${cpuPct}%` : "--");
+        _set("diag-modal-cpu-cores", cpu.cpu_count ?? "--");
+        _set("diag-modal-cpu-load1", cpu.load_1m != null ? cpu.load_1m.toFixed(2) : "--");
+        _set("diag-modal-cpu-load5", cpu.load_5m != null ? cpu.load_5m.toFixed(2) : "--");
+        _set("diag-modal-cpu-load15", cpu.load_15m != null ? cpu.load_15m.toFixed(2) : "--");
+
+        const cpuUsageChip = document.getElementById("diag-modal-cpu-usage-chip");
+        if (cpuUsageChip) {
+            cpuUsageChip.classList.remove("healthy", "degraded", "failed");
+            if (cpuPct >= 90) cpuUsageChip.classList.add("failed");
+            else if (cpuPct >= 70) cpuUsageChip.classList.add("degraded");
+            else cpuUsageChip.classList.add("healthy");
         }
 
-        // Pollers
+        const cpuBar = document.getElementById("diag-modal-cpu-bar");
+        const cpuBarLabel = document.getElementById("diag-modal-cpu-bar-label");
+        if (cpuBar) {
+            const pct = Math.min(cpuPct || 0, 100);
+            cpuBar.style.width = `${pct}%`;
+            cpuBar.className = `diag-bar-fill ${_diagBarClass(cpuPct)}`;
+        }
+        if (cpuBarLabel) cpuBarLabel.textContent = cpuPct != null ? `${cpuPct}%` : "--%";
+
+        // --- Memory card ---
+        const mem = data.memory || {};
+        const memPct = mem.usage_pct;
+        document.getElementById("diag-mem-stat").textContent = memPct != null ? `${memPct}%` : "--";
+        document.getElementById("diag-mem-sub").textContent = mem.total_bytes != null
+            ? `${_formatStorageSize(mem.used_bytes)} / ${_formatStorageSize(mem.total_bytes)}` : "RAM usage";
+        const memBadge = document.getElementById("diag-mem-badge");
+        memBadge.className = `diag-card-badge ${_diagBadgeClass(memPct)}`;
+
+        // Memory modal detail
+        _set("diag-modal-mem-usage", memPct != null ? `${memPct}%` : "--");
+        _set("diag-modal-mem-total", _formatStorageSize(mem.total_bytes));
+        _set("diag-modal-mem-used", _formatStorageSize(mem.used_bytes));
+        _set("diag-modal-mem-available", _formatStorageSize(mem.available_bytes));
+        _set("diag-modal-swap-used", _formatStorageSize(mem.swap_used_bytes));
+
+        const memUsageChip = document.getElementById("diag-modal-mem-usage-chip");
+        if (memUsageChip) {
+            memUsageChip.classList.remove("healthy", "degraded", "failed");
+            if (memPct >= 90) memUsageChip.classList.add("failed");
+            else if (memPct >= 70) memUsageChip.classList.add("degraded");
+            else memUsageChip.classList.add("healthy");
+        }
+
+        const memBar = document.getElementById("diag-modal-mem-bar");
+        const memBarLabel = document.getElementById("diag-modal-mem-bar-label");
+        if (memBar) {
+            const pct = Math.min(memPct || 0, 100);
+            memBar.style.width = `${pct}%`;
+            memBar.className = `diag-bar-fill ${_diagBarClass(memPct)}`;
+        }
+        if (memBarLabel) memBarLabel.textContent = memPct != null ? `${memPct}%` : "--%";
+
+        // Swap bar
+        const swapPct = (mem.swap_total_bytes && mem.swap_total_bytes > 0)
+            ? Math.round(mem.swap_used_bytes / mem.swap_total_bytes * 100) : 0;
+        const swapBar = document.getElementById("diag-modal-swap-bar");
+        const swapBarLabel = document.getElementById("diag-modal-swap-bar-label");
+        if (swapBar) {
+            swapBar.style.width = `${Math.min(swapPct, 100)}%`;
+            swapBar.className = `diag-bar-fill ${_diagBarClass(swapPct)}`;
+        }
+        if (swapBarLabel) swapBarLabel.textContent = `${swapPct}%`;
+
+        // --- Pollers ---
         const p = data.pollers || {};
-        document.getElementById("health-poller-seeker").textContent = p.seeker_interval_s ? `${p.seeker_interval_s}s` : "--";
-        document.getElementById("health-poller-charts").textContent = p.charts_interval_s ? `${p.charts_interval_s}s` : "--";
-        document.getElementById("health-poller-services").textContent = p.services_interval_s ? `${p.services_interval_s}s` : "--";
+        _set("health-poller-seeker", p.seeker_interval_s ? `${p.seeker_interval_s}s` : "--");
+        _set("health-poller-charts", p.charts_interval_s ? `${p.charts_interval_s}s` : "--");
+        _set("health-poller-services", p.services_interval_s ? `${p.services_interval_s}s` : "--");
 
         document.getElementById("health-error").hidden = true;
     }

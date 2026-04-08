@@ -1,5 +1,6 @@
 """System routes — /api/status, /api/health."""
 
+import os
 import socket
 from datetime import datetime
 
@@ -11,6 +12,55 @@ from app.db import get_db
 from app.models import ChartSample, Node
 
 router = APIRouter(prefix="/api")
+
+
+def _read_proc_cpu() -> dict[str, object]:
+    """Read CPU usage from /proc/stat (Linux only)."""
+    try:
+        with open("/proc/loadavg") as f:
+            parts = f.read().strip().split()
+        load_1, load_5, load_15 = float(parts[0]), float(parts[1]), float(parts[2])
+        cpu_count = os.cpu_count() or 1
+        return {
+            "load_1m": load_1,
+            "load_5m": load_5,
+            "load_15m": load_15,
+            "cpu_count": cpu_count,
+            "usage_pct": round(min(load_1 / cpu_count * 100, 100), 1),
+        }
+    except Exception:
+        return {"load_1m": None, "load_5m": None, "load_15m": None, "cpu_count": None, "usage_pct": None}
+
+
+def _read_proc_memory() -> dict[str, object]:
+    """Read memory stats from /proc/meminfo (Linux only)."""
+    try:
+        info: dict[str, int] = {}
+        with open("/proc/meminfo") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 2:
+                    key = parts[0].rstrip(":")
+                    info[key] = int(parts[1]) * 1024  # kB -> bytes
+        total = info.get("MemTotal", 0)
+        available = info.get("MemAvailable", 0)
+        used = total - available
+        swap_total = info.get("SwapTotal", 0)
+        swap_free = info.get("SwapFree", 0)
+        swap_used = swap_total - swap_free
+        return {
+            "total_bytes": total,
+            "used_bytes": used,
+            "available_bytes": available,
+            "usage_pct": round(used / total * 100, 1) if total else 0,
+            "swap_total_bytes": swap_total,
+            "swap_used_bytes": swap_used,
+        }
+    except Exception:
+        return {
+            "total_bytes": None, "used_bytes": None, "available_bytes": None,
+            "usage_pct": None, "swap_total_bytes": None, "swap_used_bytes": None,
+        }
 
 
 @router.get("/status")
@@ -25,7 +75,7 @@ async def status_view() -> dict[str, str]:
 
 @router.get("/health")
 async def health_view(db: AsyncSession = Depends(get_db)) -> dict[str, object]:
-    """Platform health with chart storage metrics and poller status."""
+    """Platform health with chart storage, CPU, memory, and poller status."""
 
     # --- Chart storage stats ---
     total_rows = (await db.scalar(select(func.count(ChartSample.id)))) or 0
@@ -78,7 +128,7 @@ async def health_view(db: AsyncSession = Depends(get_db)) -> dict[str, object]:
         await db.scalar(select(func.count(Node.id)).where(Node.charts_enabled.is_(True)))
     ) or 0
 
-    # --- Poller status (import cycle times from pollers) ---
+    # --- Poller status ---
     from app.pollers.seeker import SEEKER_POLL_INTERVAL_SECONDS
     from app.pollers.charts import CHARTS_POLL_INTERVAL_SECONDS
     from app.pollers.services import SERVICE_POLL_INTERVAL_SECONDS
@@ -91,6 +141,8 @@ async def health_view(db: AsyncSession = Depends(get_db)) -> dict[str, object]:
             "total": total_nodes,
             "charts_enabled": charts_enabled_nodes,
         },
+        "cpu": _read_proc_cpu(),
+        "memory": _read_proc_memory(),
         "chart_storage": {
             "total_rows": total_rows,
             "table_bytes": table_bytes,

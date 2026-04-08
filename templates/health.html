@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ page_title }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260408-health1">
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}?v=20260408-diag2">
 </head>
 <body>
     <header class="topbar">
@@ -25,7 +25,7 @@
             <div>
                 <p class="eyebrow">Platform Diagnostics</p>
                 <h1>System Health</h1>
-                <p class="subtitle">Storage usage, poller status, and platform diagnostics at a glance.</p>
+                <p class="subtitle">Click a card for details.</p>
             </div>
             <div class="dashboard-toolbar-actions">
                 <button type="button" class="button-secondary" id="health-refresh-button">Refresh</button>
@@ -55,67 +55,60 @@
             </div>
         </section>
 
-        <section class="card">
-            <div class="inventory-header">
-                <div>
-                    <p class="eyebrow">Storage</p>
-                    <h2>Chart Data Usage</h2>
-                    <p class="section-copy">Accumulated time-series data from bwvChartStats polling. Each row stores one second of traffic counters per node.</p>
+        <!-- 3 clickable cards -->
+        <section class="diag-card-grid">
+            <article class="diag-card" id="diag-card-storage" tabindex="0" role="button" aria-label="View storage details">
+                <div class="diag-card-icon">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <ellipse cx="12" cy="5" rx="9" ry="3"/>
+                        <path d="M21 12c0 1.66-4.03 3-9 3s-9-1.34-9-3"/>
+                        <path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/>
+                    </svg>
                 </div>
-            </div>
+                <h2 class="diag-card-title">Storage</h2>
+                <div class="diag-card-stat" id="diag-storage-stat">--</div>
+                <div class="diag-card-sub" id="diag-storage-sub">chart_samples table</div>
+                <div class="diag-card-badge" id="diag-storage-badge"></div>
+            </article>
 
-            <div class="services-summary" id="health-storage-summary">
-                <div class="services-summary-chip" id="health-chip-rows">
-                    <span class="services-summary-label">Total Rows</span>
-                    <strong id="health-total-rows">--</strong>
+            <article class="diag-card" id="diag-card-cpu" tabindex="0" role="button" aria-label="View CPU details">
+                <div class="diag-card-icon">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="4" y="4" width="16" height="16" rx="2"/>
+                        <rect x="9" y="9" width="6" height="6"/>
+                        <path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/>
+                    </svg>
                 </div>
-                <div class="services-summary-chip" id="health-chip-size">
-                    <span class="services-summary-label">Table Size</span>
-                    <strong id="health-est-size">--</strong>
-                </div>
-                <div class="services-summary-chip">
-                    <span class="services-summary-label">Oldest Sample</span>
-                    <strong id="health-oldest">--</strong>
-                </div>
-                <div class="services-summary-chip">
-                    <span class="services-summary-label">Newest Sample</span>
-                    <strong id="health-newest">--</strong>
-                </div>
-                <div class="services-summary-chip">
-                    <span class="services-summary-label">Time Span</span>
-                    <strong id="health-span">--</strong>
-                </div>
-            </div>
+                <h2 class="diag-card-title">CPU</h2>
+                <div class="diag-card-stat" id="diag-cpu-stat">--</div>
+                <div class="diag-card-sub" id="diag-cpu-sub">load average</div>
+                <div class="diag-card-badge" id="diag-cpu-badge"></div>
+            </article>
 
-            <div class="table-wrap" style="margin-top: 1rem;">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>Node</th>
-                            <th>Samples</th>
-                            <th>Oldest</th>
-                            <th>Newest</th>
-                            <th>Span</th>
-                        </tr>
-                    </thead>
-                    <tbody id="health-per-node-body">
-                        <tr>
-                            <td colspan="5" class="table-message">Loading...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
+            <article class="diag-card" id="diag-card-memory" tabindex="0" role="button" aria-label="View memory details">
+                <div class="diag-card-icon">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="2" y="6" width="20" height="12" rx="2"/>
+                        <path d="M6 6v-2M10 6v-2M14 6v-2M18 6v-2M6 18v2M10 18v2M14 18v2M18 18v2"/>
+                        <rect x="5" y="9" width="4" height="6" rx="0.5"/>
+                        <rect x="11" y="9" width="4" height="6" rx="0.5"/>
+                    </svg>
+                </div>
+                <h2 class="diag-card-title">Memory</h2>
+                <div class="diag-card-stat" id="diag-mem-stat">--</div>
+                <div class="diag-card-sub" id="diag-mem-sub">RAM usage</div>
+                <div class="diag-card-badge" id="diag-mem-badge"></div>
+            </article>
         </section>
 
+        <!-- Pollers summary -->
         <section class="card">
             <div class="inventory-header">
                 <div>
                     <p class="eyebrow">Background Tasks</p>
                     <h2>Poller Intervals</h2>
-                    <p class="section-copy">Configured polling cadences for background data collection.</p>
                 </div>
             </div>
-
             <div class="services-summary" id="health-poller-summary">
                 <div class="services-summary-chip">
                     <span class="services-summary-label">Seeker Poll</span>
@@ -135,6 +128,163 @@
         <p id="health-error" class="status-error" hidden>Unable to load health data</p>
     </main>
 
-    <script src="{{ url_for('static', path='js/app.js') }}?v=20260408-health1"></script>
+    <!-- Storage detail modal -->
+    <div class="modal-shell" id="diag-storage-modal" hidden>
+        <div class="modal-backdrop" data-diag-close="storage"></div>
+        <section class="modal-card diag-detail-card" role="dialog" aria-modal="true" aria-labelledby="diag-storage-modal-title">
+            <div class="inventory-header topology-detail-header">
+                <div>
+                    <p class="eyebrow">Storage</p>
+                    <h2 id="diag-storage-modal-title">Chart Data Usage</h2>
+                </div>
+                <div class="dashboard-toolbar-actions">
+                    <button type="button" class="button-secondary" data-diag-close="storage">Close</button>
+                </div>
+            </div>
+            <div class="diag-detail-body">
+                <div class="services-summary" id="diag-storage-chips">
+                    <div class="services-summary-chip" id="diag-modal-chip-rows">
+                        <span class="services-summary-label">Total Rows</span>
+                        <strong id="diag-modal-total-rows">--</strong>
+                    </div>
+                    <div class="services-summary-chip" id="diag-modal-chip-size">
+                        <span class="services-summary-label">Table Size</span>
+                        <strong id="diag-modal-table-size">--</strong>
+                    </div>
+                    <div class="services-summary-chip">
+                        <span class="services-summary-label">Oldest Sample</span>
+                        <strong id="diag-modal-oldest">--</strong>
+                    </div>
+                    <div class="services-summary-chip">
+                        <span class="services-summary-label">Newest Sample</span>
+                        <strong id="diag-modal-newest">--</strong>
+                    </div>
+                    <div class="services-summary-chip">
+                        <span class="services-summary-label">Time Span</span>
+                        <strong id="diag-modal-span">--</strong>
+                    </div>
+                </div>
+                <div class="table-wrap" style="margin-top: 1rem;">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Node</th>
+                                <th>Samples</th>
+                                <th>Oldest</th>
+                                <th>Newest</th>
+                                <th>Span</th>
+                            </tr>
+                        </thead>
+                        <tbody id="diag-modal-per-node-body">
+                            <tr><td colspan="5" class="table-message">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- CPU detail modal -->
+    <div class="modal-shell" id="diag-cpu-modal" hidden>
+        <div class="modal-backdrop" data-diag-close="cpu"></div>
+        <section class="modal-card diag-detail-card" role="dialog" aria-modal="true" aria-labelledby="diag-cpu-modal-title">
+            <div class="inventory-header topology-detail-header">
+                <div>
+                    <p class="eyebrow">CPU</p>
+                    <h2 id="diag-cpu-modal-title">Processor Load</h2>
+                </div>
+                <div class="dashboard-toolbar-actions">
+                    <button type="button" class="button-secondary" data-diag-close="cpu">Close</button>
+                </div>
+            </div>
+            <div class="diag-detail-body">
+                <div class="services-summary">
+                    <div class="services-summary-chip" id="diag-modal-cpu-usage-chip">
+                        <span class="services-summary-label">Usage</span>
+                        <strong id="diag-modal-cpu-usage">--</strong>
+                    </div>
+                    <div class="services-summary-chip">
+                        <span class="services-summary-label">CPU Cores</span>
+                        <strong id="diag-modal-cpu-cores">--</strong>
+                    </div>
+                    <div class="services-summary-chip">
+                        <span class="services-summary-label">Load 1m</span>
+                        <strong id="diag-modal-cpu-load1">--</strong>
+                    </div>
+                    <div class="services-summary-chip">
+                        <span class="services-summary-label">Load 5m</span>
+                        <strong id="diag-modal-cpu-load5">--</strong>
+                    </div>
+                    <div class="services-summary-chip">
+                        <span class="services-summary-label">Load 15m</span>
+                        <strong id="diag-modal-cpu-load15">--</strong>
+                    </div>
+                </div>
+                <div class="diag-bar-wrap" style="margin-top: 1.5rem;">
+                    <div class="diag-bar-label">CPU Load</div>
+                    <div class="diag-bar-track">
+                        <div class="diag-bar-fill" id="diag-modal-cpu-bar" style="width: 0%"></div>
+                    </div>
+                    <div class="diag-bar-value" id="diag-modal-cpu-bar-label">--%</div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Memory detail modal -->
+    <div class="modal-shell" id="diag-memory-modal" hidden>
+        <div class="modal-backdrop" data-diag-close="memory"></div>
+        <section class="modal-card diag-detail-card" role="dialog" aria-modal="true" aria-labelledby="diag-memory-modal-title">
+            <div class="inventory-header topology-detail-header">
+                <div>
+                    <p class="eyebrow">Memory</p>
+                    <h2 id="diag-memory-modal-title">RAM &amp; Swap</h2>
+                </div>
+                <div class="dashboard-toolbar-actions">
+                    <button type="button" class="button-secondary" data-diag-close="memory">Close</button>
+                </div>
+            </div>
+            <div class="diag-detail-body">
+                <div class="services-summary">
+                    <div class="services-summary-chip" id="diag-modal-mem-usage-chip">
+                        <span class="services-summary-label">RAM Usage</span>
+                        <strong id="diag-modal-mem-usage">--</strong>
+                    </div>
+                    <div class="services-summary-chip">
+                        <span class="services-summary-label">Total</span>
+                        <strong id="diag-modal-mem-total">--</strong>
+                    </div>
+                    <div class="services-summary-chip">
+                        <span class="services-summary-label">Used</span>
+                        <strong id="diag-modal-mem-used">--</strong>
+                    </div>
+                    <div class="services-summary-chip">
+                        <span class="services-summary-label">Available</span>
+                        <strong id="diag-modal-mem-available">--</strong>
+                    </div>
+                    <div class="services-summary-chip">
+                        <span class="services-summary-label">Swap Used</span>
+                        <strong id="diag-modal-swap-used">--</strong>
+                    </div>
+                </div>
+                <div class="diag-bar-wrap" style="margin-top: 1.5rem;">
+                    <div class="diag-bar-label">RAM</div>
+                    <div class="diag-bar-track">
+                        <div class="diag-bar-fill" id="diag-modal-mem-bar" style="width: 0%"></div>
+                    </div>
+                    <div class="diag-bar-value" id="diag-modal-mem-bar-label">--%</div>
+                </div>
+                <div class="diag-bar-wrap" style="margin-top: 0.75rem;">
+                    <div class="diag-bar-label">Swap</div>
+                    <div class="diag-bar-track">
+                        <div class="diag-bar-fill" id="diag-modal-swap-bar" style="width: 0%"></div>
+                    </div>
+                    <div class="diag-bar-value" id="diag-modal-swap-bar-label">--%</div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script src="{{ url_for('static', path='js/app.js') }}?v=20260408-diag2"></script>
 </body>
 </html>
