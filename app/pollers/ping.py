@@ -168,11 +168,15 @@ async def ping_monitor_loop(ps: PollerState) -> None:
     while True:
         try:
             now = _time.monotonic()
-            db = SessionLocal()
-            try:
-                nodes = db.scalars(select(Node).order_by(Node.id)).all()
-            finally:
-                db.close()
+
+            def _query_ping_nodes():
+                db = SessionLocal()
+                try:
+                    return db.scalars(select(Node).order_by(Node.id)).all()
+                finally:
+                    db.close()
+
+            nodes = await asyncio.to_thread(_query_ping_nodes)
 
             pingable = [n for n in nodes if n.enabled and n.ping_enabled]
 
@@ -196,23 +200,26 @@ async def ping_monitor_loop(ps: PollerState) -> None:
                     else:
                         build_ping_snapshot(ps, node.id, result)
 
-            db2 = SessionLocal()
-            try:
-                dns = db2.scalars(
-                    select(DiscoveredNode).where(
-                        DiscoveredNode.host.isnot(None),
-                        DiscoveredNode.map_view_id.isnot(None),
-                    )
-                ).all()
-                dn_due: list[tuple[str, str]] = []
-                for dn in dns:
-                    if not dn.host:
-                        continue
-                    deadline = ps.dn_next_ping_at.get(dn.site_id, 0.0)
-                    if now >= deadline:
-                        dn_due.append((dn.site_id, dn.host))
-            finally:
-                db2.close()
+            def _query_ping_dns():
+                db2 = SessionLocal()
+                try:
+                    return db2.scalars(
+                        select(DiscoveredNode).where(
+                            DiscoveredNode.host.isnot(None),
+                            DiscoveredNode.map_view_id.isnot(None),
+                        )
+                    ).all()
+                finally:
+                    db2.close()
+
+            dns = await asyncio.to_thread(_query_ping_dns)
+            dn_due: list[tuple[str, str]] = []
+            for dn in dns:
+                if not dn.host:
+                    continue
+                deadline = ps.dn_next_ping_at.get(dn.site_id, 0.0)
+                if now >= deadline:
+                    dn_due.append((dn.site_id, dn.host))
 
             if dn_due:
                 dn_results = await asyncio.gather(

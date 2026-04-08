@@ -176,11 +176,14 @@ async def check_service(service: ServiceCheck) -> dict[str, object]:
 async def service_polling_loop(ps: PollerState) -> None:
     while True:
         try:
-            db = SessionLocal()
-            try:
-                services = db.scalars(select(ServiceCheck).order_by(ServiceCheck.service_type, ServiceCheck.name, ServiceCheck.id)).all()
-            finally:
-                db.close()
+            def _query_services():
+                db = SessionLocal()
+                try:
+                    return db.scalars(select(ServiceCheck).order_by(ServiceCheck.service_type, ServiceCheck.name, ServiceCheck.id)).all()
+                finally:
+                    db.close()
+
+            services = await asyncio.to_thread(_query_services)
 
             if services:
                 results = await asyncio.gather(*(check_service(service) for service in services), return_exceptions=True)

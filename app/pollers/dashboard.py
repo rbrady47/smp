@@ -201,9 +201,16 @@ async def probe_discovered_node_detail(
 
 
 async def refresh_node_dashboard_cache_once(ps: PollerState) -> None:
-    db = SessionLocal()
+    def _query_dashboard_nodes():
+        db = SessionLocal()
+        try:
+            return db.scalars(select(Node).order_by(Node.name)).all(), db
+        except Exception:
+            db.close()
+            raise
+
+    nodes, db = await asyncio.to_thread(_query_dashboard_nodes)
     try:
-        nodes = db.scalars(select(Node).order_by(Node.name)).all()
         await ps.dashboard_backend.refresh_cache(db, nodes)
     finally:
         db.close()

@@ -31,29 +31,33 @@ async def dn_seeker_polling_loop(ps: PollerState) -> None:
     await asyncio.sleep(10.0)  # initial delay to let AN polling populate first
     while True:
         try:
-            db = SessionLocal()
-            try:
-                dns = db.scalars(
-                    select(DiscoveredNode).where(
-                        DiscoveredNode.source_anchor_node_id.isnot(None),
-                        DiscoveredNode.host.isnot(None),
-                    )
-                ).all()
-                anchor_ids = {dn.source_anchor_node_id for dn in dns if dn.source_anchor_node_id}
+            def _query_dn_seeker():
+                db = SessionLocal()
+                try:
+                    dns = db.scalars(
+                        select(DiscoveredNode).where(
+                            DiscoveredNode.source_anchor_node_id.isnot(None),
+                            DiscoveredNode.host.isnot(None),
+                        )
+                    ).all()
+                    anchor_ids = {dn.source_anchor_node_id for dn in dns if dn.source_anchor_node_id}
 
-                for _sid, cached_row in ps.dashboard_backend.discovered_node_cache.items():
-                    if isinstance(cached_row, dict) and cached_row.get("source_anchor_id"):
-                        try:
-                            anchor_ids.add(int(cached_row["source_anchor_id"]))
-                        except (ValueError, TypeError):
-                            pass
+                    for _sid, cached_row in ps.dashboard_backend.discovered_node_cache.items():
+                        if isinstance(cached_row, dict) and cached_row.get("source_anchor_id"):
+                            try:
+                                anchor_ids.add(int(cached_row["source_anchor_id"]))
+                            except (ValueError, TypeError):
+                                pass
 
-                anchors_by_id: dict[int, Node] = {}
-                if anchor_ids:
-                    anchor_nodes = db.scalars(select(Node).where(Node.id.in_(anchor_ids))).all()
-                    anchors_by_id = {n.id: n for n in anchor_nodes}
-            finally:
-                db.close()
+                    anchors_by_id: dict[int, Node] = {}
+                    if anchor_ids:
+                        anchor_nodes = db.scalars(select(Node).where(Node.id.in_(anchor_ids))).all()
+                        anchors_by_id = {n.id: n for n in anchor_nodes}
+                    return dns, anchors_by_id
+                finally:
+                    db.close()
+
+            dns, anchors_by_id = await asyncio.to_thread(_query_dn_seeker)
 
             probe_targets: dict[str, tuple] = {}
             for dn in dns:
