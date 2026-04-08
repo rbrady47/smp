@@ -8,6 +8,26 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-08 — Session: Link Bug Fixes
+
+### Branch / commit
+- Branch: `claude/seeker-charts-polling-UAgpt`
+
+### What was fixed
+
+**Bug 1 — Link delete doesn't clear tooltip** (`app.js:6802`)
+- Added `topologyState.pinnedLinkTooltipId = null` and `hideTopologyLinkTooltip()` to the `topology-link-ctx-delete` click handler, matching the pattern used by other entity click handlers.
+
+**Bug 2 — Link creation delayed in submaps** (`app.js:5962`)
+- `refreshTopologyData()` had an early return when `data-map-view-id` was set (submap view), so newly created links never refreshed the payload. Now delegates to `refreshTopologyPage()` which handles submap fetching correctly.
+
+### Files touched
+- `static/js/app.js` — 2 targeted fixes (4 lines changed)
+- `CHANGELOG.md` — added fix entries
+- `docs/AGENT_HANDOFF.md` — this entry
+
+---
+
 ## 2026-04-08 — Session: Dynamic Link Attachment
 
 ### Branch / commit

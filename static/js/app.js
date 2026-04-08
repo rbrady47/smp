@@ -5962,6 +5962,7 @@ function highlightTopologySnapTarget(target) {
 async function refreshTopologyData() {
     const root = document.getElementById("topology-root");
     if (root?.getAttribute("data-map-view-id")) {
+        await refreshTopologyPage();
         return;
     }
     try {
@@ -6807,6 +6808,8 @@ function initTopologyLinkContextMenu() {
         closeTopologyLinkContextMenu();
         topologyState.selectedKind = null;
         topologyState.selectedId = null;
+        topologyState.pinnedLinkTooltipId = null;
+        hideTopologyLinkTooltip();
         await refreshTopologyData();
         renderTopologyStage();
     });

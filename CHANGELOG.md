@@ -6,6 +6,11 @@ The format is intentionally simple so diffs stay readable in version control.
 
 ## Unreleased
 
+### Fixed
+
+- **Link delete tooltip:** Deleting a topology link now clears the pinned link tooltip instead of leaving it stuck on screen.
+- **Submap link creation delay:** New links created in submap views now appear immediately instead of waiting for the next polling cycle.
+
 ### Changed
 
 - **Dynamic link attachment:** Topology links now connect to the nearest edge of each node icon based on relative position, replacing the 8 fixed anchor point dots. Links smoothly reposition in real-time during node drag. Link creation in edit mode uses an edge zone drag instead of clicking individual anchor points. Applies to both main map and submaps. No backend/DB changes — `source_anchor`/`target_anchor` fields preserved for backward compat.
