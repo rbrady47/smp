@@ -35,6 +35,27 @@ class NodeUpdate(NodeBase):
     pass
 
 
+class DnPromoteRequest(BaseModel):
+    """Payload for promoting a Discovered Node to an Anchor Node."""
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, max_length=120)
+    host: str | None = Field(default=None, max_length=255)
+    location: str | None = Field(default=None, max_length=255)
+    web_port: int = Field(default=443, ge=1, le=65535)
+    ssh_port: int = Field(default=22, ge=1, le=65535)
+    api_username: str = Field(..., min_length=1, max_length=255)
+    api_password: str = Field(..., min_length=1, max_length=255)
+    api_use_https: bool = False
+    include_in_topology: bool = True
+    topology_level: TopologyLevel | None = 1
+    topology_unit: TopologyUnit | None = None
+    ping_enabled: bool = True
+    ping_interval_seconds: int = Field(default=15, ge=1, le=300)
+    charts_enabled: bool = True
+    notes: str | None = None
+
+
 class ServiceCheckBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     service_type: str = Field(default="url", pattern="^(url|dns)$")

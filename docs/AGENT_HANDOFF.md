@@ -8,6 +8,42 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-08 — Session: DN Promotion to Anchor Node
+
+### Branch / commit
+- Branch: `claude/seeker-charts-polling-UAgpt` (off `seeker-charts`)
+
+### What was built
+Discovered Node (DN) promotion to Anchor Node (AN) — full backend + frontend feature.
+
+### Architecture
+- **Endpoint**: `POST /api/discovered-nodes/{site_id}/promote` — accepts `DnPromoteRequest` payload (API creds, ports, topology settings). Creates Node, deletes DN + observations + relationships, publishes SSE events.
+- **Schema**: `DnPromoteRequest` in `app/schemas.py` — requires `api_username` and `api_password`, optional overrides for name/host/location/ports/topology/charts settings.
+- **UI**: "Promote to Anchor Node" button on DN detail page toolbar. Opens modal form pre-filled from DN data. On success, redirects to new AN detail page.
+- **Cleanup**: DN record, observations, relationships, and caches all cleared via existing `delete_discovered_node()`.
+
+### Files touched
+- `app/schemas.py` — added `DnPromoteRequest`
+- `app/routes/discovery.py` — added `promote_discovered_node()` endpoint
+- `templates/node_detail.html` — added promote button + modal (conditional on `detail_kind == "discovered"`)
+- `static/js/app.js` — added `initDnPromotion()` with modal open/close, form submit, API call, redirect
+- `tests/test_dn_promotion.py` — schema validation tests
+- `CHANGELOG.md`, `docs/USER_GUIDE.md`, `docs/AGENT_HANDOFF.md`, `docs/CODE_DOCUMENTATION.md` — updated
+
+### Verification
+1. Compile check passes (`python -m compileall app tests alembic`)
+2. Schema tests validate required fields, extra field rejection, port ranges, invalid topology units
+3. No new migration needed — no DB schema changes (promotion uses existing Node model)
+
+### Gaps / next steps
+- **Data retention**: `chart_samples` grows indefinitely — needs cleanup policy
+- **CDN vendoring**: For air-gapped deployments, vendor Chart.js/jsPDF locally
+- **Auto-refresh on charts page**: Currently requires manual re-selection
+- **Bulk promotion**: Currently one DN at a time; batch promotion could be added
+- **Promoted AN immediate polling**: After promotion, the new AN will be picked up on the next poller cycle (10s seeker poll, 60s charts poll). No immediate forced poll on promotion.
+
+---
+
 ## 2026-04-07 — Session: Charts Feature (Complete)
 
 ### Branch / commit

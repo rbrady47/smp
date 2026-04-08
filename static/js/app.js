@@ -7539,6 +7539,101 @@ async function loadNodeDetailPage() {
     }
 }
 
+/* ── DN PROMOTION ─────────────────────────────────────────────── */
+
+function initDnPromotion() {
+    const promoteBtn = document.getElementById("promote-dn-button");
+    const modal = document.getElementById("promote-modal");
+    if (!promoteBtn || !modal) return;
+
+    const backdrop = document.getElementById("promote-modal-backdrop");
+    const cancelBtn = document.getElementById("promote-cancel");
+    const form = document.getElementById("promote-form");
+    const errorEl = document.getElementById("promote-error");
+    const siteId = window.__DETAIL_SITE_ID__;
+
+    function openModal() {
+        // Pre-fill host from the detail page if available
+        const root = document.getElementById("node-detail-root");
+        if (root) {
+            const detailEndpoint = root.getAttribute("data-detail-endpoint");
+            if (detailEndpoint) {
+                fetch(buildNodeDashboardRequestUrl(detailEndpoint))
+                    .then(r => r.json())
+                    .then(detail => {
+                        const cfg = detail.config_summary ?? {};
+                        const node = detail.node ?? {};
+                        const hostEl = document.getElementById("promote-host");
+                        const nameEl = document.getElementById("promote-name");
+                        const locEl = document.getElementById("promote-location");
+                        if (hostEl && !hostEl.value) hostEl.value = cfg.mgmt_ip || node.host || "";
+                        if (locEl && !locEl.value) locEl.value = node.location || "";
+                        if (nameEl && !nameEl.value) nameEl.value = cfg.site_name || node.name || "";
+                    })
+                    .catch(() => {});
+            }
+        }
+        modal.hidden = false;
+        errorEl.hidden = true;
+    }
+
+    function closeModal() {
+        modal.hidden = true;
+    }
+
+    promoteBtn.addEventListener("click", openModal);
+    cancelBtn.addEventListener("click", closeModal);
+    backdrop.addEventListener("click", closeModal);
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && !modal.hidden) closeModal();
+    });
+
+    form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        errorEl.hidden = true;
+
+        const submitBtn = document.getElementById("promote-submit");
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Promoting...";
+
+        const topologyUnit = document.getElementById("promote-topology-unit").value;
+        const payload = {
+            name: document.getElementById("promote-name").value.trim() || null,
+            host: document.getElementById("promote-host").value.trim() || null,
+            location: document.getElementById("promote-location").value.trim() || null,
+            web_port: parseInt(document.getElementById("promote-web-port").value) || 443,
+            ssh_port: parseInt(document.getElementById("promote-ssh-port").value) || 22,
+            api_username: document.getElementById("promote-api-username").value.trim(),
+            api_password: document.getElementById("promote-api-password").value,
+            api_use_https: document.getElementById("promote-api-use-https").checked,
+            topology_unit: topologyUnit || null,
+            include_in_topology: document.getElementById("promote-include-topology").checked,
+            ping_enabled: document.getElementById("promote-ping-enabled").checked,
+            charts_enabled: document.getElementById("promote-charts-enabled").checked,
+            notes: document.getElementById("promote-notes").value.trim() || null,
+        };
+
+        try {
+            const result = await apiRequest(
+                `/api/discovered-nodes/${encodeURIComponent(siteId)}/promote`,
+                { method: "POST", body: JSON.stringify(payload) },
+            );
+            // Success — redirect to the new anchor node detail page
+            const newNodeId = result.node?.id;
+            if (newNodeId) {
+                window.location.href = `/nodes/${newNodeId}`;
+            } else {
+                window.location.href = "/nodes";
+            }
+        } catch (err) {
+            errorEl.textContent = err.message || "Promotion failed";
+            errorEl.hidden = false;
+            submitBtn.disabled = false;
+            submitBtn.textContent = "Promote";
+        }
+    });
+}
+
 async function apiRequest(url, options = {}) {
     const response = await fetch(url, {
         headers: {
@@ -10420,6 +10515,7 @@ window.addEventListener("DOMContentLoaded", () => {
     safeStart(loadDiscoveryPage, "discovery");
     safeStart(loadChartsPage, "charts");
     safeStart(loadNodeDetailPage, "node-detail");
+    initDnPromotion();
 
     // Connect SSE for real-time updates on all pages
     connectNodeStateStream();

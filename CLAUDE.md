@@ -6,17 +6,20 @@ SMP is a centralized dashboard, monitoring, and topology visualization platform 
 
 **Tech stack:** Python 3.11+ · FastAPI · SQLAlchemy 2.0 · PostgreSQL · Alembic · Jinja2 · vanilla JS/CSS frontend
 
-**Status:** Prototype — actively evolving (current version ~v0.9.5)
+**Status:** Prototype — actively evolving (current version ~v0.10)
 
 ## Repository Layout
 
 ```
 app/                    # Backend application code
-  main.py               # FastAPI app, routes, background tasks, constants
+  main.py               # FastAPI app, lifespan, constants, background task launchers
   models.py             # SQLAlchemy ORM models (Mapped[] syntax)
   schemas.py            # Pydantic request/response models
   db.py                 # Database engine, session factory, get_db() dependency
-  seeker_api.py         # Upstream Seeker API integration
+  seeker_api.py         # Upstream Seeker API integration (login, bwvCfg, bwvStats, bwvChartStats)
+  redis_client.py       # Optional Redis connection
+  state_manager.py      # Redis pub/sub for SSE events
+  poller_state.py       # PollerState dataclass — owns all mutable in-memory state
   node_dashboard_backend.py   # In-memory cache & projection engine for dashboard
   node_discovery_service.py   # Auto-discovery from tunnel/peer data
   node_projection_service.py  # Anchor node projection builder
@@ -26,12 +29,31 @@ app/                    # Backend application code
   topology_editor_state_service.py  # Editor state persistence
   bwvstats_ingest.py    # Bandwidth stats ingestion
   telemetry.py          # Telemetry utilities
-alembic/                # Database migrations (13 versions)
-templates/              # Jinja2 HTML templates
+  services/             # Business logic services
+    node_health.py      # Health check utilities
+  pollers/              # Background polling loops
+    seeker.py           # AN Seeker API polling (10s)
+    charts.py           # Charts data polling — bwvChartStats (60s)
+    dashboard.py        # Dashboard projection polling
+    ping.py             # Ping monitoring
+    services.py         # Service check polling
+  routes/               # FastAPI route modules
+    pages.py            # HTML page routes
+    nodes.py            # /api/nodes CRUD, detail, refresh
+    services.py         # /api/services CRUD + dashboard
+    dashboard.py        # /api/dashboard, /api/node-dashboard
+    topology.py         # /api/topology, links, editor-state
+    maps.py             # /api/topology/maps CRUD
+    discovery.py        # /api/discovered-nodes, submap discovery, DN promotion
+    stream.py           # SSE endpoints
+    charts.py           # /api/nodes/{id}/chart-stats, chart-summary
+    system.py           # /api/status
+alembic/                # Database migrations (17 versions)
+templates/              # Jinja2 HTML templates (9 pages)
 static/                 # Frontend assets (js/app.js, css/style.css)
 tests/                  # Unit tests (unittest framework)
 scripts/                # PowerShell dev scripts (bootstrap, dev, test)
-docs/                   # Documentation (USER_GUIDE, AGENT_INSTRUCTIONS, AGENT_HANDOFF)
+docs/                   # Documentation (USER_GUIDE, AGENT_HANDOFF, CODE_DOCUMENTATION)
 ```
 
 ## Quick Commands
@@ -67,7 +89,7 @@ DATABASE_URL="postgresql+psycopg://..." uvicorn app.main:app --host 127.0.0.1 --
 - **ORM:** SQLAlchemy 2.0 with `Mapped[]` type annotations
 - **Migrations:** Alembic — migrations live in `alembic/versions/`
 - **Connection:** Set `DATABASE_URL` environment variable (see `.env.example`)
-- **Key tables:** `nodes`, `discovered_nodes`, `discovered_node_observations`, `service_checks`, `node_relationships`, `topology_links`, `topology_editor_state`, `operational_map_*`
+- **Key tables:** `nodes`, `discovered_nodes`, `discovered_node_observations`, `service_checks`, `node_relationships`, `topology_links`, `topology_editor_state`, `chart_samples`, `operational_map_*`
 
 ### Creating Migrations
 
@@ -100,12 +122,16 @@ alembic upgrade head
 ### Data Flow
 1. **Live status:** Node → Ping → RTT → Cache → Dashboard Projection → API
 2. **Discovery:** Anchor Node Detail → Tunnel Analysis → Candidate Generation → DB → Discovery Cache
-3. **Refresh cadence:** ping burst 15s, seeker poll 15s, service checks 30s
+3. **Charts:** bwvChartStats(startTime=0, entries=30) → `chart_samples` table → 5-min bucket API → Chart.js UI
+4. **DN Promotion:** DN detail page → Promote modal → `POST /api/discovered-nodes/{site_id}/promote` → creates AN, deletes DN
+5. **Refresh cadence:** ping burst 5s, seeker poll 10s, service checks 30s, charts 60s, site name resolution 30s
 
 ## Architecture Direction
 
 - **Node Dashboard** is the root operational data source
 - **Anchor Nodes (ANs)** and **Discovered Nodes (DNs)** are first-class data sources
+- **DN → AN promotion** allows operators to convert discovered nodes into fully managed anchor nodes with API credentials, enabling polling, charts, and topology participation
+- **Charts polling** collects per-second traffic counters (bwvChartStats) from each AN every 60s; server-side 5-min bucketing reduces payloads for weekly reporting
 - **Discovery topology** (auto-discovered network state) is separate from **authored operational maps** (operator-drawn diagrams)
 - **Operational maps** follow SNMPc-style patterns: blank canvas, object types (`node`, `submap`, `label`), connections, submap drill-in, live data bindings
 - Keep building on `/topology`; do not reintroduce `/operational-maps` as a separate path unless directed
@@ -151,7 +177,10 @@ Every change must be fully documented for follow-on development and end users. T
 |------|---------|
 | AN (Anchor Node) | Operator-managed Seeker node registered in SMP |
 | DN (Discovered Node) | Auto-discovered node found via tunnel/peer analysis |
+| DN Promotion | Converting a DN to a full AN with API credentials |
 | Seeker | SDN node type that SMP manages |
+| bwvChartStats | Seeker API endpoint returning per-second traffic counters |
+| ChartSample | DB row storing one second of traffic data (user bytes, channels, tunnels) |
 | Operational Map | SNMPc-style authored diagram canvas |
 | Discovery Topology | Auto-discovered network graph |
 | TopologyUnit | Military org unit (AGG, DIV HQ, 1BCT, 2BCT, 3BCT, etc.) |

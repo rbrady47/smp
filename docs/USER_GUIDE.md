@@ -55,6 +55,8 @@ Paths:
 
 Node detail pages are intended for drill-down on a single node. The managed anchor-node detail page focuses on operational inspection, including identity and network-related data returned by the backend.
 
+For discovered node detail pages (`/nodes/discovered/{site_id}`), a **Promote to Anchor Node** button appears in the toolbar. Clicking it opens a modal where the operator enters API credentials and configuration. On submit, the DN is converted to a full Anchor Node — the DN record is deleted and the new AN appears in Node Inventory, ready for polling, charts, and topology inclusion.
+
 ### Services Dashboard
 
 Path: `/services/dashboard`
@@ -219,6 +221,8 @@ Anchor nodes are SMP-managed records created by operators. These are the primary
 
 Discovered nodes are learned from the environment and surfaced through backend discovery logic. They help extend operator visibility beyond manually entered anchor nodes.
 
+Discovered nodes can be **promoted to Anchor Nodes** from the DN detail page. This requires the operator to supply API credentials (username/password). After promotion, the DN is deleted and replaced by a full AN record with polling, charts, and topology support.
+
 ### Discovery Topology vs Operational Maps
 
 These are different views with different purposes.
@@ -241,6 +245,7 @@ The current backend exposes several relevant route groups:
 - `/api/dashboard/services`
 - `/api/topology`
 - `/api/topology/discovery`
+- `/api/discovered-nodes/{site_id}/promote` — promotes a Discovered Node to an Anchor Node (POST with API credentials)
 - `/api/nodes/{id}/chart-stats` — per-second traffic counters (user bytes/packets, channel data, tunnel data) collected every 60s from each Seeker node via `bwvChartStats`. Query with `?start=<epoch>&end=<epoch>&limit=N` for weekly reporting.
 - Operational-map concepts are being folded back into `/topology` planning rather than exposed as a separate API/UI path for operators right now.
 

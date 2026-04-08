@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import DiscoveredNode, DiscoveredNodeObservation, Node, OperationalMapObject, OperationalMapView
 from app.node_discovery_service import _tunnel_row_is_eligible, _tunnel_row_exists
+from app.schemas import DnPromoteRequest
 from app import state_manager
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,91 @@ async def delete_discovered_node(site_id: str, db: Session = Depends(get_db)) ->
     node_dashboard_backend.delete_discovered_node(db, site_id)
     await state_manager.publish_discovery_event("dn_removed", site_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/discovered-nodes/{site_id}/promote")
+async def promote_discovered_node(
+    site_id: str,
+    payload: DnPromoteRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Promote a Discovered Node to an Anchor Node.
+
+    Creates a new Node record from the DN data + operator-supplied
+    credentials, then deletes the DN and all related records.
+    """
+    from app.main import node_dashboard_backend, serialize_node
+
+    # Verify DN exists
+    dn = db.get(DiscoveredNode, site_id)
+    if not dn:
+        raise HTTPException(status_code=404, detail="Discovered node not found")
+
+    # Prevent duplicate promotion — check if AN with same node_id already exists
+    existing_an = db.scalars(
+        select(Node).where(Node.node_id == site_id)
+    ).first()
+    if existing_an:
+        raise HTTPException(
+            status_code=409,
+            detail=f"An anchor node with node_id '{site_id}' already exists (id={existing_an.id})",
+        )
+
+    # Build the new Anchor Node from DN data + payload overrides
+    node = Node(
+        name=payload.name or dn.site_name or f"Site {site_id}",
+        node_id=site_id,
+        host=payload.host or dn.host or "",
+        web_port=payload.web_port,
+        ssh_port=payload.ssh_port,
+        location=payload.location or dn.location or "--",
+        include_in_topology=payload.include_in_topology,
+        topology_level=payload.topology_level,
+        topology_unit=payload.topology_unit or dn.unit,
+        enabled=True,
+        notes=payload.notes,
+        api_username=payload.api_username,
+        api_password=payload.api_password,
+        api_use_https=payload.api_use_https,
+        ping_enabled=payload.ping_enabled,
+        ping_interval_seconds=payload.ping_interval_seconds,
+        charts_enabled=payload.charts_enabled,
+    )
+    db.add(node)
+    db.flush()  # get node.id before deleting DN
+
+    new_node_id = node.id
+    logger.info(
+        "Promoting DN %s (%s) to AN id=%d",
+        site_id, node.name, new_node_id,
+    )
+
+    # Delete the DN and related records
+    node_dashboard_backend.delete_discovered_node(db, site_id)
+
+    # Commit the new AN (DN deletion already committed inside delete_discovered_node)
+    db.commit()
+    db.refresh(node)
+
+    # Publish events
+    await state_manager.publish_discovery_event("dn_removed", site_id)
+    await state_manager.publish_topology_change("node_created", id=new_node_id)
+
+    pending_health = {
+        "status": "unknown",
+        "latency_ms": None,
+        "last_checked": None,
+        "web_ok": False,
+        "ssh_ok": False,
+        "ping_ok": False,
+        "ping_state": "unknown",
+        "ping_avg_ms": None,
+    }
+    return {
+        "status": "ok",
+        "promoted_site_id": site_id,
+        "node": serialize_node(node, pending_health),
+    }
 
 
 @router.post("/discovered-nodes/flush-unreachable")

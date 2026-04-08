@@ -41,6 +41,9 @@
                         <button type="button" data-seconds="1800">30 min</button>
                     </div>
                 </div>
+                {% if detail_kind == "discovered" %}
+                <button type="button" class="button-primary" id="promote-dn-button">Promote to Anchor Node</button>
+                {% endif %}
                 <a href="/" class="button-secondary">Back to Dashboard</a>
                 <a href="/nodes" class="button-secondary">Manage Nodes</a>
             </div>
@@ -216,6 +219,88 @@
         </section>
     </main>
 
-    <script src="{{ url_for('static', path='js/app.js') }}?v=20260331-pin1"></script>
+    {% if detail_kind == "discovered" %}
+    <div class="modal-shell" id="promote-modal" hidden>
+        <div class="modal-backdrop" id="promote-modal-backdrop"></div>
+        <div class="modal-card node-modal-card">
+            <h2>Promote to Anchor Node</h2>
+            <p class="section-copy">Provide API credentials and settings for <strong>{{ node_name }}</strong>. The discovered node record will be removed after promotion.</p>
+            <form id="promote-form" class="node-form">
+                <label>
+                    <span>Name</span>
+                    <input type="text" id="promote-name" value="{{ node_name }}">
+                </label>
+                <label>
+                    <span>Host</span>
+                    <input type="text" id="promote-host" value="" required>
+                </label>
+                <label>
+                    <span>Location</span>
+                    <input type="text" id="promote-location" value="">
+                </label>
+                <label>
+                    <span>Web Port</span>
+                    <input type="number" id="promote-web-port" value="443" min="1" max="65535">
+                </label>
+                <label>
+                    <span>SSH Port</span>
+                    <input type="number" id="promote-ssh-port" value="22" min="1" max="65535">
+                </label>
+                <label>
+                    <span>API Username</span>
+                    <input type="text" id="promote-api-username" required>
+                </label>
+                <label>
+                    <span>API Password</span>
+                    <input type="password" id="promote-api-password" required>
+                </label>
+                <label class="checkbox-field">
+                    <input type="checkbox" id="promote-api-use-https">
+                    <span>API Uses HTTPS</span>
+                </label>
+                <label>
+                    <span>Topology Unit</span>
+                    <select id="promote-topology-unit">
+                        <option value="">-- Auto --</option>
+                        <option value="AGG">AGG</option>
+                        <option value="DIV HQ">DIV HQ</option>
+                        <option value="1BCT">1BCT</option>
+                        <option value="2BCT">2BCT</option>
+                        <option value="3BCT">3BCT</option>
+                        <option value="CAB/DIVARTY">CAB/DIVARTY</option>
+                        <option value="Sustainment">Sustainment</option>
+                    </select>
+                </label>
+                <label class="checkbox-field">
+                    <input type="checkbox" id="promote-include-topology" checked>
+                    <span>Include in Topology</span>
+                </label>
+                <label class="checkbox-field">
+                    <input type="checkbox" id="promote-ping-enabled" checked>
+                    <span>Enable Ping Monitoring</span>
+                </label>
+                <label class="checkbox-field">
+                    <input type="checkbox" id="promote-charts-enabled" checked>
+                    <span>Enable Charts Polling</span>
+                </label>
+                <label class="full-width">
+                    <span>Notes</span>
+                    <textarea id="promote-notes" rows="2" placeholder="Optional notes"></textarea>
+                </label>
+                <p id="promote-error" class="status-error" hidden></p>
+                <div class="form-actions full-width">
+                    <button type="submit" class="button-primary" id="promote-submit">Promote</button>
+                    <button type="button" class="button-secondary" id="promote-cancel">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    {% endif %}
+
+    <script>
+        window.__DETAIL_KIND__ = "{{ detail_kind }}";
+        window.__DETAIL_SITE_ID__ = "{{ node_id }}";
+    </script>
+    <script src="{{ url_for('static', path='js/app.js') }}?v=20260408-promote1"></script>
 </body>
 </html>

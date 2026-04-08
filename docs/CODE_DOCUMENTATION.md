@@ -166,7 +166,7 @@ Route modules split by domain. Each creates an `APIRouter` and is included in `m
 | `dashboard.py` | `/api` | `/api/dashboard/nodes`, `/api/node-dashboard` |
 | `topology.py` | `/api` | `/api/topology`, links CRUD, editor-state |
 | `maps.py` | `/api` | `/api/topology/maps` CRUD, objects, links, bindings |
-| `discovery.py` | `/api` | `/api/discovered-nodes`, submap discovery (events only for new peers — see Anti-Pattern #3) |
+| `discovery.py` | `/api` | `/api/discovered-nodes`, submap discovery (events only for new peers — see Anti-Pattern #3), DN promotion (`POST /api/discovered-nodes/{site_id}/promote`) |
 | `stream.py` | `/api` | SSE endpoints (`/api/stream/node-states`, `/api/node-dashboard/stream`) |
 
 **Constants (lines ~85-95):**
