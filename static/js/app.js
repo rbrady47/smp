@@ -9554,32 +9554,40 @@ function _chartTimestamps(samples) {
  * and extracts a field, returning {timestamps, min, max, mid} arrays.
  * For raw data, min/max/mid are all the same.
  */
+/**
+ * Merge min/max sample pairs into envelope arrays.
+ * Decimated data alternates min/max lines (different timestamps).
+ * Pairs by position: samples[0]=min, samples[1]=max, samples[2]=min, etc.
+ * Uses the min row's timestamp for the pair.
+ */
 function _mergeMinMax(samples, field) {
-    const hasMinMax = samples.some(s => s.sample_type === "min" || s.sample_type === "max");
-    if (!hasMinMax) {
-        // Raw data — no min/max pairs
+    // Separate by type
+    const mins = samples.filter(s => s.sample_type === "min");
+    const maxs = samples.filter(s => s.sample_type === "max");
+    if (mins.length === 0 && maxs.length === 0) {
+        // Raw data only
         const vals = samples.map(s => s[field]);
         return { timestamps: _chartTimestamps(samples), min: vals, max: vals, mid: vals };
     }
-    // Group by timestamp
-    const byTs = new Map();
-    for (const s of samples) {
-        if (!byTs.has(s.timestamp)) byTs.set(s.timestamp, {});
-        byTs.get(s.timestamp)[s.sample_type] = s;
-    }
+    const count = Math.min(mins.length, maxs.length || mins.length);
     const timestamps = [], minArr = [], maxArr = [], midArr = [];
-    for (const [ts, pair] of byTs) {
-        timestamps.push(ts * 1000);
-        const lo = pair.min ? pair.min[field] : null;
-        const hi = pair.max ? pair.max[field] : null;
+    for (let i = 0; i < count; i++) {
+        timestamps.push(mins[i].timestamp * 1000);
+        const lo = mins[i][field];
+        const hi = maxs[i] ? maxs[i][field] : lo;
         minArr.push(lo);
         maxArr.push(hi);
         midArr.push(lo != null && hi != null ? (lo + hi) / 2 : (lo ?? hi));
     }
+    // If there are leftover mins without a max pair, include them
+    for (let i = count; i < mins.length; i++) {
+        timestamps.push(mins[i].timestamp * 1000);
+        const v = mins[i][field];
+        minArr.push(v); maxArr.push(v); midArr.push(v);
+    }
     return { timestamps, min: minArr, max: maxArr, mid: midArr };
 }
 
-/** Extract tunnel field from min/max samples by parsing tunnel_data JSON. */
 function _mergeMinMaxTunnel(samples, siteIdx, tunIdx, field) {
     const extract = (s) => {
         if (!s.tunnel_data) return null;
@@ -9588,29 +9596,29 @@ function _mergeMinMaxTunnel(samples, siteIdx, tunIdx, field) {
             return t ? t[field] : null;
         } catch (e) { return null; }
     };
-    const hasMinMax = samples.some(s => s.sample_type === "min" || s.sample_type === "max");
-    if (!hasMinMax) {
+    const mins = samples.filter(s => s.sample_type === "min");
+    const maxs = samples.filter(s => s.sample_type === "max");
+    if (mins.length === 0 && maxs.length === 0) {
         const vals = samples.map(extract);
         return { timestamps: _chartTimestamps(samples), min: vals, max: vals, mid: vals };
     }
-    const byTs = new Map();
-    for (const s of samples) {
-        if (!byTs.has(s.timestamp)) byTs.set(s.timestamp, {});
-        byTs.get(s.timestamp)[s.sample_type] = s;
-    }
+    const count = Math.min(mins.length, maxs.length || mins.length);
     const timestamps = [], minArr = [], maxArr = [], midArr = [];
-    for (const [ts, pair] of byTs) {
-        timestamps.push(ts * 1000);
-        const lo = pair.min ? extract(pair.min) : null;
-        const hi = pair.max ? extract(pair.max) : null;
-        minArr.push(lo);
-        maxArr.push(hi);
+    for (let i = 0; i < count; i++) {
+        timestamps.push(mins[i].timestamp * 1000);
+        const lo = extract(mins[i]);
+        const hi = maxs[i] ? extract(maxs[i]) : lo;
+        minArr.push(lo); maxArr.push(hi);
         midArr.push(lo != null && hi != null ? (lo + hi) / 2 : (lo ?? hi));
+    }
+    for (let i = count; i < mins.length; i++) {
+        timestamps.push(mins[i].timestamp * 1000);
+        const v = extract(mins[i]);
+        minArr.push(v); maxArr.push(v); midArr.push(v);
     }
     return { timestamps, min: minArr, max: maxArr, mid: midArr };
 }
 
-/** Extract channel field from min/max samples. */
 function _mergeMinMaxChannel(samples, chIdx, field) {
     const extract = (s) => {
         if (!s.channel_data) return null;
@@ -9619,24 +9627,25 @@ function _mergeMinMaxChannel(samples, chIdx, field) {
             return c ? c[field] : null;
         } catch (e) { return null; }
     };
-    const hasMinMax = samples.some(s => s.sample_type === "min" || s.sample_type === "max");
-    if (!hasMinMax) {
+    const mins = samples.filter(s => s.sample_type === "min");
+    const maxs = samples.filter(s => s.sample_type === "max");
+    if (mins.length === 0 && maxs.length === 0) {
         const vals = samples.map(extract);
         return { timestamps: _chartTimestamps(samples), min: vals, max: vals, mid: vals };
     }
-    const byTs = new Map();
-    for (const s of samples) {
-        if (!byTs.has(s.timestamp)) byTs.set(s.timestamp, {});
-        byTs.get(s.timestamp)[s.sample_type] = s;
-    }
+    const count = Math.min(mins.length, maxs.length || mins.length);
     const timestamps = [], minArr = [], maxArr = [], midArr = [];
-    for (const [ts, pair] of byTs) {
-        timestamps.push(ts * 1000);
-        const lo = pair.min ? extract(pair.min) : null;
-        const hi = pair.max ? extract(pair.max) : null;
-        minArr.push(lo);
-        maxArr.push(hi);
+    for (let i = 0; i < count; i++) {
+        timestamps.push(mins[i].timestamp * 1000);
+        const lo = extract(mins[i]);
+        const hi = maxs[i] ? extract(maxs[i]) : lo;
+        minArr.push(lo); maxArr.push(hi);
         midArr.push(lo != null && hi != null ? (lo + hi) / 2 : (lo ?? hi));
+    }
+    for (let i = count; i < mins.length; i++) {
+        timestamps.push(mins[i].timestamp * 1000);
+        const v = extract(mins[i]);
+        minArr.push(v); maxArr.push(v); midArr.push(v);
     }
     return { timestamps, min: minArr, max: maxArr, mid: midArr };
 }

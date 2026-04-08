@@ -56,9 +56,9 @@ def parse_log_entries(
 
         <epoch>,c0t:4487,c0r:4016,...,ut:8078:33,ur:6719:41
 
-    When *decimated* is True (df > 0 was used), lines come in min/max
-    pairs sharing the same timestamp.  The first of each pair is tagged
-    ``sample_type="min"`` and the second ``"max"``.
+    When *decimated* is True (df > 0 was used), lines alternate
+    min/max: first line = min, second line = max, third = min, etc.
+    The Seeker gives each line a different timestamp.
 
     Returns a list of dicts ready for ``ChartSample`` insertion.
     """
@@ -66,9 +66,7 @@ def parse_log_entries(
     if not log_entries_str:
         return rows
 
-    # Track timestamps to detect min/max pairs (same ts appears twice)
-    last_ts: int | None = None
-    ts_count = 0
+    line_index = 0
 
     for line in log_entries_str.strip().split("\n"):
         line = line.strip()
@@ -145,11 +143,8 @@ def parse_log_entries(
 
         # Determine sample_type
         if decimated:
-            if ts == last_ts:
-                sample_type = "max"  # second occurrence of same timestamp
-            else:
-                sample_type = "min"  # first occurrence
-                last_ts = ts
+            sample_type = "min" if line_index % 2 == 0 else "max"
+            line_index += 1
         else:
             sample_type = "raw"
 
