@@ -18,6 +18,7 @@ The format is intentionally simple so diffs stay readable in version control.
 - **Charts nav link:** Added "Charts" to navigation bar on all pages.
 - **Per-site tunnel charts:** One dual-axis chart per mate site with throughput (left, bps) + latency (right, ms in yellow). All tunnels overlaid with high-contrast color pairs. Up to 4 tunnels supported.
 - **Summary report:** Per-site tunnel table with rowspan grouping, user throughput totals, channel averages. All rates in Kbps/Mbps/Gbps, latency in ms. Computed from raw samples for accuracy.
+- **charts_enabled toggle:** Per-node boolean to opt in/out of charts data collection. Checkbox on the node management form. Default true.
 
 ### Fixed
 
