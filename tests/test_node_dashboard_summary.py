@@ -1,9 +1,6 @@
 import asyncio
 from datetime import datetime, timezone
-import os
 import unittest
-
-os.environ.setdefault("DATABASE_URL", "sqlite:///smp-test.db")
 
 from app.main import ping_snapshot_by_node, seeker_detail_cache, summarize_dashboard_node
 from app.models import Node

@@ -1,9 +1,6 @@
 """Unit tests for DN promotion schema and logic."""
 
-import os
 import unittest
-
-os.environ.setdefault("DATABASE_URL", "sqlite:///smp-test.db")
 
 from pydantic import ValidationError
 
