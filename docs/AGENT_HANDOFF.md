@@ -8,6 +8,37 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-10 — Session: Nginx HTTP/2 Reverse Proxy
+
+### Branch / commit
+- Branch: `claude/fix-page-load-performance-jOU30`
+
+### What was built
+
+- **Nginx HTTP/2 reverse proxy** in Docker Compose to eliminate HTTP/1.1 head-of-line blocking that caused 30-50s page-load stalls when the SSE connection occupied the browser's keep-alive slot.
+- `nginx/nginx.conf` — reverse proxy with SSE-aware location (buffering off, 24h read timeout), upstream keepalive pool of 32 connections
+- `nginx/generate-cert.sh` — auto-generates self-signed TLS cert on first boot via Nginx's `/docker-entrypoint.d/` mechanism
+- `nginx/Dockerfile` — Nginx 1.27 Alpine with OpenSSL for cert generation
+- `docker-compose.yml` — added `nginx` service on port 8443, changed `smp` from `ports` to `expose` (internal only), added `nginx-certs` named volume
+
+### Files created
+- `nginx/nginx.conf`, `nginx/generate-cert.sh`, `nginx/Dockerfile`
+
+### Files modified
+- `docker-compose.yml`, `CHANGELOG.md`, `docs/AGENT_HANDOFF.md`, `docs/CODE_DOCUMENTATION.md`
+
+### Verification
+- `python -m compileall -f app tests alembic` — all pass
+- `python -m unittest discover -s tests` — 45/45 pass
+- No application code changes — Nginx proxy is transparent
+
+### Notes
+- Access via `https://localhost:8443` (accept self-signed cert warning)
+- Uvicorn no longer exposed on host port 8000; only reachable inside Docker network
+- `StaticCacheMiddleware` in `app/main.py` still useful for non-Docker dev
+
+---
+
 ## 2026-04-10 — Session: SSE Idle Stall + Static Asset Caching
 
 ### Branch / commit

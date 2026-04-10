@@ -8,7 +8,11 @@
 
 SMP is a FastAPI application with modular route modules and a vanilla JS frontend. Backend logic lives in `app/`, routes are split into `app/routes/`, the single-page frontend is `static/js/app.js` + `static/css/style.css`, and HTML is served via Jinja2 templates.
 
+In Docker, an Nginx reverse proxy terminates HTTP/2 + TLS on port 8443 and proxies to uvicorn over HTTP/1.1 internally. This eliminates HTTP/1.1 head-of-line blocking caused by the SSE connection occupying a keep-alive slot. Self-signed cert auto-generated on first boot.
+
 ```
+Browser ──HTTP/2+TLS──> Nginx (:8443) ──HTTP/1.1──> Uvicorn (:8000)
+
 Browser ──HTTP──> FastAPI (app/main.py)
                     ├── Route modules (app/routes/*.py)
                     │     ├── pages.py     — HTML page routes

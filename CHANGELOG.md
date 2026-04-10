@@ -8,6 +8,7 @@ The format is intentionally simple so diffs stay readable in version control.
 
 ### Fixed
 
+- **HTTP/1.1 head-of-line blocking:** Added Nginx HTTP/2 reverse proxy to Docker Compose dev stack. The SSE EventSource connection occupying an HTTP/1.1 keep-alive slot caused 30-50s page-load stalls on subsequent navigation. HTTP/2 stream multiplexing eliminates this entirely. Nginx terminates TLS (self-signed cert, auto-generated on first boot) on port 8443 and proxies to uvicorn internally. No application code changes.
 - **SSE idle stall:** Browser tab backgrounding caused TCP buffer congestion from 1Hz keep-alive frames, stalling subsequent navigations by 10-20s. Added `visibilitychange` listener to disconnect SSE when tab is hidden and reconnect immediately when visible. Added `beforeunload` handler for clean teardown on page navigation.
 - **SSE reconnect delay:** Replaced hard-coded 10s reconnect delay with exponential backoff (2s, 4s, 8s, cap 30s). First reconnect after a transient error now happens in ~2s instead of 10s.
 - **Static asset caching:** Added `StaticCacheMiddleware` setting `Cache-Control: public, max-age=86400` on `/static/` responses. Templates already use cache-busting `?v=` query strings. Eliminates redundant full transfers of `app.js` and `style.css` on every page navigation.

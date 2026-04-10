@@ -1,9 +1,18 @@
 # DEV ONLY — do not use these credentials in production. Override via .env file.
 services:
+  nginx:
+    build: ./nginx
+    ports:
+      - "8443:8443"
+    depends_on:
+      - smp
+    volumes:
+      - nginx-certs:/etc/nginx/certs
+
   smp:
     build: .
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     cap_add:
       - NET_RAW
     environment:
@@ -42,3 +51,4 @@ services:
 
 volumes:
   pg-data:
+  nginx-certs:
