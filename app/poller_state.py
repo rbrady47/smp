@@ -41,6 +41,10 @@ class PollerState:
     # --- Dashboard backend (set during init, not by dataclass default) ---
     dashboard_backend: NodeDashboardBackend | None = field(default=None, repr=False)
 
+    # --- Circuit breaker for unreachable nodes (keyed by Node.id) ---
+    node_failure_counts: dict[int, int] = field(default_factory=dict)
+    node_backoff_until: dict[int, float] = field(default_factory=dict)
+
     # --- Charts poller state (keyed by Node.id) ---
     charts_last_le: dict[int, int] = field(default_factory=dict)
     charts_raw_last_le: dict[int, int] = field(default_factory=dict)

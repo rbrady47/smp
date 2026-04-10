@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import re
 import time
 from datetime import datetime, timezone
@@ -259,4 +260,4 @@ async def charts_polling_loop(ps: PollerState) -> None:
         except Exception:
             logger.exception("Charts polling loop iteration failed")
 
-        await asyncio.sleep(CHARTS_POLL_INTERVAL_SECONDS)
+        await asyncio.sleep(CHARTS_POLL_INTERVAL_SECONDS + random.uniform(0, 1.0))

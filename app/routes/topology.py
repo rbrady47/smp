@@ -27,7 +27,6 @@ async def topology_discovery_payload(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     from app.main import node_dashboard_backend, normalize_node_dashboard_window
-    await db.commit()
     return build_topology_discovery_payload(
         node_dashboard_backend.get_cached_payload(normalize_node_dashboard_window(window_seconds)),
         await node_dashboard_backend.get_topology_relationships(db),
@@ -243,7 +242,6 @@ async def topology_payload(
             "dn_up_names": counts["up_names"],
             "dn_down_names": counts["down_names"],
         })
-    await db.commit()
     result = build_mock_topology_payload(inventory_nodes)
     result["links"] = authored_links
     result["submaps"] = submaps

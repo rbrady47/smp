@@ -110,15 +110,19 @@ All Seeker API rate fields (`txChanRate`, `rxChanRate`, `txTotRateIf`, `rxTotRat
 Async database layer. Exports:
 - `DATABASE_URL` — from environment variable
 - `Base` — SQLAlchemy `DeclarativeBase` for all models
-- `async_engine` — `create_async_engine(DATABASE_URL, pool_pre_ping=True)`
+- `async_engine` — `create_async_engine(DATABASE_URL, pool_pre_ping=True, pool_size=30, max_overflow=20, pool_timeout=10, pool_recycle=3600)`
 - `AsyncSessionLocal` — `async_sessionmaker(expire_on_commit=False)` producing `AsyncSession` instances
 - `get_db()` — async generator dependency for FastAPI route handlers
 
+**Connection pool:** 30 base + 20 overflow = 50 max connections. 7 pollers use ~7-10 at peak, leaving 40+ for web requests. `pool_timeout=10` means requests fail fast instead of hanging 30s. `pool_recycle=3600` prevents stale PostgreSQL connections.
+
 Alembic uses its own sync engine via `engine_from_config()` — it imports only `DATABASE_URL` and `Base`.
 
-### `app/main.py` (~220 lines)
+### `app/main.py` (~280 lines)
 
 Thin application entry point. Creates a `PollerState` instance, initializes the `NodeDashboardBackend`, starts/stops background polling loops via a FastAPI lifespan context manager, and mounts route modules. Startup uses `async_engine` for `Base.metadata.create_all` via `conn.run_sync()`. Also exports backward-compatible wrapper functions so route modules can import directly from `app.main`.
+
+**Startup sequence:** Lifespan sets a 40-thread `ThreadPoolExecutor` as the default executor (for ping/TCP/nslookup), warms caches from Redis, then starts 7 pollers with staggered delays (0s to 5s) to prevent thundering herd.
 
 ### `app/state_manager.py`
 
@@ -147,7 +151,7 @@ Key functions: `update_node_state()`, `update_dn_state()`, `publish_service_stat
 
 ### `app/poller_state.py`
 
-`PollerState` dataclass holding all mutable in-memory state: 11 cache dicts (ping, seeker, services, DN ping) + 6 task handles (including `site_name_resolution_task`) + dashboard backend reference. A single instance (`_ps`) is created at module load in `main.py` and passed to every poller and service function.
+`PollerState` dataclass holding all mutable in-memory state: 11 cache dicts (ping, seeker, services, DN ping) + circuit breaker state (`node_failure_counts`, `node_backoff_until`) + 7 task handles + dashboard backend reference. A single instance (`_ps`) is created at module load in `main.py` and passed to every poller and service function.
 
 ### `app/pollers/` (6 files)
 
@@ -156,7 +160,7 @@ Background polling loops, each receiving `PollerState` as first parameter. All D
 | Module | Loop function | Interval | Purpose |
 |--------|--------------|----------|---------|
 | `ping.py` | `ping_monitor_loop(ps)` | 1s tick | ICMP probes for ANs + DNs |
-| `seeker.py` | `seeker_polling_loop(ps)` | 10s | Seeker API polling per AN (fast path — single-session login + config/stats/routes); concurrency capped at `SEEKER_POLL_CONCURRENCY = 20` |
+| `seeker.py` | `seeker_polling_loop(ps)` | 10s (+jitter) | Seeker API polling per AN (fast path — single-session login + config/stats/routes); concurrency capped at `SEEKER_POLL_CONCURRENCY = 20`; circuit breaker skips nodes in exponential backoff (30s→300s) |
 | `seeker.py` | `site_name_resolution_loop(ps)` | 30s (10s delay) | Remote site-name probes for unknown tunnel peers (slow path) |
 | `dn_seeker.py` | `dn_seeker_polling_loop(ps)` | 5s (10s delay) | DN Seeker API probing |
 | `services.py` | `service_polling_loop(ps)` | 30s | HTTP/DNS service checks |

@@ -171,7 +171,6 @@ async def node_detail(
     detail = seeker_detail_cache.get(node.id)
     if not detail:
         detail = await refresh_seeker_detail_for_node(node)
-    await db.commit()
     detail_dict = dict(detail)
     detail_site_id = (
         detail_dict.get("config_summary", {}).get("site_id")

@@ -7729,32 +7729,45 @@ function initDnPromotion() {
 }
 
 async function apiRequest(url, options = {}) {
-    const response = await fetch(url, {
-        headers: {
-            "Content-Type": "application/json",
-            ...(options.headers ?? {}),
-        },
-        ...options,
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000); // 15s timeout
+    try {
+        const response = await fetch(url, {
+            headers: {
+                "Content-Type": "application/json",
+                ...(options.headers ?? {}),
+            },
+            ...options,
+            signal: options.signal || controller.signal,
+        });
+        clearTimeout(timeout);
 
-    if (!response.ok) {
-        let detail = "Request failed";
+        if (!response.ok) {
+            let detail = "Request failed";
 
-        try {
-            const errorData = await response.json();
-            detail = errorData.detail ?? detail;
-        } catch (error) {
-            // Ignore JSON parsing errors and keep the fallback message.
+            try {
+                const errorData = await response.json();
+                detail = errorData.detail ?? detail;
+            } catch (error) {
+                // Ignore JSON parsing errors and keep the fallback message.
+            }
+
+            throw new Error(detail);
         }
 
-        throw new Error(detail);
-    }
+        if (response.status === 204) {
+            return null;
+        }
 
-    if (response.status === 204) {
-        return null;
+        return response.json();
+    } catch (err) {
+        clearTimeout(timeout);
+        if (err.name === "AbortError") {
+            console.warn(`Request to ${url} timed out after 15s`);
+            return null;
+        }
+        throw err;
     }
-
-    return response.json();
 }
 
 async function loadNodes() {
@@ -8948,7 +8961,7 @@ async function handleNodeActionClick(event) {
 const DISCOVERY_DRAG_FOLLOW = 0.08;
 const DISCOVERY_DAMPING = 0.82;
 const DISCOVERY_OVERLAP_PUSH = 2.0;  // hard separation force multiplier
-const DISCOVERY_REFRESH_MS = 30000;
+const DISCOVERY_REFRESH_MS = 300000; // 5 min safety-net; SSE is primary update mechanism
 
 // Dynamic physics/sizing based on node count — lerps between "few" and "many"
 // spreadFactor (0.5–2.0) scales spacing: >1 expands, <1 contracts

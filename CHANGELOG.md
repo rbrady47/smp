@@ -6,6 +6,19 @@ The format is intentionally simple so diffs stay readable in version control.
 
 ## Unreleased
 
+### Performance
+
+- **Connection pool sizing:** `pool_size=30`, `max_overflow=20`, `pool_timeout=10`, `pool_recycle=3600` — eliminates 20-30s request queueing when pollers exhaust the default 5-connection pool.
+- **Staggered poller startup:** 7 background pollers now start 0.5-5s apart instead of all at once, preventing thundering herd on interval alignment. Sleep jitter (`random.uniform(0, 1.0)`) prevents re-synchronization.
+- **Dedicated thread pool:** 40-thread `ThreadPoolExecutor` for blocking I/O (ping, TCP checks, nslookup) replaces the default 5-thread pool, preventing web request stalls.
+- **Circuit breaker:** Unreachable nodes are backed off exponentially (30s→60s→120s→300s max) after failures, freeing semaphore slots for reachable nodes. Tracked via `PollerState.node_failure_counts` / `node_backoff_until`.
+- **Reduced seeker timeout:** Per-node poll timeout reduced from 30s to 15s.
+- **Removed read-only commits:** Stripped `await db.commit()` from 6 GET-only route handlers (dashboard, topology, nodes), eliminating wasted DB round-trips.
+- **Composite chart index:** Added `ix_chart_samples_node_ts_type` on `(node_id, timestamp, sample_type)` for chart query performance.
+- **Batched discovery lookups:** Pre-built `all_seeker_details` and `all_dn_cache` dicts in submap discovery for O(1) lookups instead of repeated cache gets. Deferred full-node query in DN detail endpoint.
+- **Frontend fetch timeouts:** `apiRequest()` now uses `AbortController` with 15s timeout — pages show error state instead of hanging indefinitely.
+- **Discovery polling interval:** Reduced from 30s to 300s (5 min) safety-net; SSE is the primary update mechanism.
+
 ### Added
 
 - **Diagnostic Console:** New diag code system on the Diag page (`/health`). Operators type codes like `poller:status`, `cache:stats`, `db:pool` into a console input to query runtime diagnostics. Results display as formatted JSON. History chips allow quick re-runs. 9 starter codes covering pollers, caches, DB pool, Redis, system info, and per-node detail. Catalog in `docs/DIAG_CODES.md`.

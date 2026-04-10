@@ -8,6 +8,61 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-10 — Session: Performance Fixes (Tier 1 + Tier 2)
+
+### Branch / commit
+- Branch: `claude/fix-page-load-performance-jOU30`
+
+### What was built
+
+**Tier 1 — Eliminate 20-30s hangs:**
+- Sized connection pool: `pool_size=30, max_overflow=20, pool_timeout=10, pool_recycle=3600` (was defaults: 5/10/30/none)
+- Staggered 7 poller startups (0s to 5s apart) with sleep jitter to prevent thundering herd
+- Dedicated 40-thread `ThreadPoolExecutor` for blocking I/O (ping, TCP, nslookup) — was sharing default 5-thread pool
+- Circuit breaker on seeker polling: exponential backoff (30s→300s) for unreachable nodes via `PollerState.node_failure_counts` / `node_backoff_until`
+- Reduced per-node poll timeout from 30s to 15s
+
+**Tier 2 — Improve general responsiveness:**
+- Removed `await db.commit()` from 6 read-only GET handlers (dashboard, topology, nodes)
+- Added composite index `ix_chart_samples_node_ts_type` on `(node_id, timestamp, sample_type)` — migration `20260410_0018`
+- Pre-built lookup dicts in submap discovery for O(1) cache access; deferred full-node query in DN detail
+- Frontend `apiRequest()` now uses `AbortController` with 15s timeout
+- Discovery polling interval changed from 30s to 300s (SSE is primary)
+
+### Files touched
+- `app/db.py` — pool configuration
+- `app/main.py` — thread pool, staggered poller starts
+- `app/poller_state.py` — circuit breaker fields
+- `app/pollers/seeker.py` — circuit breaker logic, reduced timeout, jitter
+- `app/pollers/charts.py` — jitter
+- `app/pollers/dn_seeker.py` — jitter
+- `app/pollers/services.py` — jitter
+- `app/pollers/dashboard.py` — jitter
+- `app/routes/dashboard.py` — removed read-only commits
+- `app/routes/topology.py` — removed read-only commits
+- `app/routes/nodes.py` — removed read-only commit
+- `app/routes/discovery.py` — batched cache lookups, deferred query
+- `static/js/app.js` — fetch timeouts, discovery interval
+- `alembic/versions/20260410_0018_add_chart_samples_composite_index.py` (new)
+- `CHANGELOG.md`, `docs/AGENT_HANDOFF.md`, `docs/CODE_DOCUMENTATION.md`
+
+### Verification
+- `python -m compileall -f app tests alembic` — all pass
+- `python -m unittest discover -s tests` — same pre-existing failures (7 import errors + 1 topology test), no new failures
+
+### Assumptions / gaps
+- DB session release pattern (Fix 2) was already correct in all pollers — sessions close after node queries, before API calls
+- Circuit breaker state is in-memory only — resets on process restart (acceptable for this use case)
+- Pre-existing test failures: topology sort bug (`int('agg-cloud')`), missing `DATABASE_URL` for tests that import `app.db` directly
+
+### Next steps
+- Verify pool stats under load via `db:pool` diag command
+- Confirm circuit breaker behavior with known-unreachable nodes
+- Apply migration `20260410_0018` on production DB (`alembic upgrade head`)
+- Consider adding data retention policy for `chart_samples` table
+
+---
+
 ## 2026-04-08 — Session: Diagnostic Console + Link Bug Fixes
 
 ### Branch / commit
