@@ -1,3 +1,4 @@
+# DEV ONLY — do not use these credentials in production. Override via .env file.
 services:
   smp:
     build: .

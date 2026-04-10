@@ -831,7 +831,7 @@ These patterns caused severe production problems and must not be reintroduced:
 
 ### Known gaps / next steps
 - **P5.2.6**: 24hr Timeout & Reappear Logic — stale DNs disappear, re-discovered come back
-- **Cleanup**: Site 42 (HubASC-698042-ISKR) not showing on submap despite being in tunnel list
+- **Cleanup**: Site 42 (example site) not showing on submap despite being in tunnel list
 - **Cleanup**: DN debug logging still at debug level (appropriate)
 - **NSL**: Removed from topology/submaps (HTML commented out) — planned for main dashboard later
 - **Main map discovery**: Fixed Pydantic error but main map `/api/topology/discovery` still uses `TopologyDiscoveryPayload` model (submap returns plain dict)
