@@ -20,6 +20,7 @@ logging.basicConfig(
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.db import Base, async_engine
 from app.node_dashboard_backend import NodeDashboardBackend
@@ -267,7 +268,32 @@ async def lifespan(app: FastAPI):
 # App creation + router mounting
 # ---------------------------------------------------------------------------
 
+
+class StaticCacheMiddleware:
+    """Add Cache-Control headers to /static/ responses.
+
+    Templates use cache-busting query strings (?v=...) so a 24-hour cache
+    is safe — browsers fetch fresh assets after each deploy.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope["path"].startswith("/static/"):
+            async def send_with_cache(message):
+                if message["type"] == "http.response.start":
+                    headers = list(message.get("headers", []))
+                    headers.append((b"cache-control", b"public, max-age=86400"))
+                    message["headers"] = headers
+                await send(message)
+            await self.app(scope, receive, send_with_cache)
+        else:
+            await self.app(scope, receive, send)
+
+
 app = FastAPI(title="Seeker Management Platform", version="0.1.0", lifespan=lifespan)
+app.add_middleware(StaticCacheMiddleware)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 from app.routes.pages import router as pages_router

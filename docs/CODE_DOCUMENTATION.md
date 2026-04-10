@@ -149,6 +149,10 @@ Key functions: `update_node_state()`, `update_dn_state()`, `publish_service_stat
 | `GET /api/stream/node-states` | Legacy — node state changes only |
 | `GET /api/node-dashboard/stream` | Legacy — poll-based dashboard snapshot |
 
+**Keep-alive behavior:** Fallback (non-Redis) generators check for data changes every 1s. When no change is detected, they emit a keep-alive comment and sleep 15s (was 1s). This reduces TCP writes by 15x for idle connections and prevents buffer congestion when browser tabs are throttled.
+
+**Frontend SSE lifecycle:** The `visibilitychange` listener disconnects SSE when the tab goes to background and reconnects immediately on focus. The `beforeunload` handler ensures clean teardown on full-page navigation. Reconnect uses exponential backoff (2s base, 30s cap) instead of a fixed 10s delay.
+
 ### `app/poller_state.py`
 
 `PollerState` dataclass holding all mutable in-memory state: 11 cache dicts (ping, seeker, services, DN ping) + circuit breaker state (`node_failure_counts`, `node_backoff_until`) + 7 task handles + dashboard backend reference. A single instance (`_ps`) is created at module load in `main.py` and passed to every poller and service function.

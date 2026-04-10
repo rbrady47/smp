@@ -43,6 +43,7 @@ let topologyLastUpdatedAt = null;
 let topologyLastUpdatedTimer = null;
 let nodeDashboardEventSource = null;
 let nodeStateEventSource = null;
+let _sseReconnectAttempts = 0;
 let _prevNodeStates = {};
 const dashboardOrderStorageKey = "smp-dashboard-order";
 const anchorListOrderStorageKey = "smp-anchor-list-order";
@@ -3017,14 +3018,17 @@ function connectNodeStateStream() {
     es.onerror = () => {
         const ageEl = document.querySelector(".topology-updated-ago");
         if (ageEl) ageEl.textContent = "reconnecting\u2026";
-        // Close and reconnect manually with a delay to prevent rapid reconnect loops.
-        // The default EventSource auto-reconnect can flood the connection pool.
         es.close();
         nodeStateEventSource = null;
-        setTimeout(() => connectNodeStateStream(), 10000);
+
+        // Exponential backoff: 2s, 4s, 8s, cap at 30s
+        const delay = Math.min(2000 * Math.pow(2, _sseReconnectAttempts), 30000);
+        _sseReconnectAttempts++;
+        setTimeout(() => connectNodeStateStream(), delay);
     };
 
     es.onopen = () => {
+        _sseReconnectAttempts = 0;
         markTopologyLastUpdated();
     };
 
@@ -10960,6 +10964,26 @@ window.addEventListener("DOMContentLoaded", () => {
 
     // Connect SSE for real-time updates on all pages
     connectNodeStateStream();
+
+    // Pause SSE when tab is hidden to prevent TCP buffer congestion.
+    // Chrome throttles background tabs — the server-side generator keeps
+    // emitting keep-alive frames the client can't consume, filling TCP
+    // buffers and stalling the next navigation.
+    document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+            disconnectNodeStateStream();
+            disconnectNodeDashboardStream();
+        } else {
+            connectNodeStateStream();
+        }
+    });
+
+    // Clean SSE teardown on page navigation (full page loads don't
+    // trigger visibilitychange).
+    window.addEventListener("beforeunload", () => {
+        disconnectNodeStateStream();
+        disconnectNodeDashboardStream();
+    });
 
     const nodeForm = document.getElementById("node-form");
     const serviceForm = document.getElementById("service-form");

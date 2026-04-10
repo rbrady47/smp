@@ -6,6 +6,13 @@ The format is intentionally simple so diffs stay readable in version control.
 
 ## Unreleased
 
+### Fixed
+
+- **SSE idle stall:** Browser tab backgrounding caused TCP buffer congestion from 1Hz keep-alive frames, stalling subsequent navigations by 10-20s. Added `visibilitychange` listener to disconnect SSE when tab is hidden and reconnect immediately when visible. Added `beforeunload` handler for clean teardown on page navigation.
+- **SSE reconnect delay:** Replaced hard-coded 10s reconnect delay with exponential backoff (2s, 4s, 8s, cap 30s). First reconnect after a transient error now happens in ~2s instead of 10s.
+- **Static asset caching:** Added `StaticCacheMiddleware` setting `Cache-Control: public, max-age=86400` on `/static/` responses. Templates already use cache-busting `?v=` query strings. Eliminates redundant full transfers of `app.js` and `style.css` on every page navigation.
+- **SSE keep-alive frequency:** Server-side keep-alive interval increased from 1s to 15s during idle periods (data-changed path still checks every 1s). Reduces TCP writes by 15x for idle connections.
+
 ### Performance
 
 - **Connection pool sizing:** `pool_size=30`, `max_overflow=20`, `pool_timeout=10`, `pool_recycle=3600` — eliminates 20-30s request queueing when pollers exhaust the default 5-connection pool.

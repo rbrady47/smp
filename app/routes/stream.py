@@ -83,9 +83,10 @@ async def stream_events(
                 if serialized != last_sent:
                     yield f"event: snapshot\ndata: {serialized}\n\n"
                     last_sent = serialized
+                    await asyncio.sleep(1.0)   # Check for changes every 1s
                 else:
                     yield ": keep-alive\n\n"
-                await asyncio.sleep(1.0)
+                    await asyncio.sleep(15.0)  # No changes — slow keep-alive
         except asyncio.CancelledError:
             return
 
@@ -105,9 +106,10 @@ async def node_dashboard_stream(window_seconds: int = Query(default=60)) -> Stre
                 if serialized != last_sent:
                     yield f"event: snapshot\ndata: {serialized}\n\n"
                     last_sent = serialized
+                    await asyncio.sleep(1.0)
                 else:
                     yield ": keep-alive\n\n"
-                await asyncio.sleep(1.0)
+                    await asyncio.sleep(15.0)
         except asyncio.CancelledError:
             return
 
@@ -148,9 +150,10 @@ async def stream_node_states() -> StreamingResponse:
                 if serialized != last_sent:
                     yield f"event: snapshot\ndata: {serialized}\n\n"
                     last_sent = serialized
+                    await asyncio.sleep(1.0)
                 else:
                     yield ": keep-alive\n\n"
-                await asyncio.sleep(1.0)
+                    await asyncio.sleep(15.0)
         except asyncio.CancelledError:
             return
 

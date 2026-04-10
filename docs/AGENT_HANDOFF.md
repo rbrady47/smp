@@ -8,6 +8,30 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-10 — Session: SSE Idle Stall + Static Asset Caching
+
+### Branch / commit
+- Branch: `claude/fix-page-load-performance-jOU30`
+
+### What was built
+
+- **SSE visibility handling:** `visibilitychange` listener disconnects SSE on tab background, reconnects on focus. `beforeunload` handler ensures clean teardown on page navigation.
+- **SSE reconnect backoff:** Replaced 10s hard-coded delay with exponential backoff (2s, 4s, 8s, cap 30s). Reset on successful connect.
+- **Static cache headers:** `StaticCacheMiddleware` in `app/main.py` adds `Cache-Control: public, max-age=86400` to `/static/` responses.
+- **SSE keep-alive interval:** Server-side fallback generators now sleep 15s between keep-alive frames (was 1s). Data-changed path still checks every 1s.
+
+### Files touched
+- `static/js/app.js` — visibilitychange, beforeunload, backoff, reconnect counter
+- `app/main.py` — StaticCacheMiddleware class + registration
+- `app/routes/stream.py` — keep-alive interval 1s → 15s in 3 generators
+- `CHANGELOG.md`, `docs/AGENT_HANDOFF.md`, `docs/CODE_DOCUMENTATION.md`
+
+### Verification
+- `python -m compileall -f app tests alembic` — all pass
+- `python -m unittest discover -s tests` — 45/45 pass
+
+---
+
 ## 2026-04-10 — Session: Performance Fixes (Tier 1 + Tier 2)
 
 ### Branch / commit
