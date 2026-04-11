@@ -347,7 +347,7 @@ def build_mock_topology_payload(inventory_nodes: list[dict[str, Any]]) -> dict[s
         )
         lvl0_nodes.append(entity)
 
-    # Generate skeleton lvl1 nodes (one per location × unit)
+    # Generate skeleton lvl1 nodes (one per location x unit)
     lvl1_nodes: list[dict[str, Any]] = []
     for location in TOPOLOGY_LOCATIONS:
         for unit in TOPOLOGY_UNITS:
