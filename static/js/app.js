@@ -79,6 +79,10 @@ let topologyEditorStateLoaded = false;
 let topologyEditorStateSaveTimer = null;
 let topologyRefreshTimer = null;
 const topologyLinkStatsCache = new Map();
+/** Maps entity ID → DOM button element for incremental topology updates */
+const _topologyDomCache = new Map();
+/** Maps link ID → { hit: SVGLineElement, visual: SVGLineElement, handle1?: HTMLElement, handle2?: HTMLElement } */
+const _topologyLinkDomCache = new Map();
 
 // Throttle link tooltip refresh to avoid flooding the browser with HTTP requests
 let _linkTooltipRefreshTimer = null;
@@ -3392,9 +3396,7 @@ function _applyDnStateToPayloads(siteId, state) {
 }
 
 function _updateTopologyEntityDOM(entityId, state) {
-    const stage = document.getElementById("topology-stage");
-    if (!stage) return;
-    const el = stage.querySelector(`[data-topology-id="${entityId}"]`);
+    const el = _topologyDomCache.get(entityId);
     if (!el) return;
 
     // Update RTT chip
@@ -4994,6 +4996,309 @@ function isTopologyEntityVisible(entity) {
     return true;
 }
 
+function _buildEntityClasses(entity, fadedEntityIds) {
+    const isSubmap = entity.kind === "submap";
+    const isServiceCloud = entity.kind === "services-cloud";
+    const isCluster = entity.level === 2;
+    const isLvl1 = entity.level === 1;
+    const isFocusedUnit = entity.level === 2 && topologyState.focusUnit && topologyState.focusUnit === entity.unit;
+    const isDiscovered = entity.kind === "discovered";
+    return [
+        "topology-entity",
+        isCluster ? "topology-cluster" : "topology-node",
+        isSubmap ? "topology-submap" : "",
+        isDiscovered ? "topology-discovered" : "",
+        isServiceCloud ? "topology-service-cloud" : "",
+        `topology-status-${getEffectiveTopologyEntityStatus(entity) || "neutral"}`,
+        entity.level === 0 ? "topology-node-agg" : "",
+        isLvl1 ? "topology-node-lvl1" : "",
+        isFocusedUnit ? "is-selected" : "",
+        topologyState.selectedEntityIds.has(entity.id) ? "is-multi-selected" : "",
+        topologyState.selectedKind === "entity" && topologyState.selectedId === entity.id ? "is-selected" : "",
+        topologyState.pinnedTooltipId === entity.id ? "is-tooltip-pinned" : "",
+        fadedEntityIds.has(entity.id) ? "is-topology-faded" : "",
+    ]
+        .filter(Boolean)
+        .join(" ");
+}
+
+function _buildEntityHTML(entity, discoveryCounts, clusterStatusCounts, fadedEntityIds) {
+    const layout = getTopologyEntityLayout(entity);
+    const discoveredCount = getTopologyDiscoveryCount(entity, discoveryCounts);
+    const isSubmap = entity.kind === "submap";
+    const isServiceCloud = entity.kind === "services-cloud";
+    const isCluster = entity.level === 2;
+    const isDiscovered = entity.kind === "discovered";
+    const serviceSummary = isServiceCloud ? (entity.service_summary || getTopologyServiceCloudSummary()) : null;
+    const classes = _buildEntityClasses(entity, fadedEntityIds);
+
+    const subtitle = isSubmap
+        ? "Submap"
+        : isDiscovered
+        ? `via ${escapeHtml(entity.source_name || "anchor")}`
+        : isCluster
+        ? "Edge Nodes"
+        : escapeHtml(entity.node_id || entity.site_id || "--");
+    const displayName = isDiscovered
+        ? escapeHtml(entity.site_id || entity.node_id || entity.name)
+        : escapeHtml(getTopologyEntityLabel(entity));
+    const clusterUpCount = isCluster
+        ? getEffectiveTopologyClusterUpCount(entity.unit, clusterStatusCounts.upByUnit.get(entity.unit) || 0)
+        : 0;
+    const clusterFooter = isCluster
+        ? getTopologyClusterFooterMarkup(discoveredCount, clusterUpCount)
+        : "";
+    const nodeIcon = (!isCluster || isSubmap) ? getTopologyAnchorIconMarkup({ ...entity, status: getEffectiveTopologyEntityStatus(entity) }) : "";
+    const titleText = isSubmap
+        ? `Submap: ${entity.name}`
+        : isServiceCloud
+        ? "Services cloud"
+        : isCluster ? `${entity.unit} Edge Nodes` : entity.level === 1 ? `${entity.unit} / ${entity.location}` : entity.name;
+    const isAnchorNode = !isCluster && !isServiceCloud && !isSubmap && !isDiscovered && Boolean(entity.inventory_node_id);
+    const isInsideSubmap = Boolean(document.getElementById("topology-root")?.getAttribute("data-map-view-id"));
+    const hoverPanel = isServiceCloud
+        ? `
+            <span class="topology-service-cloud-tooltip" role="tooltip">
+                <strong class="topology-service-cloud-tooltip-title">Pinned Services</strong>
+                ${
+                    serviceSummary?.services?.length
+                        ? `<span class="topology-service-cloud-tooltip-list">${serviceSummary.services.map((service) => `
+                            <span class="topology-service-cloud-tooltip-item">
+                                <span class="topology-service-cloud-tooltip-name">${escapeHtml(service.name || `Service ${service.id}`)}</span>
+                                <span class="topology-service-cloud-tooltip-status status-pill status-${escapeHtml(String(service.status || "unknown").toLowerCase())}">${escapeHtml(service.status || "unknown")}</span>
+                            </span>
+                        `).join("")}</span>`
+                        : '<span class="topology-service-cloud-tooltip-empty">No services pinned yet.</span>'
+                }
+            </span>
+        `
+        : isAnchorNode ? (isInsideSubmap ? "" : getTopologyAnchorTooltipMarkup(entity))
+        : isDiscovered ? getTopologyDiscoveredTooltipMarkup(entity)
+        : "";
+    const bubbleStyle = `left:${layout.x}px; top:${layout.y}px; --topology-bubble-size:${layout.size}px;`;
+    const resizeHandle = topologyState.editMode
+        ? '<span class="topology-resize-handle" data-topology-resize-handle="true" aria-hidden="true"></span>'
+        : "";
+
+    const entityBody = isSubmap
+        ? `<span class="topology-node-name">${displayName}</span>${nodeIcon}`
+        : `${nodeIcon}<span class="topology-node-name">${displayName}</span>${(isServiceCloud || isDiscovered) ? "" : `<span class="topology-node-meta">${subtitle}</span>`}`;
+    return `
+        <button
+            type="button"
+            class="${classes}"
+            data-topology-id="${entity.id}"
+            aria-label="${escapeHtml(titleText)}"
+            data-topology-editable="${topologyState.editMode ? "true" : "false"}"
+            ${isSubmap && entity.map_view_id ? `data-map-view-id="${entity.map_view_id}"` : ""}
+            style="${bubbleStyle}"
+        >
+            ${entityBody}
+            ${clusterFooter}
+            ${hoverPanel}
+            ${resizeHandle}
+        </button>
+    `;
+}
+
+function _attachSubmapDnTooltip(submapBtn, icon) {
+    submapBtn.addEventListener("mouseenter", () => {
+        const raw = (icon.getAttribute("data-submap-dn-all") || "").split(",").filter(Boolean);
+        if (!raw.length) return;
+        document.querySelectorAll(".topology-submap-dn-tooltip").forEach((t) => t.remove());
+        const tip = document.createElement("div");
+        tip.className = "topology-submap-dn-tooltip";
+        tip.innerHTML = raw.map((entry) => {
+            const isUp = entry.startsWith("up:");
+            const name = entry.replace(/^(up|down):/, "");
+            const color = isUp ? "#4ade80" : "#ff4040";
+            return `<div style="color:${color}">${escapeHtml(name)}</div>`;
+        }).join("");
+        document.body.appendChild(tip);
+        const rect = submapBtn.getBoundingClientRect();
+        tip.style.left = `${rect.left + rect.width / 2}px`;
+        tip.style.top = `${rect.top - 6}px`;
+        submapBtn._dnTooltip = tip;
+    });
+    submapBtn.addEventListener("mouseleave", () => {
+        if (submapBtn._dnTooltip) {
+            submapBtn._dnTooltip.remove();
+            submapBtn._dnTooltip = null;
+        }
+    });
+}
+
+function _attachTopologyEntityListeners(button, entityMap) {
+    button.addEventListener("click", (event) => {
+        if (topologyState.editMode) {
+            const nextId = button.getAttribute("data-topology-id");
+            if (nextId) {
+                topologyState.selectedKind = "entity";
+                topologyState.selectedId = nextId;
+                if (!topologyState.selectedEntityIds.has(nextId)) {
+                    topologyState.selectedEntityIds = new Set([nextId]);
+                }
+            }
+            const layer = document.getElementById("topology-node-layer");
+            if (layer) syncTopologyEntitySelectionStyles(layer);
+            event.stopPropagation();
+            event.preventDefault();
+            return;
+        }
+        event.stopPropagation();
+        const nextId = button.getAttribute("data-topology-id");
+        const nextEntity = entityMap.get(nextId || "");
+        const isAnchorNode = Boolean(nextEntity?.inventory_node_id) && nextEntity?.level !== 2 && nextEntity?.kind !== "services-cloud";
+        if (topologyState.pinnedLinkTooltipId) {
+            topologyState.pinnedLinkTooltipId = null;
+            hideTopologyLinkTooltip();
+        }
+        if (nextEntity?.level === 2) {
+            topologyState.pinnedTooltipId = null;
+            if (topologyState.pinnedLinkNodeId) {
+                hideDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
+                topologyState.pinnedLinkNodeId = null;
+            }
+            setTopologyUnitFocus(nextEntity.unit);
+            updateTopologyUnitRoute(nextEntity.unit);
+            topologyState.selectedKind = "entity";
+            topologyState.selectedId = nextId;
+            renderTopologyControls();
+            renderTopologyStage(); // TODO: Phase1-patch — structural (changes visibility filter)
+            return;
+        }
+        if (isAnchorNode || nextEntity?.kind === "discovered") {
+            topologyState.pinnedTooltipId = topologyState.pinnedTooltipId === nextId ? null : nextId;
+            if (topologyState.pinnedLinkNodeId === nextId) {
+                topologyState.pinnedLinkNodeId = null;
+                hideAllDiscoveryLinks();
+                clearTopologyHoverFocus();
+            } else {
+                if (topologyState.pinnedLinkNodeId) {
+                    hideDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
+                }
+                topologyState.pinnedLinkNodeId = nextId;
+                revealDiscoveryLinksForEntity(nextId);
+                const root = document.getElementById("topology-root");
+                if (root?.getAttribute("data-map-view-id")) {
+                    applyTopologyHoverFocus(nextId);
+                }
+            }
+            renderTopologyStage(); // TODO: Phase1-patch — state-only (tooltip/discovery pin)
+            return;
+        }
+        topologyState.pinnedTooltipId = null;
+        if (topologyState.selectedKind === "entity" && topologyState.selectedId === nextId) {
+            topologyState.selectedKind = null;
+            topologyState.selectedId = null;
+        } else {
+            topologyState.selectedKind = "entity";
+            topologyState.selectedId = nextId;
+        }
+        if (nextEntity?.kind === "submap") {
+            const layer = document.getElementById("topology-node-layer");
+            if (layer) syncTopologyEntitySelectionStyles(layer);
+            return;
+        }
+        renderTopologyStage(); // TODO: Phase1-patch — state-only (selection toggle)
+    });
+
+    button.addEventListener("contextmenu", (event) => {
+        const nextId = button.getAttribute("data-topology-id");
+        const nextEntity = entityMap.get(nextId || "");
+        if (!nextId) return;
+        if (!topologyState.editMode) {
+            if (nextEntity?.kind === "discovered" && nextEntity?.site_id) {
+                openTopologyDetail(`/nodes/discovered/${encodeURIComponent(nextEntity.site_id)}`, nextEntity.name || nextEntity.site_id || "Discovered Node");
+                event.preventDefault();
+                event.stopPropagation();
+            } else if (nextEntity?.inventory_node_id) {
+                openTopologyDetail(`/nodes/${encodeURIComponent(nextEntity.inventory_node_id)}`, nextEntity.name || "Node Detail");
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            return;
+        }
+        topologyState.selectedKind = "entity";
+        topologyState.selectedId = nextId;
+        if (!topologyState.selectedEntityIds.has(nextId)) {
+            topologyState.selectedEntityIds = new Set([nextId]);
+        }
+        const layer = document.getElementById("topology-node-layer");
+        if (layer) syncTopologyEntitySelectionStyles(layer);
+        const root = document.getElementById("topology-root");
+        if (root?.getAttribute("data-map-view-id") && nextEntity?.map_object_id) {
+            event.preventDefault();
+            event.stopPropagation();
+            const confirmed = window.confirm(`Remove "${nextEntity.name || "this node"}" from the submap?`);
+            if (confirmed) {
+                deleteSubmapObject(nextEntity.map_object_id, nextEntity.id);
+            }
+            return;
+        }
+        if (nextEntity?.kind === "submap" && nextEntity?.map_view_id) {
+            event.preventDefault();
+            event.stopPropagation();
+            renameTopologySubmap(nextEntity);
+            return;
+        }
+        if (nextEntity?.inventory_node_id) {
+            populateNodeForm(Number(nextEntity.inventory_node_id));
+            openNodeModal({ reset: false });
+        }
+        event.preventDefault();
+        event.stopPropagation();
+    });
+
+    button.addEventListener("dblclick", (event) => {
+        if (topologyState.editMode) return;
+        const nextId = button.getAttribute("data-topology-id");
+        const nextEntity = entityMap.get(nextId || "");
+        if (nextEntity?.kind === "submap" && nextEntity?.map_view_id) {
+            window.location.href = `/topology/maps/${nextEntity.map_view_id}`;
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+        }
+        if (nextEntity?.kind === "discovered" && nextEntity?.host) {
+            topologyState.selectedKind = null;
+            topologyState.selectedId = null;
+            openWebForNode(nextEntity.host, 443, "https");
+            renderTopologyStage(); // TODO: Phase1-patch — state-only (clear selection)
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+        }
+        const isAnchorNode = Boolean(nextEntity?.inventory_node_id) && nextEntity?.level !== 2 && nextEntity?.kind !== "services-cloud";
+        if (!isAnchorNode || !nextEntity?.metrics_text) return;
+        topologyState.selectedKind = null;
+        topologyState.selectedId = null;
+        openWebForNode(nextEntity.metrics_text, nextEntity.web_port || 443, nextEntity.web_scheme || "https");
+        renderTopologyStage(); // TODO: Phase1-patch — state-only (clear selection)
+        event.preventDefault();
+        event.stopPropagation();
+    });
+
+    button.addEventListener("mouseenter", () => {
+        const entityId = button.getAttribute("data-topology-id");
+        if (!entityId || topologyState.editMode) return;
+        if (topologyState.pinnedLinkNodeId && topologyState.pinnedLinkNodeId !== entityId) return;
+        revealDiscoveryLinksForEntity(entityId);
+        const root = document.getElementById("topology-root");
+        if (root?.getAttribute("data-map-view-id")) {
+            applyTopologyHoverFocus(entityId);
+        }
+    });
+
+    button.addEventListener("mouseleave", () => {
+        const entityId = button.getAttribute("data-topology-id");
+        if (!entityId || topologyState.editMode) return;
+        if (topologyState.pinnedLinkNodeId === entityId) return;
+        hideDiscoveryLinksForEntity(entityId);
+        clearTopologyHoverFocus();
+    });
+}
+
 function renderTopologyStage() {
     if (topologyState.dragging) {
         return;
@@ -5031,6 +5336,9 @@ function renderTopologyStage() {
     }
 
     if (!visibleEntities.length) {
+        for (const [, cachedButton] of _topologyDomCache) cachedButton.remove();
+        _topologyDomCache.clear();
+        _topologyLinkDomCache.clear();
         layer.innerHTML = `
             <div class="topology-empty-state">
                 <strong>Blank map ready</strong>
@@ -5060,107 +5368,56 @@ function renderTopologyStage() {
         });
     }
 
-    layer.innerHTML = visibleEntities
-        .map((entity) => {
-            const layout = getTopologyEntityLayout(entity);
-            const discoveredCount = getTopologyDiscoveryCount(entity, discoveryCounts);
-            const isSubmap = entity.kind === "submap";
-            const isServiceCloud = entity.kind === "services-cloud";
-            const isCluster = entity.level === 2;
-            const isLvl1 = entity.level === 1;
-            const isFocusedUnit = entity.level === 2 && topologyState.focusUnit && topologyState.focusUnit === entity.unit;
-            const serviceSummary = isServiceCloud ? (entity.service_summary || getTopologyServiceCloudSummary()) : null;
-            const isDiscovered = entity.kind === "discovered";
-            const classes = [
-                  "topology-entity",
-                  isCluster ? "topology-cluster" : "topology-node",
-                  isSubmap ? "topology-submap" : "",
-                  isDiscovered ? "topology-discovered" : "",
-                  isServiceCloud ? "topology-service-cloud" : "",
-                  `topology-status-${getEffectiveTopologyEntityStatus(entity) || "neutral"}`,
-                  entity.level === 0 ? "topology-node-agg" : "",
-                  isLvl1 ? "topology-node-lvl1" : "",
-                  isFocusedUnit ? "is-selected" : "",
-                  topologyState.selectedEntityIds.has(entity.id) ? "is-multi-selected" : "",
-                  topologyState.selectedKind === "entity" && topologyState.selectedId === entity.id ? "is-selected" : "",
-                  topologyState.pinnedTooltipId === entity.id ? "is-tooltip-pinned" : "",
-                  fadedEntityIds.has(entity.id) ? "is-topology-faded" : "",
-              ]
-                .filter(Boolean)
-                .join(" ");
+    // --- Differential DOM update ---
+    const visibleIds = new Set(visibleEntities.map((e) => e.id));
 
-            const subtitle = isSubmap
-                ? "Submap"
-                : isDiscovered
-                ? `via ${escapeHtml(entity.source_name || "anchor")}`
-                : isCluster
-                ? "Edge Nodes"
-                : escapeHtml(entity.node_id || entity.site_id || "--");
-            const displayName = isDiscovered
-                ? escapeHtml(entity.site_id || entity.node_id || entity.name)
-                : escapeHtml(getTopologyEntityLabel(entity));
-            const clusterUpCount = isCluster
-                ? getEffectiveTopologyClusterUpCount(entity.unit, clusterStatusCounts.upByUnit.get(entity.unit) || 0)
-                : 0;
-            const clusterFooter = isCluster
-                ? getTopologyClusterFooterMarkup(discoveredCount, clusterUpCount)
-                : "";
-            const nodeIcon = (!isCluster || isSubmap) ? getTopologyAnchorIconMarkup({ ...entity, status: getEffectiveTopologyEntityStatus(entity) }) : "";
-            const titleText = isSubmap
-                ? `Submap: ${entity.name}`
-                : isServiceCloud
-                ? "Services cloud"
-                : isCluster ? `${entity.unit} Edge Nodes` : entity.level === 1 ? `${entity.unit} / ${entity.location}` : entity.name;
-            const isAnchorNode = !isCluster && !isServiceCloud && !isSubmap && !isDiscovered && Boolean(entity.inventory_node_id);
-            const isInsideSubmap = Boolean(document.getElementById("topology-root")?.getAttribute("data-map-view-id"));
-            const hoverPanel = isServiceCloud
-                ? `
-                    <span class="topology-service-cloud-tooltip" role="tooltip">
-                        <strong class="topology-service-cloud-tooltip-title">Pinned Services</strong>
-                        ${
-                            serviceSummary?.services?.length
-                                ? `<span class="topology-service-cloud-tooltip-list">${serviceSummary.services.map((service) => `
-                                    <span class="topology-service-cloud-tooltip-item">
-                                        <span class="topology-service-cloud-tooltip-name">${escapeHtml(service.name || `Service ${service.id}`)}</span>
-                                        <span class="topology-service-cloud-tooltip-status status-pill status-${escapeHtml(String(service.status || "unknown").toLowerCase())}">${escapeHtml(service.status || "unknown")}</span>
-                                    </span>
-                                `).join("")}</span>`
-                                : '<span class="topology-service-cloud-tooltip-empty">No services pinned yet.</span>'
-                        }
-                    </span>
-                `
-                : isAnchorNode ? (isInsideSubmap ? "" : getTopologyAnchorTooltipMarkup(entity))
-                : isDiscovered ? getTopologyDiscoveredTooltipMarkup(entity)
-                : "";
-            const bubbleStyle = `left:${layout.x}px; top:${layout.y}px; --topology-bubble-size:${layout.size}px;`;
-            const resizeHandle = topologyState.editMode
-                ? '<span class="topology-resize-handle" data-topology-resize-handle="true" aria-hidden="true"></span>'
-                : "";
-            // Link creation in edit mode is handled by edge-distance check in the pointerdown handler
+    // Remove cached nodes no longer visible
+    for (const [id, cachedButton] of _topologyDomCache) {
+        if (!visibleIds.has(id)) {
+            cachedButton.remove();
+            _topologyDomCache.delete(id);
+        }
+    }
 
-            const entityBody = isSubmap
-                ? `<span class="topology-node-name">${displayName}</span>${nodeIcon}`
-                : `${nodeIcon}<span class="topology-node-name">${displayName}</span>${(isServiceCloud || isDiscovered) ? "" : `<span class="topology-node-meta">${subtitle}</span>`}`;
-            return `
-                <button
-                    type="button"
-                    class="${classes}"
-                    data-topology-id="${entity.id}"
-                    aria-label="${escapeHtml(titleText)}"
-                    data-topology-editable="${topologyState.editMode ? "true" : "false"}"
-                    ${isSubmap && entity.map_view_id ? `data-map-view-id="${entity.map_view_id}"` : ""}
-                    style="${bubbleStyle}"
-                >
-                    ${entityBody}
-                    ${clusterFooter}
-                    ${hoverPanel}
-                    ${resizeHandle}
-                </button>
-            `;
-        })
-        .join("");
+    // Update existing nodes in-place, create new ones
+    for (const entity of visibleEntities) {
+        let button = _topologyDomCache.get(entity.id);
+        if (button) {
+            // Existing — rebuild HTML and replace (preserves listeners)
+            const temp = document.createElement("div");
+            temp.innerHTML = _buildEntityHTML(entity, discoveryCounts, clusterStatusCounts, fadedEntityIds);
+            const newButton = temp.firstElementChild;
+            if (newButton) {
+                // Preserve event listeners by copying only attributes and innerHTML
+                button.className = newButton.className;
+                button.setAttribute("style", newButton.getAttribute("style") || "");
+                button.setAttribute("aria-label", newButton.getAttribute("aria-label") || "");
+                button.dataset.topologyEditable = newButton.dataset.topologyEditable || "false";
+                if (newButton.hasAttribute("data-map-view-id")) {
+                    button.setAttribute("data-map-view-id", newButton.getAttribute("data-map-view-id"));
+                } else {
+                    button.removeAttribute("data-map-view-id");
+                }
+                button.innerHTML = newButton.innerHTML;
+            }
+        } else {
+            // New node — create from HTML, attach listeners ONCE, cache it
+            const temp = document.createElement("div");
+            temp.innerHTML = _buildEntityHTML(entity, discoveryCounts, clusterStatusCounts, fadedEntityIds);
+            button = temp.firstElementChild;
+            if (button) {
+                layer.appendChild(button);
+                _attachTopologyEntityListeners(button, entityMap);
+                const submapIcon = button.querySelector(".topology-node-icon-submap[data-submap-dn-all]");
+                if (submapIcon) {
+                    _attachSubmapDnTooltip(button, submapIcon);
+                }
+                _topologyDomCache.set(entity.id, button);
+            }
+        }
+    }
 
-    const visibleIds = new Set(visibleEntities.map((entity) => entity.id));
+    // Clean up stale selection state
     if (topologyState.selectedKind === "entity" && topologyState.selectedId && !visibleIds.has(topologyState.selectedId)) {
         topologyState.selectedKind = null;
         topologyState.selectedId = null;
@@ -5168,214 +5425,7 @@ function renderTopologyStage() {
     topologyState.selectedEntityIds = new Set(
         Array.from(topologyState.selectedEntityIds).filter((entityId) => visibleIds.has(entityId)),
     );
-
-      // Clean up any stale DN tooltips from previous render
-      document.querySelectorAll(".topology-submap-dn-tooltip").forEach((t) => t.remove());
-
-      // Submap hover tooltip — combined list of up (green) and down (red) DNs
-      layer.querySelectorAll(".topology-node-icon-submap[data-submap-dn-all]").forEach((icon) => {
-          const submapBtn = icon.closest(".topology-submap");
-          if (!submapBtn) return;
-          submapBtn.addEventListener("mouseenter", () => {
-              const raw = (icon.getAttribute("data-submap-dn-all") || "").split(",").filter(Boolean);
-              if (!raw.length) return;
-              document.querySelectorAll(".topology-submap-dn-tooltip").forEach((t) => t.remove());
-              const tip = document.createElement("div");
-              tip.className = "topology-submap-dn-tooltip";
-              tip.innerHTML = raw.map((entry) => {
-                  const isUp = entry.startsWith("up:");
-                  const name = entry.replace(/^(up|down):/, "");
-                  const color = isUp ? "#4ade80" : "#ff4040";
-                  return `<div style="color:${color}">${escapeHtml(name)}</div>`;
-              }).join("");
-              document.body.appendChild(tip);
-              const rect = submapBtn.getBoundingClientRect();
-              tip.style.left = `${rect.left + rect.width / 2}px`;
-              tip.style.top = `${rect.top - 6}px`;
-              submapBtn._dnTooltip = tip;
-          });
-          submapBtn.addEventListener("mouseleave", () => {
-              if (submapBtn._dnTooltip) {
-                  submapBtn._dnTooltip.remove();
-                  submapBtn._dnTooltip = null;
-              }
-          });
-      });
-
-      layer.querySelectorAll("[data-topology-id]").forEach((button) => {
-          // Link creation now handled via edge-distance check in the stage pointerdown handler
-          button.addEventListener("click", (event) => {
-              if (topologyState.editMode) {
-                  const nextId = button.getAttribute("data-topology-id");
-                  if (nextId) {
-                      topologyState.selectedKind = "entity";
-                      topologyState.selectedId = nextId;
-                      if (!topologyState.selectedEntityIds.has(nextId)) {
-                          topologyState.selectedEntityIds = new Set([nextId]);
-                      }
-                  }
-                  syncTopologyEntitySelectionStyles(layer);
-                  event.stopPropagation();
-                  event.preventDefault();
-                  return;
-              }
-              event.stopPropagation();
-              const nextId = button.getAttribute("data-topology-id");
-            const nextEntity = entityMap.get(nextId || "");
-            const isAnchorNode = Boolean(nextEntity?.inventory_node_id) && nextEntity?.level !== 2 && nextEntity?.kind !== "services-cloud";
-            // Clear any pinned link tooltip when clicking an entity
-            if (topologyState.pinnedLinkTooltipId) {
-                topologyState.pinnedLinkTooltipId = null;
-                hideTopologyLinkTooltip();
-            }
-            if (nextEntity?.level === 2) {
-                topologyState.pinnedTooltipId = null;
-                if (topologyState.pinnedLinkNodeId) {
-                    hideDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
-                    topologyState.pinnedLinkNodeId = null;
-                }
-                setTopologyUnitFocus(nextEntity.unit);
-                updateTopologyUnitRoute(nextEntity.unit);
-                topologyState.selectedKind = "entity";
-                topologyState.selectedId = nextId;
-                renderTopologyControls();
-                renderTopologyStage();
-                return;
-            }
-            if (isAnchorNode || nextEntity?.kind === "discovered") {
-                topologyState.pinnedTooltipId = topologyState.pinnedTooltipId === nextId ? null : nextId;
-                // Pin/unpin discovery links for this node
-                if (topologyState.pinnedLinkNodeId === nextId) {
-                    topologyState.pinnedLinkNodeId = null;
-                    hideAllDiscoveryLinks();
-                    clearTopologyHoverFocus();
-                } else {
-                    if (topologyState.pinnedLinkNodeId) {
-                        hideDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
-                    }
-                    topologyState.pinnedLinkNodeId = nextId;
-                    revealDiscoveryLinksForEntity(nextId);
-                    const root = document.getElementById("topology-root");
-                    if (root?.getAttribute("data-map-view-id")) {
-                        applyTopologyHoverFocus(nextId);
-                    }
-                }
-                renderTopologyStage();
-                return;
-            }
-            // Clicking a non-pinnable entity clears any pinned tooltip
-            topologyState.pinnedTooltipId = null;
-            if (topologyState.selectedKind === "entity" && topologyState.selectedId === nextId) {
-                topologyState.selectedKind = null;
-                topologyState.selectedId = null;
-            } else {
-                topologyState.selectedKind = "entity";
-                topologyState.selectedId = nextId;
-            }
-            if (nextEntity?.kind === "submap") {
-                syncTopologyEntitySelectionStyles(layer);
-                return;
-            }
-            renderTopologyStage();
-        });
-        button.addEventListener("contextmenu", (event) => {
-            const nextId = button.getAttribute("data-topology-id");
-            const nextEntity = entityMap.get(nextId || "");
-            if (!nextId) {
-                return;
-            }
-            if (!topologyState.editMode) {
-                if (nextEntity?.kind === "discovered" && nextEntity?.site_id) {
-                    openTopologyDetail(`/nodes/discovered/${encodeURIComponent(nextEntity.site_id)}`, nextEntity.name || nextEntity.site_id || "Discovered Node");
-                    event.preventDefault();
-                    event.stopPropagation();
-                } else if (nextEntity?.inventory_node_id) {
-                    openTopologyDetail(`/nodes/${encodeURIComponent(nextEntity.inventory_node_id)}`, nextEntity.name || "Node Detail");
-                    event.preventDefault();
-                    event.stopPropagation();
-                }
-                return;
-            }
-            topologyState.selectedKind = "entity";
-            topologyState.selectedId = nextId;
-            if (!topologyState.selectedEntityIds.has(nextId)) {
-                topologyState.selectedEntityIds = new Set([nextId]);
-            }
-            syncTopologyEntitySelectionStyles(layer);
-            const root = document.getElementById("topology-root");
-            if (root?.getAttribute("data-map-view-id") && nextEntity?.map_object_id) {
-                event.preventDefault();
-                event.stopPropagation();
-                const confirmed = window.confirm(`Remove "${nextEntity.name || "this node"}" from the submap?`);
-                if (confirmed) {
-                    deleteSubmapObject(nextEntity.map_object_id, nextEntity.id);
-                }
-                return;
-            }
-            if (nextEntity?.kind === "submap" && nextEntity?.map_view_id) {
-                event.preventDefault();
-                event.stopPropagation();
-                renameTopologySubmap(nextEntity);
-                return;
-            }
-            if (nextEntity?.inventory_node_id) {
-                populateNodeForm(Number(nextEntity.inventory_node_id));
-                openNodeModal({ reset: false });
-            }
-            event.preventDefault();
-            event.stopPropagation();
-        });
-        button.addEventListener("dblclick", (event) => {
-            if (topologyState.editMode) {
-                return;
-            }
-            const nextId = button.getAttribute("data-topology-id");
-            const nextEntity = entityMap.get(nextId || "");
-            if (nextEntity?.kind === "submap" && nextEntity?.map_view_id) {
-                window.location.href = `/topology/maps/${nextEntity.map_view_id}`;
-                event.preventDefault();
-                event.stopPropagation();
-                return;
-            }
-            if (nextEntity?.kind === "discovered" && nextEntity?.host) {
-                topologyState.selectedKind = null;
-                topologyState.selectedId = null;
-                openWebForNode(nextEntity.host, 443, "https");
-                renderTopologyStage();
-                event.preventDefault();
-                event.stopPropagation();
-                return;
-            }
-            const isAnchorNode = Boolean(nextEntity?.inventory_node_id) && nextEntity?.level !== 2 && nextEntity?.kind !== "services-cloud";
-            if (!isAnchorNode || !nextEntity?.metrics_text) {
-                return;
-            }
-            topologyState.selectedKind = null;
-            topologyState.selectedId = null;
-            openWebForNode(nextEntity.metrics_text, nextEntity.web_port || 443, nextEntity.web_scheme || "https");
-            renderTopologyStage();
-            event.preventDefault();
-            event.stopPropagation();
-        });
-        // Discovery link reveal on hover
-        button.addEventListener("mouseenter", () => {
-            const entityId = button.getAttribute("data-topology-id");
-            if (!entityId || topologyState.editMode) return;
-            if (topologyState.pinnedLinkNodeId && topologyState.pinnedLinkNodeId !== entityId) return;
-            revealDiscoveryLinksForEntity(entityId);
-            const root = document.getElementById("topology-root");
-            if (root?.getAttribute("data-map-view-id")) {
-                applyTopologyHoverFocus(entityId);
-            }
-        });
-        button.addEventListener("mouseleave", () => {
-            const entityId = button.getAttribute("data-topology-id");
-            if (!entityId || topologyState.editMode) return;
-            if (topologyState.pinnedLinkNodeId === entityId) return;
-            hideDiscoveryLinksForEntity(entityId);
-            clearTopologyHoverFocus();
-        });
-    });
+    document.querySelectorAll(".topology-submap-dn-tooltip").forEach((t) => t.remove());
 
     if (topologyState.editMode) {
         wireTopologyLayoutEditor(stage, layer, entityMap);
@@ -5991,6 +6041,8 @@ async function refreshTopologyData() {
         const result = await apiRequest(buildNodeDashboardRequestUrl("/api/topology"));
         if (result && gen === _topologyFetchGeneration) {
             topologyPayload = result;
+            _topologyDomCache.clear();
+            _topologyLinkDomCache.clear();
         }
     } catch (error) {
         console.error("Failed to refresh topology data:", error);
@@ -7434,10 +7486,14 @@ async function loadTopologyPage() {
                 }
             });
             topologyPayload = { lvl0_nodes: submapEntities, lvl1_nodes: [], lvl2_clusters: [], submaps: [], links: [] };
+            _topologyDomCache.clear();
+            _topologyLinkDomCache.clear();
             await refreshSubmapDiscovery(submapViewId);
             renderSubmapAddNodeList();
         } else {
             topologyPayload = topologyResult.value;
+            _topologyDomCache.clear();
+            _topologyLinkDomCache.clear();
         }
         topologyDiscoveryPayload = discoveryResult.status === "fulfilled"
             ? discoveryResult.value
@@ -7925,6 +7981,8 @@ async function refreshTopologyPage(callerGeneration) {
 
         if (topologyResult.status === "fulfilled") {
             topologyPayload = topologyResult.value;
+            _topologyDomCache.clear();
+            _topologyLinkDomCache.clear();
         }
         if (discoveryResult.status === "fulfilled") {
             topologyDiscoveryPayload = discoveryResult.value;
@@ -7976,6 +8034,8 @@ async function refreshTopologyStructure() {
 
         if (topologyResult.status === "fulfilled") {
             topologyPayload = topologyResult.value;
+            _topologyDomCache.clear();
+            _topologyLinkDomCache.clear();
         }
         if (discoveryResult.status === "fulfilled") {
             topologyDiscoveryPayload = discoveryResult.value;
