@@ -357,17 +357,23 @@ async def subscribe_channels(
     pubsub = r.pubsub()
     try:
         await pubsub.subscribe(*target_channels)
+        ticks_since_data = 0
         while True:
             # Poll with a short timeout so CancelledError propagates
             message = await pubsub.get_message(
                 ignore_subscribe_messages=True, timeout=1.0,
             )
             if message is None:
-                # No message within timeout — yield control, check cancel
+                ticks_since_data += 1
+                # Yield keepalive sentinel every ~30s of silence
+                if ticks_since_data >= 30:
+                    ticks_since_data = 0
+                    yield {"type": "__keepalive__"}
                 await asyncio.sleep(0)
                 continue
             if message["type"] != "message":
                 continue
+            ticks_since_data = 0
             try:
                 yield json.loads(message["data"])
             except (json.JSONDecodeError, TypeError):

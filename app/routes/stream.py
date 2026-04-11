@@ -84,6 +84,9 @@ async def stream_events(
 
             # Live phase: subscribe and forward
             async for event in state_manager.subscribe_channels(redis_channels):
+                if event.get("type") == "__keepalive__":
+                    yield ": keep-alive\n\n"
+                    continue
                 event_type = event.get("type", "node_update")
                 yield f"event: {event_type}\ndata: {json.dumps(event, default=str)}\n\n"
         except Exception:
@@ -151,6 +154,9 @@ async def stream_node_states() -> StreamingResponse:
             yield f"event: snapshot\ndata: {json.dumps(snapshot, default=str)}\n\n"
 
             async for event in state_manager.subscribe_state_changes():
+                if event.get("type") == "__keepalive__":
+                    yield ": keep-alive\n\n"
+                    continue
                 event_type = event.get("type", "node_update")
                 yield f"event: {event_type}\ndata: {json.dumps(event, default=str)}\n\n"
         except Exception:

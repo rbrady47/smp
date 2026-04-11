@@ -26,7 +26,13 @@ async def get_redis() -> redis.Redis | None:
     if _pool is not None:
         return _pool
     try:
-        _pool = redis.from_url(REDIS_URL, decode_responses=True)
+        _pool = redis.from_url(
+            REDIS_URL,
+            decode_responses=True,
+            max_connections=20,
+            socket_timeout=10,
+            socket_connect_timeout=5,
+        )
         await _pool.ping()
         logger.info("Redis connected at %s", REDIS_URL)
         return _pool

@@ -8,6 +8,33 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-11 — Session: SSE Listener Leak Fix + Keepalive Hardening
+
+### Branch / commit
+- Branch: `cowork/working-state-2026-04-11`
+
+### What was built
+
+- **Named SSE handlers** (`sseHandlers` dict in `app.js`): all 9 event listeners extracted to named references, added to EventSource via loop, removed via `removeEventListener` in `disconnectNodeStateStream()`. Eliminates listener accumulation on reconnect.
+- **Exponential backoff**: `sseReconnectDelay` starts at 2s, doubles on each error, caps at 60s, resets on successful `onopen`.
+- **Visibility debounce**: 500ms `setTimeout` in `visibilitychange` handler prevents reconnect thrash on rapid tab switching.
+- **Redis SSE keepalive**: `subscribe_channels()` in `state_manager.py` yields `{"type": "__keepalive__"}` sentinel every ~30s of pub/sub silence. Both Redis SSE generators in `stream.py` emit `": keep-alive\n\n"` comments on sentinel.
+- **Redis connection limits**: `max_connections=20`, `socket_timeout=10`, `socket_connect_timeout=5` added to `redis_client.py`.
+
+### Files touched
+- `static/js/app.js` — SSE handler refactor, backoff, visibility debounce
+- `app/state_manager.py` — keepalive sentinel in `subscribe_channels()`
+- `app/routes/stream.py` — keepalive handling in both Redis generators
+- `app/redis_client.py` — connection pool limits
+- `CHANGELOG.md`, `docs/AGENT_HANDOFF.md`
+
+### Verification
+- `python -m compileall app -q` — zero errors
+- `python -m unittest discover -s tests` — 45/45 pass
+- `app.js`: 11228 lines, `{}` 2940/2940, `()` 6388/6388, zero null bytes
+
+---
+
 ## 2026-04-11 — Session: Tab Visibility Recovery + Truncated File Repair
 
 ### Branch / commit

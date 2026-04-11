@@ -43,7 +43,6 @@ let topologyLastUpdatedAt = null;
 let topologyLastUpdatedTimer = null;
 let nodeDashboardEventSource = null;
 let nodeStateEventSource = null;
-let _sseReconnectAttempts = 0;
 let _prevNodeStates = {};
 const dashboardOrderStorageKey = "smp-dashboard-order";
 const anchorListOrderStorageKey = "smp-anchor-list-order";
@@ -2931,8 +2930,44 @@ function connectNodeDashboardStream() {
 
 // --- SSE-driven real-time node state updates ---
 
+const sseHandlers = {
+    snapshot: (e) => {
+        try { applyFullSnapshot(JSON.parse(e.data)); } catch (err) { /* non-fatal */ }
+    },
+    node_update: (e) => {
+        try { const { id, state } = JSON.parse(e.data); applyNodeUpdate(id, state); } catch (err) { /* non-fatal */ }
+    },
+    dn_update: (e) => {
+        try { const { id, state } = JSON.parse(e.data); applyDnUpdate(id, state); } catch (err) { /* non-fatal */ }
+    },
+    node_offline: (e) => {
+        try { const { id } = JSON.parse(e.data); applyNodeOffline(id); } catch (err) { /* non-fatal */ }
+    },
+    service_snapshot: (e) => {
+        try { applyServiceSnapshot(JSON.parse(e.data)); } catch (err) { /* non-fatal */ }
+    },
+    service_update: (e) => {
+        try { const { id, state } = JSON.parse(e.data); applyServiceUpdate(id, state); } catch (err) { /* non-fatal */ }
+    },
+    dn_discovered: (e) => {
+        try { applyDnDiscovered(JSON.parse(e.data)); } catch (err) { /* non-fatal */ }
+    },
+    dn_removed: (e) => {
+        try { const { site_id } = JSON.parse(e.data); applyDnRemoved(site_id); } catch (err) { /* non-fatal */ }
+    },
+    structure_changed: (e) => {
+        try { applyStructureChanged(JSON.parse(e.data)); } catch (err) { /* non-fatal */ }
+    },
+};
+
+let sseReconnectDelay = 2000;
+const SSE_RECONNECT_MAX = 60000;
+
 function disconnectNodeStateStream() {
     if (nodeStateEventSource) {
+        for (const [event, handler] of Object.entries(sseHandlers)) {
+            nodeStateEventSource.removeEventListener(event, handler);
+        }
         nodeStateEventSource.close();
         nodeStateEventSource = null;
     }
@@ -2946,88 +2981,21 @@ function connectNodeStateStream() {
     disconnectNodeStateStream();
     const es = new EventSource("/api/stream/events");
 
-    es.addEventListener("snapshot", (e) => {
-        try {
-            const data = JSON.parse(e.data);
-            applyFullSnapshot(data);
-        } catch (err) { /* non-fatal */ }
-    });
-
-    es.addEventListener("node_update", (e) => {
-        try {
-            const { id, state } = JSON.parse(e.data);
-            applyNodeUpdate(id, state);
-        } catch (err) { /* non-fatal */ }
-    });
-
-    es.addEventListener("dn_update", (e) => {
-        try {
-            const { id, state } = JSON.parse(e.data);
-            applyDnUpdate(id, state);
-        } catch (err) { /* non-fatal */ }
-    });
-
-    es.addEventListener("node_offline", (e) => {
-        try {
-            const { id } = JSON.parse(e.data);
-            applyNodeOffline(id);
-        } catch (err) { /* non-fatal */ }
-    });
-
-    // --- Service events (Phase 3 channels) ---
-
-    es.addEventListener("service_snapshot", (e) => {
-        try {
-            const data = JSON.parse(e.data);
-            applyServiceSnapshot(data);
-        } catch (err) { /* non-fatal */ }
-    });
-
-    es.addEventListener("service_update", (e) => {
-        try {
-            const { id, state } = JSON.parse(e.data);
-            applyServiceUpdate(id, state);
-        } catch (err) { /* non-fatal */ }
-    });
-
-    // --- Discovery events ---
-
-    es.addEventListener("dn_discovered", (e) => {
-        try {
-            const data = JSON.parse(e.data);
-            applyDnDiscovered(data);
-        } catch (err) { /* non-fatal */ }
-    });
-
-    es.addEventListener("dn_removed", (e) => {
-        try {
-            const { site_id } = JSON.parse(e.data);
-            applyDnRemoved(site_id);
-        } catch (err) { /* non-fatal */ }
-    });
-
-    // --- Topology structure events ---
-
-    es.addEventListener("structure_changed", (e) => {
-        try {
-            const data = JSON.parse(e.data);
-            applyStructureChanged(data);
-        } catch (err) { /* non-fatal */ }
-    });
+    for (const [event, handler] of Object.entries(sseHandlers)) {
+        es.addEventListener(event, handler);
+    }
 
     es.onerror = () => {
         const ageEl = document.querySelector(".topology-updated-ago");
         if (ageEl) ageEl.textContent = "reconnecting\u2026";
-        // Use a shorter delay when the tab is visible (user is waiting)
-        // and a longer delay when hidden (Chrome will throttle anyway).
         es.close();
         nodeStateEventSource = null;
-        const delay = document.visibilityState === "visible" ? 3000 : 30000;
-        setTimeout(() => connectNodeStateStream(), delay);
+        setTimeout(() => connectNodeStateStream(), sseReconnectDelay);
+        sseReconnectDelay = Math.min(sseReconnectDelay * 2, SSE_RECONNECT_MAX);
     };
 
     es.onopen = () => {
-        _sseReconnectAttempts = 0;
+        sseReconnectDelay = 2000;  // reset on successful connect
         markTopologyLastUpdated();
     };
 
@@ -11241,7 +11209,14 @@ window.addEventListener("DOMContentLoaded", () => {
             disconnectNodeStateStream();
             disconnectNodeDashboardStream();
         } else {
-            handleVisibilityRecovery();
+            // Small delay to avoid reconnect thrash on rapid tab switching
+            setTimeout(() => {
+                handleVisibilityRecovery();
+                // Re-trigger dashboard polling if on a dashboard page
+                if (document.getElementById("nodeGrid") || document.getElementById("mainNodeGrid")) {
+                    applyDashboardRefreshInterval();
+                }
+            }, 500);
         }
     });
 
