@@ -560,4 +560,16 @@ async def get_submap_discovery(
 
 
 @router.put("/topology/maps/discovered-nodes/{site_id}/position")
-async def save_dn_position
+async def save_dn_position(
+    site_id: str,
+    payload: dict[str, int | None],
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    dn = await db.get(DiscoveredNode, site_id)
+    if not dn:
+        raise HTTPException(status_code=404, detail="Discovered node not found")
+    dn.map_x = payload.get("x")
+    dn.map_y = payload.get("y")
+    dn.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"status": "ok"}

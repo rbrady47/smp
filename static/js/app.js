@@ -3018,12 +3018,11 @@ function connectNodeStateStream() {
     es.onerror = () => {
         const ageEl = document.querySelector(".topology-updated-ago");
         if (ageEl) ageEl.textContent = "reconnecting\u2026";
+        // Use a shorter delay when the tab is visible (user is waiting)
+        // and a longer delay when hidden (Chrome will throttle anyway).
         es.close();
         nodeStateEventSource = null;
-
-        // Exponential backoff: 2s, 4s, 8s, cap at 30s
-        const delay = Math.min(2000 * Math.pow(2, _sseReconnectAttempts), 30000);
-        _sseReconnectAttempts++;
+        const delay = document.visibilityState === "visible" ? 3000 : 30000;
         setTimeout(() => connectNodeStateStream(), delay);
     };
 
@@ -3033,6 +3032,36 @@ function connectNodeStateStream() {
     };
 
     nodeStateEventSource = es;
+}
+
+// --- Tab visibility recovery ---
+// Chrome throttles background tabs aggressively: setInterval timers
+// fire at most once/minute, setTimeout is delayed, and the h2
+// connection or SSE stream may be torn down by nginx.  When the
+// user returns we need to reconnect SSE and refresh stale data.
+
+function handleVisibilityRecovery() {
+    if (document.visibilityState !== "visible") return;
+
+    // 1. Reconnect SSE if dead
+    if (!nodeStateEventSource || nodeStateEventSource.readyState === EventSource.CLOSED) {
+        console.log("[visibility] Tab visible — reconnecting SSE");
+        connectNodeStateStream();
+    }
+
+    // 2. Reset the "updated ago" baseline so it doesn't show a stale jump
+    markTopologyLastUpdated();
+
+    // 3. Force a data refresh for the current page context.
+    //    Each loader is guarded by checking for its root DOM element,
+    //    so only the active page actually fetches.
+    safeStart(loadMainDashboard, "main-dashboard");
+    safeStart(loadNodeDashboard, "node-dashboard");
+    safeStart(loadServicesDashboard, "services-dashboard");
+    safeStart(loadTopologyPage, "topology");
+    safeStart(loadChartsPage, "charts");
+    safeStart(loadHealthPage, "health");
+    safeStart(loadNodeDetailPage, "node-detail");
 }
 
 function applyFullSnapshot(data) {
@@ -10965,16 +10994,15 @@ window.addEventListener("DOMContentLoaded", () => {
     // Connect SSE for real-time updates on all pages
     connectNodeStateStream();
 
-    // Pause SSE when tab is hidden to prevent TCP buffer congestion.
-    // Chrome throttles background tabs — the server-side generator keeps
-    // emitting keep-alive frames the client can't consume, filling TCP
-    // buffers and stalling the next navigation.
+    // Recover from Chrome background-tab throttling: disconnect SSE
+    // when hidden (prevents TCP buffer congestion), reconnect and
+    // refresh stale page data when the user returns.
     document.addEventListener("visibilitychange", () => {
         if (document.hidden) {
             disconnectNodeStateStream();
             disconnectNodeDashboardStream();
         } else {
-            connectNodeStateStream();
+            handleVisibilityRecovery();
         }
     });
 

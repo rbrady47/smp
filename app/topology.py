@@ -334,4 +334,66 @@ def build_mock_topology_payload(inventory_nodes: list[dict[str, Any]]) -> dict[s
             inv_by_loc_unit_lvl1.setdefault((location, unit), node)
 
     # Generate skeleton lvl0 nodes (one per location), overlay inventory data
-    l
+    lvl0_nodes: list[dict[str, Any]] = []
+    for location in TOPOLOGY_LOCATIONS:
+        inv = inv_by_loc_lvl0.get(location)
+        entity = _make_entity(
+            inv,
+            entity_id=f"node-{inv.get('id') or 0}" if inv else f"agg-{location.lower()}",
+            name=f"{location} Aggregate",
+            location=location,
+            level=0,
+            unit="AGG",
+        )
+        lvl0_nodes.append(entity)
+
+    # Generate skeleton lvl1 nodes (one per location × unit)
+    lvl1_nodes: list[dict[str, Any]] = []
+    for location in TOPOLOGY_LOCATIONS:
+        for unit in TOPOLOGY_UNITS:
+            inv = inv_by_loc_unit_lvl1.get((location, unit))
+            entity = _make_entity(
+                inv,
+                entity_id=f"node-{inv.get('id') or 0}" if inv else f"lvl1-{location.lower()}-{unit.lower().replace(' ', '-').replace('/', '-')}",
+                name=f"{location} {unit}",
+                location=location,
+                level=1,
+                unit=unit,
+            )
+            lvl1_nodes.append(entity)
+
+    # Generate lvl2 cluster entries (one per unit)
+    lvl2_clusters: list[dict[str, Any]] = [
+        {
+            "id": f"cluster-{unit.lower().replace(' ', '-').replace('/', '-')}",
+            "name": f"{unit} Edge Nodes",
+            "unit": unit,
+            "count": TOPOLOGY_LVL2_COUNTS.get(unit, 0),
+            "level": 2,
+            "status": "neutral",
+        }
+        for unit in TOPOLOGY_UNITS
+    ]
+
+    # Generate backbone links between all lvl0 node pairs
+    links: list[dict[str, Any]] = []
+    for a, b in combinations(lvl0_nodes, 2):
+        link_status = _merge_topology_statuses(a["status"], b["status"])
+        links.append({
+            "id": f"backbone-{a['id']}-{b['id']}",
+            "from": a["id"],
+            "to": b["id"],
+            "kind": "backbone",
+            "status": link_status,
+        })
+
+    return {
+        "locations": TOPOLOGY_LOCATIONS,
+        "units": TOPOLOGY_UNITS,
+        "lvl0_nodes": lvl0_nodes,
+        "lvl1_nodes": lvl1_nodes,
+        "lvl2_clusters": lvl2_clusters,
+        "links": links,
+        "inventory_nodes": inventory_nodes,
+    }
+

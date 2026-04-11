@@ -812,4 +812,3 @@ class NodeDashboardBackendTest(unittest.IsolatedAsyncioTestCase):
         payload = await backend.build_projection(self.session, [anchor])
 
         self.assertEqual(payload["anchors"][0]["version"], "v1.15.2")
-                                                                                                                                                                                                                                   

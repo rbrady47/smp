@@ -314,4 +314,3 @@ async def delete_node(node_id: int, db: AsyncSession = Depends(get_db)) -> Respo
     await node_dashboard_backend.refresh_cache(db, remaining_nodes)
     await state_manager.publish_topology_change("node_deleted", id=deleted_node_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-                       

@@ -8,6 +8,30 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-11 — Session: Tab Visibility Recovery
+
+### Branch / commit
+- Branch: `cowork/working-state-2026-04-11`
+
+### What was built
+
+- **`handleVisibilityRecovery()`** in `app.js`: detects dead SSE and reconnects, resets "updated ago" baseline, re-fetches page data via `safeStart()` for all page contexts (dashboard, topology, services, charts, health, node detail).
+- **Updated `visibilitychange` listener**: calls `handleVisibilityRecovery()` on tab visible (was only reconnecting SSE).
+- **Visibility-aware SSE `onerror`**: 3s delay when visible, 30s when hidden (was exponential backoff). Hidden tabs don't waste resources reconnecting — the `visibilitychange` handler does it on return.
+
+### Spec
+- Implementation follows `SMP/VISIBILITY_RECOVERY_HANDOFF.md`
+
+### Files touched
+- `static/js/app.js` — `handleVisibilityRecovery()`, updated `visibilitychange` listener, updated `onerror`
+- `CHANGELOG.md`, `docs/AGENT_HANDOFF.md`
+
+### Verification
+- `python -m compileall -f app tests alembic` — all pass
+- `python -m unittest discover -s tests` — 45/45 pass
+
+---
+
 ## 2026-04-10 — Session: Nginx HTTP/2 Reverse Proxy
 
 ### Branch / commit

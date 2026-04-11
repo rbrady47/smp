@@ -260,4 +260,4 @@ async def charts_polling_loop(ps: PollerState) -> None:
         except Exception:
             logger.exception("Charts polling loop iteration failed")
 
-        await asyncio.sleep(CHARTS_POLL_INTE
+        await asyncio.sleep(CHARTS_POLL_INTERVAL_SECONDS + random.uniform(0, 1.0))

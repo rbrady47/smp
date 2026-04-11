@@ -246,4 +246,3 @@ async def topology_payload(
     result["links"] = authored_links
     result["submaps"] = submaps
     return result
-                                              

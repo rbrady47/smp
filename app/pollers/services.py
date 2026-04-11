@@ -237,4 +237,5 @@ def summarize_service_statuses(services: list[dict[str, object]]) -> dict[str, i
     }
     for service in services:
         status_value = str(service.get("status") or "unknown")
-        summary[status_value] = summary.get(st
+        summary[status_value] = summary.get(status_value, 0) + 1
+    return summary

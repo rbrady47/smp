@@ -266,4 +266,4 @@ async def node_dashboard_polling_loop(ps: PollerState) -> None:
         except Exception:
             logger.exception("Node dashboard cache refresh failed")
             ps.dashboard_backend.mark_cache_refresh_failed()
-        await asyncio.sleep(NODE_DASHBOARD_FAST_REF
+        await asyncio.sleep(NODE_DASHBOARD_FAST_REFRESH_SECONDS + random.uniform(0, 0.2))
