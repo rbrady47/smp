@@ -8,27 +8,29 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
-## 2026-04-11 — Session: Tab Visibility Recovery
+## 2026-04-11 — Session: Tab Visibility Recovery + Truncated File Repair
 
 ### Branch / commit
 - Branch: `cowork/working-state-2026-04-11`
 
 ### What was built
 
-- **`handleVisibilityRecovery()`** in `app.js`: detects dead SSE and reconnects, resets "updated ago" baseline, re-fetches page data via `safeStart()` for all page contexts (dashboard, topology, services, charts, health, node detail).
-- **Updated `visibilitychange` listener**: calls `handleVisibilityRecovery()` on tab visible (was only reconnecting SSE).
-- **Visibility-aware SSE `onerror`**: 3s delay when visible, 30s when hidden (was exponential backoff). Hidden tabs don't waste resources reconnecting — the `visibilitychange` handler does it on return.
+- **`handleVisibilityRecovery()`** in `app.js` (~line 3043): detects dead SSE and reconnects, resets "updated ago" baseline, re-fetches page data via `safeStart()` for all page contexts (dashboard, topology, services, charts, health, node detail).
+- **`visibilitychange` listener** (DOMContentLoaded closing block): calls `handleVisibilityRecovery()` on tab visible.
+- **Visibility-aware SSE `onerror`** (line ~3025): 3s delay when visible, 30s when hidden.
 
-### Spec
-- Implementation follows `SMP/VISIBILITY_RECOVERY_HANDOFF.md`
+### Truncated file repair
+- `static/js/app.js` was truncated at line ~11211 — missing the final ~60 lines (dashboardRefreshMenu remaining handlers, pointerdown/keydown listeners, conditional timer starts, `beforeunload`, closing `});`). Restored from `main` with visibility changes re-applied. Removed duplicate `visibilitychange` and `beforeunload` listeners from earlier edit.
+- 10 Python files were restored from `claude/fix-page-load-performance-jOU30` in the prior commit (63a9feb) — all compile cleanly.
 
 ### Files touched
-- `static/js/app.js` — `handleVisibilityRecovery()`, updated `visibilitychange` listener, updated `onerror`
+- `static/js/app.js` — truncation fix + visibility recovery
 - `CHANGELOG.md`, `docs/AGENT_HANDOFF.md`
 
 ### Verification
 - `python -m compileall -f app tests alembic` — all pass
 - `python -m unittest discover -s tests` — 45/45 pass
+- `app.js` brace balance: `{}` 2935/2935, `()` 6387/6387, `[]` 485/485, zero null bytes
 
 ---
 

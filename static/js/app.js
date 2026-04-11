@@ -10994,25 +10994,6 @@ window.addEventListener("DOMContentLoaded", () => {
     // Connect SSE for real-time updates on all pages
     connectNodeStateStream();
 
-    // Recover from Chrome background-tab throttling: disconnect SSE
-    // when hidden (prevents TCP buffer congestion), reconnect and
-    // refresh stale page data when the user returns.
-    document.addEventListener("visibilitychange", () => {
-        if (document.hidden) {
-            disconnectNodeStateStream();
-            disconnectNodeDashboardStream();
-        } else {
-            handleVisibilityRecovery();
-        }
-    });
-
-    // Clean SSE teardown on page navigation (full page loads don't
-    // trigger visibilitychange).
-    window.addEventListener("beforeunload", () => {
-        disconnectNodeStateStream();
-        disconnectNodeDashboardStream();
-    });
-
     const nodeForm = document.getElementById("node-form");
     const serviceForm = document.getElementById("service-form");
     const nodesTableBody = document.getElementById("nodes-table-body");
@@ -11209,4 +11190,64 @@ window.addEventListener("DOMContentLoaded", () => {
                 loadNodeDashboard();
                 return;
             }
+            if (document.getElementById("node-detail-root")) {
+                loadNodeDetailPage();
+                return;
+            }
+            if (document.getElementById("mainNodeGrid")) {
+                loadMainDashboard();
+                return;
+            }
+            if (document.getElementById("topology-root")) {
+                startTopologyTimers();
+                refreshTopologyPage();
+                return;
+            }
+        });
+        document.addEventListener("pointerdown", (event) => {
+            const target = event.target;
+
+            if (!(target instanceof Node)) {
+                return;
+            }
+
+            if (!dashboardRefreshMenu.contains(target) && !dashboardRefreshButton.contains(target)) {
+                setDashboardRefreshMenuOpen(false);
+            }
+        });
+        document.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") {
+                setDashboardRefreshMenuOpen(false);
+            }
+        });
+    }
+
+    if (
+        document.getElementById("nodeGrid")
+        || document.getElementById("mainNodeGrid")
+    ) {
+        applyDashboardRefreshInterval();
+    }
+
+    if (document.getElementById("topology-root")) {
+        startTopologyTimers();
+    }
+
+    // Recover from Chrome background-tab throttling: disconnect SSE
+    // when hidden (prevents TCP buffer congestion), reconnect and
+    // refresh stale page data when the user returns.
+    document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+            disconnectNodeStateStream();
+            disconnectNodeDashboardStream();
+        } else {
+            handleVisibilityRecovery();
+        }
+    });
+
+    window.addEventListener("beforeunload", () => {
+        disconnectNodeDashboardStream();
+        disconnectNodeStateStream();
+    });
+});
             
