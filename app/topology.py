@@ -37,7 +37,7 @@ def topology_status_from_node_status(status: str | None) -> str:
         return "healthy"
     if status_value == "degraded":
         return "degraded"
-    if status_value in {"offline", "disabled", "down", "failed", "unknown"}:
+    if status_value in {"offline", "disabled", "down", "failed"}:
         return "down"
     return "neutral"
 
@@ -283,69 +283,55 @@ def build_topology_discovery_payload(
 
 
 
+def _make_entity(node: dict[str, Any] | None, *, entity_id: str, name: str, location: str, level: int, unit: str) -> dict[str, Any]:
+    """Build a topology entity dict, overlaying inventory data when available."""
+    return {
+        "id": entity_id,
+        "name": str(node.get("name") or name) if node else name,
+        "location": location,
+        "level": level,
+        "unit": unit,
+        "status": topology_status_from_inventory(node) if node else "neutral",
+        "include_in_topology": True,
+        "inventory_node_id": node.get("id") if node else None,
+        "inventory_name": node.get("name") if node else None,
+        "node_id": node.get("node_id") if node else None,
+        "site_id": node.get("site_id") if node else None,
+        "latency_ms": node.get("latency_ms") if node else None,
+        "rtt_state": node.get("rtt_state") if node else None,
+        "tx_bps": node.get("tx_bps") if node else None,
+        "rx_bps": node.get("rx_bps") if node else None,
+        "tx_display": node.get("tx_display") if node else None,
+        "rx_display": node.get("rx_display") if node else None,
+        "cpu_avg": node.get("cpu_avg") if node else None,
+        "version": node.get("version") if node else None,
+        "web_port": node.get("web_port") if node else None,
+        "web_scheme": node.get("web_scheme") if node else None,
+        "metrics_text": (node.get("host") or "Awaiting first Seeker pull") if node else "Awaiting first Seeker pull",
+    }
+
+
 def build_mock_topology_payload(inventory_nodes: list[dict[str, Any]]) -> dict[str, Any]:
     authored_nodes = [
         node
         for node in inventory_nodes
         if node.get("include_in_topology", True)
     ]
-    authored_nodes.sort(
-        key=lambda node: (
-            int(node.get("topology_level") or 0),
-            str(normalize_topology_location(node.get("location")) or ""),
-            str(node.get("topology_unit") or ""),
-            str(node.get("name") or ""),
-            int(node.get("id") or 0),
-        )
-    )
 
-    lvl0_nodes: list[dict[str, Any]] = []
-    lvl1_nodes: list[dict[str, Any]] = []
+    # Index inventory nodes by topology position for binding
+    inv_by_loc_lvl0: dict[str, dict[str, Any]] = {}
+    inv_by_loc_unit_lvl1: dict[tuple[str, str], dict[str, Any]] = {}
 
     for node in authored_nodes:
         location = normalize_topology_location(node.get("location")) or "Cloud"
         if location not in TOPOLOGY_LOCATIONS:
             location = "Cloud"
         level = int(node.get("topology_level") or 0)
-        if level not in (0, 1):
-            level = 0
         unit = str(node.get("topology_unit") or ("AGG" if level == 0 else "DIV HQ")).strip() or ("AGG" if level == 0 else "DIV HQ")
-        entity = {
-            "id": f"node-{int(node.get('id') or 0)}",
-            "name": str(node.get("name") or "Node"),
-            "location": location,
-            "level": level,
-            "unit": unit,
-            "status": topology_status_from_inventory(node),
-            "include_in_topology": True,
-            "inventory_node_id": node.get("id"),
-            "inventory_name": node.get("name"),
-            "node_id": node.get("node_id"),
-            "site_id": node.get("site_id"),
-            "latency_ms": node.get("latency_ms"),
-            "rtt_state": node.get("rtt_state"),
-            "tx_bps": node.get("tx_bps"),
-            "rx_bps": node.get("rx_bps"),
-            "tx_display": node.get("tx_display"),
-            "rx_display": node.get("rx_display"),
-            "cpu_avg": node.get("cpu_avg"),
-            "version": node.get("version"),
-            "web_port": node.get("web_port"),
-            "web_scheme": node.get("web_scheme"),
-            "metrics_text": node.get("host") or "Awaiting first Seeker pull",
-        }
         if level == 0:
-            lvl0_nodes.append(entity)
+            inv_by_loc_lvl0.setdefault(location, node)
         else:
-            lvl1_nodes.append(entity)
+            inv_by_loc_unit_lvl1.setdefault((location, unit), node)
 
-    return {
-        "locations": TOPOLOGY_LOCATIONS,
-        "units": TOPOLOGY_UNITS,
-        "lvl0_nodes": lvl0_nodes,
-        "lvl1_nodes": lvl1_nodes,
-        "lvl2_clusters": [],
-        "links": [],
-        "inventory_nodes": inventory_nodes,
-    }
-
+    # Generate skeleton lvl0 nodes (one per location), overlay inventory data
+    l

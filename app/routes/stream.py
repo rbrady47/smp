@@ -14,6 +14,28 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 
+# Keep-alive interval (seconds) — long enough to avoid TCP buffer
+# congestion on idle/background tabs, short enough that a client
+# disconnect is detected promptly on HTTP/1.1 (where a long sleep
+# blocks the connection slot until the generator yields again).
+_KEEPALIVE_INTERVAL = 15.0
+_KEEPALIVE_TICK = 1.0  # Sleep granularity — CancelledError checked each tick
+
+
+async def _interruptible_sleep(seconds: float) -> None:
+    """Sleep in short ticks so CancelledError propagates promptly.
+
+    A plain ``await asyncio.sleep(15)`` inside an SSE generator won't
+    notice a client disconnect until the full 15 s elapses, because
+    Starlette only cancels the generator task on the next failed write.
+    By sleeping in 1 s increments we cap worst-case disconnect latency
+    to ~1 s instead of the full keep-alive interval.
+    """
+    remaining = seconds
+    while remaining > 0:
+        await asyncio.sleep(min(_KEEPALIVE_TICK, remaining))
+        remaining -= _KEEPALIVE_TICK
+
 # Valid channel names that clients can subscribe to
 _VALID_CHANNELS = {
     "node-states": state_manager.CHANNEL_NODE_STATES,
@@ -83,9 +105,10 @@ async def stream_events(
                 if serialized != last_sent:
                     yield f"event: snapshot\ndata: {serialized}\n\n"
                     last_sent = serialized
+                    await asyncio.sleep(1.0)   # Check for changes every 1s
                 else:
                     yield ": keep-alive\n\n"
-                await asyncio.sleep(1.0)
+                    await _interruptible_sleep(_KEEPALIVE_INTERVAL)
         except asyncio.CancelledError:
             return
 
@@ -105,9 +128,10 @@ async def node_dashboard_stream(window_seconds: int = Query(default=60)) -> Stre
                 if serialized != last_sent:
                     yield f"event: snapshot\ndata: {serialized}\n\n"
                     last_sent = serialized
+                    await asyncio.sleep(1.0)
                 else:
                     yield ": keep-alive\n\n"
-                await asyncio.sleep(1.0)
+                    await _interruptible_sleep(_KEEPALIVE_INTERVAL)
         except asyncio.CancelledError:
             return
 
@@ -148,9 +172,10 @@ async def stream_node_states() -> StreamingResponse:
                 if serialized != last_sent:
                     yield f"event: snapshot\ndata: {serialized}\n\n"
                     last_sent = serialized
+                    await asyncio.sleep(1.0)
                 else:
                     yield ": keep-alive\n\n"
-                await asyncio.sleep(1.0)
+                    await _interruptible_sleep(_KEEPALIVE_INTERVAL)
         except asyncio.CancelledError:
             return
 

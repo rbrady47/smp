@@ -8,7 +8,11 @@
 
 SMP is a FastAPI application with modular route modules and a vanilla JS frontend. Backend logic lives in `app/`, routes are split into `app/routes/`, the single-page frontend is `static/js/app.js` + `static/css/style.css`, and HTML is served via Jinja2 templates.
 
+In Docker, an Nginx reverse proxy terminates HTTP/2 + TLS on port 8443 and proxies to uvicorn over HTTP/1.1 internally. This eliminates HTTP/1.1 head-of-line blocking caused by the SSE connection occupying a keep-alive slot. Self-signed cert auto-generated on first boot.
+
 ```
+Browser ──HTTP/2+TLS──> Nginx (:8443) ──HTTP/1.1──> Uvicorn (:8000)
+
 Browser ──HTTP──> FastAPI (app/main.py)
                     ├── Route modules (app/routes/*.py)
                     │     ├── pages.py     — HTML page routes
@@ -110,15 +114,19 @@ All Seeker API rate fields (`txChanRate`, `rxChanRate`, `txTotRateIf`, `rxTotRat
 Async database layer. Exports:
 - `DATABASE_URL` — from environment variable
 - `Base` — SQLAlchemy `DeclarativeBase` for all models
-- `async_engine` — `create_async_engine(DATABASE_URL, pool_pre_ping=True)`
+- `async_engine` — `create_async_engine(DATABASE_URL, pool_pre_ping=True, pool_size=30, max_overflow=20, pool_timeout=10, pool_recycle=3600)`
 - `AsyncSessionLocal` — `async_sessionmaker(expire_on_commit=False)` producing `AsyncSession` instances
 - `get_db()` — async generator dependency for FastAPI route handlers
 
+**Connection pool:** 30 base + 20 overflow = 50 max connections. 7 pollers use ~7-10 at peak, leaving 40+ for web requests. `pool_timeout=10` means requests fail fast instead of hanging 30s. `pool_recycle=3600` prevents stale PostgreSQL connections.
+
 Alembic uses its own sync engine via `engine_from_config()` — it imports only `DATABASE_URL` and `Base`.
 
-### `app/main.py` (~220 lines)
+### `app/main.py` (~280 lines)
 
 Thin application entry point. Creates a `PollerState` instance, initializes the `NodeDashboardBackend`, starts/stops background polling loops via a FastAPI lifespan context manager, and mounts route modules. Startup uses `async_engine` for `Base.metadata.create_all` via `conn.run_sync()`. Also exports backward-compatible wrapper functions so route modules can import directly from `app.main`.
+
+**Startup sequence:** Lifespan sets a 40-thread `ThreadPoolExecutor` as the default executor (for ping/TCP/nslookup), warms caches from Redis, then starts 7 pollers with staggered delays (0s to 5s) to prevent thundering herd.
 
 ### `app/state_manager.py`
 
@@ -145,9 +153,13 @@ Key functions: `update_node_state()`, `update_dn_state()`, `publish_service_stat
 | `GET /api/stream/node-states` | Legacy — node state changes only |
 | `GET /api/node-dashboard/stream` | Legacy — poll-based dashboard snapshot |
 
+**Keep-alive behavior:** Fallback (non-Redis) generators check for data changes every 1s. When no change is detected, they emit a keep-alive comment and sleep 15s (was 1s). This reduces TCP writes by 15x for idle connections and prevents buffer congestion when browser tabs are throttled.
+
+**Frontend SSE lifecycle:** The `visibilitychange` listener disconnects SSE when the tab goes to background and reconnects immediately on focus. The `beforeunload` handler ensures clean teardown on full-page navigation. Reconnect uses exponential backoff (2s base, 30s cap) instead of a fixed 10s delay.
+
 ### `app/poller_state.py`
 
-`PollerState` dataclass holding all mutable in-memory state: 11 cache dicts (ping, seeker, services, DN ping) + 6 task handles (including `site_name_resolution_task`) + dashboard backend reference. A single instance (`_ps`) is created at module load in `main.py` and passed to every poller and service function.
+`PollerState` dataclass holding all mutable in-memory state: 11 cache dicts (ping, seeker, services, DN ping) + circuit breaker state (`node_failure_counts`, `node_backoff_until`) + 7 task handles + dashboard backend reference. A single instance (`_ps`) is created at module load in `main.py` and passed to every poller and service function.
 
 ### `app/pollers/` (6 files)
 
@@ -156,7 +168,7 @@ Background polling loops, each receiving `PollerState` as first parameter. All D
 | Module | Loop function | Interval | Purpose |
 |--------|--------------|----------|---------|
 | `ping.py` | `ping_monitor_loop(ps)` | 1s tick | ICMP probes for ANs + DNs |
-| `seeker.py` | `seeker_polling_loop(ps)` | 10s | Seeker API polling per AN (fast path — single-session login + config/stats/routes); concurrency capped at `SEEKER_POLL_CONCURRENCY = 20` |
+| `seeker.py` | `seeker_polling_loop(ps)` | 10s (+jitter) | Seeker API polling per AN (fast path — single-session login + config/stats/routes); concurrency capped at `SEEKER_POLL_CONCURRENCY = 20`; circuit breaker skips nodes in exponential backoff (30s→300s) |
 | `seeker.py` | `site_name_resolution_loop(ps)` | 30s (10s delay) | Remote site-name probes for unknown tunnel peers (slow path) |
 | `dn_seeker.py` | `dn_seeker_polling_loop(ps)` | 5s (10s delay) | DN Seeker API probing |
 | `services.py` | `service_polling_loop(ps)` | 30s | HTTP/DNS service checks |
@@ -533,41 +545,3 @@ Three themes: light, dark, vader. All CSS variables.
 |----------|-------|---------|
 | `topology.html` | `/topology`, `/topology/maps/{id}` | Topology canvas with edit controls, breadcrumbs, refresh selector |
 | `dashboard.html` | `/nodes/dashboard` | AN + DN node dashboard |
-| `main_dashboard.html` | `/` | Mission dashboard with pinned nodes/services |
-| `node_detail.html` | `/nodes/{id}`, `/nodes/discovered/{site_id}` | Drill-down node detail |
-| `nodes.html` | `/nodes` | Node inventory management |
-| `services.html` | `/services` | Service check inventory |
-| `services_dashboard.html` | `/services/dashboard` | Service health dashboard |
-| `index.html` | (landing) | Platform status landing page |
-
----
-
-## Database Migrations
-
-14 Alembic migrations in `alembic/versions/`, from `0001` (initial nodes table) through `0014` (discovered node map columns). Key additions:
-- `0005/0006`: Discovered nodes + observations tables
-- `0009`: Operational map tables (views, objects, links)
-- `0010/0011`: Topology editor state + demo mode
-- `0012`: Node ping fields
-- `0013`: Topology links table
-- `0014`: DN map positioning columns
-
----
-
-## Tests
-
-7 test modules using Python `unittest`, SQLite in-memory:
-
-| File | Tests | Coverage |
-|------|-------|----------|
-| `test_node_dashboard_backend.py` | 823 lines | Dashboard state machine, caching, projection |
-| `test_topology.py` | 191 lines | Topology helpers, status mapping, mock payload |
-| `test_operational_map_service.py` | 203 lines | Map CRUD operations |
-| `test_operational_map_schemas.py` | 75 lines | Schema validation |
-| `test_node_dashboard_summary.py` | 71 lines | Summarization logic |
-| `test_topology_editor_state_service.py` | 67 lines | Editor state persistence |
-| `test_node_watchlist_projection_service.py` | 54 lines | Watchlist filtering |
-
----
-
-*Last updated: 2026-04-06*

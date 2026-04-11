@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 import logging
+import random
 import subprocess
 import time
 from typing import TYPE_CHECKING
@@ -195,7 +196,7 @@ async def service_polling_loop(ps: PollerState) -> None:
         except Exception:
             logger.exception("Service polling loop iteration failed")
 
-        await asyncio.sleep(SERVICE_POLL_INTERVAL_SECONDS)
+        await asyncio.sleep(SERVICE_POLL_INTERVAL_SECONDS + random.uniform(0, 1.0))
 
 
 def merge_service_payload(ps: PollerState, service: ServiceCheck) -> dict[str, object]:
@@ -236,5 +237,4 @@ def summarize_service_statuses(services: list[dict[str, object]]) -> dict[str, i
     }
     for service in services:
         status_value = str(service.get("status") or "unknown")
-        summary[status_value] = summary.get(status_value, 0) + 1
-    return summary
+        summary[status_value] = summary.get(st

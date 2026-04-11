@@ -41,6 +41,10 @@ class PollerState:
     # --- Dashboard backend (set during init, not by dataclass default) ---
     dashboard_backend: NodeDashboardBackend | None = field(default=None, repr=False)
 
+    # --- Circuit breaker for unreachable nodes (keyed by Node.id) ---
+    node_failure_counts: dict[int, int] = field(default_factory=dict)
+    node_backoff_until: dict[int, float] = field(default_factory=dict)
+
     # --- Charts poller state (keyed by Node.id) ---
     charts_last_le: dict[int, int] = field(default_factory=dict)
     charts_raw_last_le: dict[int, int] = field(default_factory=dict)
@@ -50,6 +54,4 @@ class PollerState:
     seeker_poll_task: asyncio.Task | None = field(default=None, repr=False)
     site_name_resolution_task: asyncio.Task | None = field(default=None, repr=False)
     dn_seeker_poll_task: asyncio.Task | None = field(default=None, repr=False)
-    service_poll_task: asyncio.Task | None = field(default=None, repr=False)
-    node_dashboard_poll_task: asyncio.Task | None = field(default=None, repr=False)
-    charts_poll_task: asyncio.Task | None = field(default=None, repr=False)
+    service_poll_task: 

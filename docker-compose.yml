@@ -1,9 +1,18 @@
 # DEV ONLY — do not use these credentials in production. Override via .env file.
 services:
+  nginx:
+    build: ./nginx
+    ports:
+      - "8443:8443"
+    depends_on:
+      - smp
+    volumes:
+      - nginx-certs:/etc/nginx/certs
+
   smp:
     build: .
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     cap_add:
       - NET_RAW
     environment:
@@ -32,13 +41,4 @@ services:
       retries: 5
 
   redis:
-    image: docker.io/library/redis:7-alpine
-    command: redis-server --save "" --appendonly no
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 2s
-      timeout: 3s
-      retries: 5
-
-volumes:
-  pg-data:
+    image: d

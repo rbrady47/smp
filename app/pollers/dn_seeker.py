@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
@@ -111,4 +112,4 @@ async def dn_seeker_polling_loop(ps: PollerState) -> None:
         except Exception:
             logger.exception("DN Seeker polling loop iteration failed")
 
-        await asyncio.sleep(DN_SEEKER_POLL_INTERVAL_SECONDS)
+        await asyncio.sleep(DN_SEEKER_POLL_INTERVAL_SECONDS + random.uniform(0, 1.0))

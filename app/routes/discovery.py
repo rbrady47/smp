@@ -31,7 +31,6 @@ async def discovered_node_detail(
         normalize_node_dashboard_window,
         probe_discovered_node_detail,
     )
-    nodes = (await db.scalars(select(Node).order_by(Node.name))).all()
     cached = await node_dashboard_backend.ensure_discovered_node_cached(db, site_id)
 
     if not cached:
@@ -53,6 +52,7 @@ async def discovered_node_detail(
         raise HTTPException(status_code=404, detail="Discovered node detail not available")
 
     parent_site_id = str(cached.get("discovered_parent_site_id") or cached.get("surfaced_by_site_id") or "").strip()
+    nodes = (await db.scalars(select(Node).order_by(Node.name))).all()
     source_node = node_dashboard_backend.find_source_node_for_discovered_detail(cached, nodes)
     if source_node is None:
         raise HTTPException(status_code=404, detail="Discovered node detail not available")
@@ -271,9 +271,15 @@ async def get_submap_discovery(
         select(Node).where(Node.id.in_(placed_anchor_ids))
     )).all() if placed_anchor_ids else []
 
+    # Pre-load all seeker details into a local dict for O(1) lookups
+    all_seeker_details: dict[int, dict] = {
+        node_id: seeker_detail_cache.get(node_id) or {}
+        for node_id in seeker_detail_cache
+    }
+
     anchor_site_id_map: dict[int, str] = {}
     for node in anchor_nodes:
-        detail = seeker_detail_cache.get(node.id) or {}
+        detail = all_seeker_details.get(node.id) or {}
         cfg = detail.get("config_summary") if isinstance(detail.get("config_summary"), dict) else {}
         anchor_site_id_map[node.id] = str(cfg.get("site_id") or node.node_id or node.id).strip()
 
@@ -287,14 +293,14 @@ async def get_submap_discovery(
         inventory_site_ids.add(str(inv_node.id))
         if inv_node.host:
             inventory_hosts.add(str(inv_node.host).strip().lower())
-        inv_detail = seeker_detail_cache.get(inv_node.id) or {}
+        inv_detail = all_seeker_details.get(inv_node.id) or {}
         inv_config = inv_detail.get("config_summary") if isinstance(inv_detail.get("config_summary"), dict) else {}
         cfg_site_id = str(inv_config.get("site_id") or "").strip()
         if cfg_site_id:
             inventory_site_ids.add(cfg_site_id)
 
     for inv_node in all_inventory_nodes:
-        inv_detail = seeker_detail_cache.get(inv_node.id) or {}
+        inv_detail = all_seeker_details.get(inv_node.id) or {}
         for tun in (inv_detail.get("tunnels") or []):
             if not isinstance(tun, dict):
                 continue
@@ -318,7 +324,7 @@ async def get_submap_discovery(
             seen_site_ids[kdn.site_id] = kdn.source_anchor_node_id
 
     for node in anchor_nodes:
-        detail = seeker_detail_cache.get(node.id) or {}
+        detail = all_seeker_details.get(node.id) or {}
         config_summary = detail.get("config_summary") if isinstance(detail.get("config_summary"), dict) else {}
         source_site_id = str(config_summary.get("site_id") or node.node_id or "").strip() or str(node.id)
         source_name = str(config_summary.get("site_name") or node.name or "").strip() or node.name
@@ -389,10 +395,15 @@ async def get_submap_discovery(
             })
 
     # --- Second-hop: DN-to-DN discovery from cached DN tunnel data ---
+    # Pre-load all DN cache entries for O(1) lookups
+    all_dn_cache: dict[str, dict] = {
+        site_id: node_dashboard_backend.get_cached_discovered_node(site_id)
+        for site_id in node_dashboard_backend.discovered_node_cache
+    }
     first_hop_site_ids = set(seen_site_ids.keys())
     for first_hop_peer in list(discovered_peers):
         fh_site_id = str(first_hop_peer["site_id"])
-        cached_dn = node_dashboard_backend.get_cached_discovered_node(fh_site_id)
+        cached_dn = all_dn_cache.get(fh_site_id)
         if not cached_dn:
             logger.debug("DN-to-DN: no cache for %s", fh_site_id)
             continue
@@ -549,16 +560,4 @@ async def get_submap_discovery(
 
 
 @router.put("/topology/maps/discovered-nodes/{site_id}/position")
-async def save_dn_position(
-    site_id: str,
-    payload: dict[str, int | None],
-    db: AsyncSession = Depends(get_db),
-) -> dict[str, str]:
-    dn = await db.get(DiscoveredNode, site_id)
-    if not dn:
-        raise HTTPException(status_code=404, detail="Discovered node not found")
-    dn.map_x = payload.get("x")
-    dn.map_y = payload.get("y")
-    dn.updated_at = datetime.now(timezone.utc)
-    await db.commit()
-    return {"status": "ok"}
+async def save_dn_position

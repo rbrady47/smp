@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import time
 import logging
+import random
+import time
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
@@ -265,4 +266,4 @@ async def node_dashboard_polling_loop(ps: PollerState) -> None:
         except Exception:
             logger.exception("Node dashboard cache refresh failed")
             ps.dashboard_backend.mark_cache_refresh_failed()
-        await asyncio.sleep(NODE_DASHBOARD_FAST_REFRESH_SECONDS)
+        await asyncio.sleep(NODE_DASHBOARD_FAST_REF

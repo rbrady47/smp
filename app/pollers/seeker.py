@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 import logging
+import random
 import time
 from typing import TYPE_CHECKING
 
@@ -230,18 +231,35 @@ async def seeker_polling_loop(ps: PollerState) -> None:
             if enabled_nodes:
                 sem = asyncio.Semaphore(SEEKER_POLL_CONCURRENCY)
 
+                # Circuit breaker: skip nodes in backoff
+                now = time.monotonic()
+                poll_nodes = []
+                for node in enabled_nodes:
+                    if ps.node_backoff_until.get(node.id, 0) > now:
+                        continue
+                    poll_nodes.append(node)
+
                 async def _poll_with_limit(node: Node) -> dict[str, object]:
                     async with sem:
                         return await asyncio.wait_for(
-                            refresh_seeker_detail_for_node(ps, node), timeout=30.0,
+                            refresh_seeker_detail_for_node(ps, node), timeout=15.0,
                         )
 
                 results = await asyncio.gather(
-                    *(_poll_with_limit(node) for node in enabled_nodes),
+                    *(_poll_with_limit(node) for node in poll_nodes),
                     return_exceptions=True,
                 )
-                for node, result in zip(enabled_nodes, results):
+                for node, result in zip(poll_nodes, results):
                     if isinstance(result, Exception):
+                        # Circuit breaker: track failures and apply exponential backoff
+                        failures = ps.node_failure_counts.get(node.id, 0) + 1
+                        ps.node_failure_counts[node.id] = failures
+                        backoff_seconds = min(30 * (2 ** (failures - 1)), 300)
+                        ps.node_backoff_until[node.id] = time.monotonic() + backoff_seconds
+                        logger.warning(
+                            "Node %s failed %d times, backing off %ds",
+                            node.name, failures, backoff_seconds,
+                        )
                         cached = ps.seeker_detail_cache.get(node.id, {})
                         ps.seeker_detail_cache[node.id] = {
                             **cached,
@@ -272,6 +290,10 @@ async def seeker_polling_loop(ps: PollerState) -> None:
                             "cached_at": datetime.now(timezone.utc).isoformat(),
                         }
                         await state_manager.update_seeker_cache(node.id, ps.seeker_detail_cache[node.id])
+                    else:
+                        # Circuit breaker: clear failure tracking on success
+                        ps.node_failure_counts.pop(node.id, None)
+                        ps.node_backoff_until.pop(node.id, None)
 
                 backfill_needed = []
                 for node in enabled_nodes:
@@ -301,7 +323,7 @@ async def seeker_polling_loop(ps: PollerState) -> None:
         except Exception:
             logger.exception("Seeker polling loop iteration failed")
 
-        await asyncio.sleep(SEEKER_POLL_INTERVAL_SECONDS)
+        await asyncio.sleep(SEEKER_POLL_INTERVAL_SECONDS + random.uniform(0, 1.0))
 
 
 # ---------------------------------------------------------------------------
@@ -396,4 +418,4 @@ async def site_name_resolution_loop(ps: PollerState) -> None:
         except Exception:
             logger.exception("Site name resolution loop iteration failed")
 
-        await asyncio.sleep(SITE_NAME_RESOLUTION_INTERVAL_SECONDS)
+        await asyncio.sleep(SITE_NAME_RESOLUTION_INTERVAL_SECONDS + random.uniform(0, 1.0))

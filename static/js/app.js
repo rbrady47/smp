@@ -43,6 +43,7 @@ let topologyLastUpdatedAt = null;
 let topologyLastUpdatedTimer = null;
 let nodeDashboardEventSource = null;
 let nodeStateEventSource = null;
+let _sseReconnectAttempts = 0;
 let _prevNodeStates = {};
 const dashboardOrderStorageKey = "smp-dashboard-order";
 const anchorListOrderStorageKey = "smp-anchor-list-order";
@@ -3017,14 +3018,17 @@ function connectNodeStateStream() {
     es.onerror = () => {
         const ageEl = document.querySelector(".topology-updated-ago");
         if (ageEl) ageEl.textContent = "reconnecting\u2026";
-        // Close and reconnect manually with a delay to prevent rapid reconnect loops.
-        // The default EventSource auto-reconnect can flood the connection pool.
         es.close();
         nodeStateEventSource = null;
-        setTimeout(() => connectNodeStateStream(), 10000);
+
+        // Exponential backoff: 2s, 4s, 8s, cap at 30s
+        const delay = Math.min(2000 * Math.pow(2, _sseReconnectAttempts), 30000);
+        _sseReconnectAttempts++;
+        setTimeout(() => connectNodeStateStream(), delay);
     };
 
     es.onopen = () => {
+        _sseReconnectAttempts = 0;
         markTopologyLastUpdated();
     };
 
@@ -7729,32 +7733,45 @@ function initDnPromotion() {
 }
 
 async function apiRequest(url, options = {}) {
-    const response = await fetch(url, {
-        headers: {
-            "Content-Type": "application/json",
-            ...(options.headers ?? {}),
-        },
-        ...options,
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000); // 15s timeout
+    try {
+        const response = await fetch(url, {
+            headers: {
+                "Content-Type": "application/json",
+                ...(options.headers ?? {}),
+            },
+            ...options,
+            signal: options.signal || controller.signal,
+        });
+        clearTimeout(timeout);
 
-    if (!response.ok) {
-        let detail = "Request failed";
+        if (!response.ok) {
+            let detail = "Request failed";
 
-        try {
-            const errorData = await response.json();
-            detail = errorData.detail ?? detail;
-        } catch (error) {
-            // Ignore JSON parsing errors and keep the fallback message.
+            try {
+                const errorData = await response.json();
+                detail = errorData.detail ?? detail;
+            } catch (error) {
+                // Ignore JSON parsing errors and keep the fallback message.
+            }
+
+            throw new Error(detail);
         }
 
-        throw new Error(detail);
-    }
+        if (response.status === 204) {
+            return null;
+        }
 
-    if (response.status === 204) {
-        return null;
+        return response.json();
+    } catch (err) {
+        clearTimeout(timeout);
+        if (err.name === "AbortError") {
+            console.warn(`Request to ${url} timed out after 15s`);
+            return null;
+        }
+        throw err;
     }
-
-    return response.json();
 }
 
 async function loadNodes() {
@@ -8948,7 +8965,7 @@ async function handleNodeActionClick(event) {
 const DISCOVERY_DRAG_FOLLOW = 0.08;
 const DISCOVERY_DAMPING = 0.82;
 const DISCOVERY_OVERLAP_PUSH = 2.0;  // hard separation force multiplier
-const DISCOVERY_REFRESH_MS = 30000;
+const DISCOVERY_REFRESH_MS = 300000; // 5 min safety-net; SSE is primary update mechanism
 
 // Dynamic physics/sizing based on node count — lerps between "few" and "many"
 // spreadFactor (0.5–2.0) scales spacing: >1 expands, <1 contracts
@@ -10948,6 +10965,26 @@ window.addEventListener("DOMContentLoaded", () => {
     // Connect SSE for real-time updates on all pages
     connectNodeStateStream();
 
+    // Pause SSE when tab is hidden to prevent TCP buffer congestion.
+    // Chrome throttles background tabs — the server-side generator keeps
+    // emitting keep-alive frames the client can't consume, filling TCP
+    // buffers and stalling the next navigation.
+    document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+            disconnectNodeStateStream();
+            disconnectNodeDashboardStream();
+        } else {
+            connectNodeStateStream();
+        }
+    });
+
+    // Clean SSE teardown on page navigation (full page loads don't
+    // trigger visibilitychange).
+    window.addEventListener("beforeunload", () => {
+        disconnectNodeStateStream();
+        disconnectNodeDashboardStream();
+    });
+
     const nodeForm = document.getElementById("node-form");
     const serviceForm = document.getElementById("service-form");
     const nodesTableBody = document.getElementById("nodes-table-body");
@@ -11144,52 +11181,4 @@ window.addEventListener("DOMContentLoaded", () => {
                 loadNodeDashboard();
                 return;
             }
-            if (document.getElementById("node-detail-root")) {
-                loadNodeDetailPage();
-                return;
-            }
-            if (document.getElementById("mainNodeGrid")) {
-                loadMainDashboard();
-                return;
-            }
-            if (document.getElementById("topology-root")) {
-                startTopologyTimers();
-                refreshTopologyPage();
-                return;
-            }
-        });
-        document.addEventListener("pointerdown", (event) => {
-            const target = event.target;
-
-            if (!(target instanceof Node)) {
-                return;
-            }
-
-            if (!dashboardRefreshMenu.contains(target) && !dashboardRefreshButton.contains(target)) {
-                setDashboardRefreshMenuOpen(false);
-            }
-        });
-        document.addEventListener("keydown", (event) => {
-            if (event.key === "Escape") {
-                setDashboardRefreshMenuOpen(false);
-            }
-        });
-    }
-
-    if (
-        document.getElementById("nodeGrid")
-        || document.getElementById("mainNodeGrid")
-    ) {
-        applyDashboardRefreshInterval();
-    }
-
-    if (document.getElementById("topology-root")) {
-        startTopologyTimers();
-    }
-
-    window.addEventListener("beforeunload", () => {
-        disconnectNodeDashboardStream();
-        disconnectNodeStateStream();
-    });
-});
-
+            

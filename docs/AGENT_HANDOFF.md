@@ -8,6 +8,116 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-10 — Session: Nginx HTTP/2 Reverse Proxy
+
+### Branch / commit
+- Branch: `claude/fix-page-load-performance-jOU30`
+
+### What was built
+
+- **Nginx HTTP/2 reverse proxy** in Docker Compose to eliminate HTTP/1.1 head-of-line blocking that caused 30-50s page-load stalls when the SSE connection occupied the browser's keep-alive slot.
+- `nginx/nginx.conf` — reverse proxy with SSE-aware location (buffering off, 24h read timeout), upstream keepalive pool of 32 connections
+- `nginx/generate-cert.sh` — auto-generates self-signed TLS cert on first boot via Nginx's `/docker-entrypoint.d/` mechanism
+- `nginx/Dockerfile` — Nginx 1.27 Alpine with OpenSSL for cert generation
+- `docker-compose.yml` — added `nginx` service on port 8443, changed `smp` from `ports` to `expose` (internal only), added `nginx-certs` named volume
+
+### Files created
+- `nginx/nginx.conf`, `nginx/generate-cert.sh`, `nginx/Dockerfile`
+
+### Files modified
+- `docker-compose.yml`, `CHANGELOG.md`, `docs/AGENT_HANDOFF.md`, `docs/CODE_DOCUMENTATION.md`
+
+### Verification
+- `python -m compileall -f app tests alembic` — all pass
+- `python -m unittest discover -s tests` — 45/45 pass
+- No application code changes — Nginx proxy is transparent
+
+### Notes
+- Access via `https://localhost:8443` (accept self-signed cert warning)
+- Uvicorn no longer exposed on host port 8000; only reachable inside Docker network
+- `StaticCacheMiddleware` in `app/main.py` still useful for non-Docker dev
+
+---
+
+## 2026-04-10 — Session: SSE Idle Stall + Static Asset Caching
+
+### Branch / commit
+- Branch: `claude/fix-page-load-performance-jOU30`
+
+### What was built
+
+- **SSE visibility handling:** `visibilitychange` listener disconnects SSE on tab background, reconnects on focus. `beforeunload` handler ensures clean teardown on page navigation.
+- **SSE reconnect backoff:** Replaced 10s hard-coded delay with exponential backoff (2s, 4s, 8s, cap 30s). Reset on successful connect.
+- **Static cache headers:** `StaticCacheMiddleware` in `app/main.py` adds `Cache-Control: public, max-age=86400` to `/static/` responses.
+- **SSE keep-alive interval:** Server-side fallback generators now sleep 15s between keep-alive frames (was 1s). Data-changed path still checks every 1s.
+
+### Files touched
+- `static/js/app.js` — visibilitychange, beforeunload, backoff, reconnect counter
+- `app/main.py` — StaticCacheMiddleware class + registration
+- `app/routes/stream.py` — keep-alive interval 1s → 15s in 3 generators
+- `CHANGELOG.md`, `docs/AGENT_HANDOFF.md`, `docs/CODE_DOCUMENTATION.md`
+
+### Verification
+- `python -m compileall -f app tests alembic` — all pass
+- `python -m unittest discover -s tests` — 45/45 pass
+
+---
+
+## 2026-04-10 — Session: Performance Fixes (Tier 1 + Tier 2)
+
+### Branch / commit
+- Branch: `claude/fix-page-load-performance-jOU30`
+
+### What was built
+
+**Tier 1 — Eliminate 20-30s hangs:**
+- Sized connection pool: `pool_size=30, max_overflow=20, pool_timeout=10, pool_recycle=3600` (was defaults: 5/10/30/none)
+- Staggered 7 poller startups (0s to 5s apart) with sleep jitter to prevent thundering herd
+- Dedicated 40-thread `ThreadPoolExecutor` for blocking I/O (ping, TCP, nslookup) — was sharing default 5-thread pool
+- Circuit breaker on seeker polling: exponential backoff (30s→300s) for unreachable nodes via `PollerState.node_failure_counts` / `node_backoff_until`
+- Reduced per-node poll timeout from 30s to 15s
+
+**Tier 2 — Improve general responsiveness:**
+- Removed `await db.commit()` from 6 read-only GET handlers (dashboard, topology, nodes)
+- Added composite index `ix_chart_samples_node_ts_type` on `(node_id, timestamp, sample_type)` — migration `20260410_0018`
+- Pre-built lookup dicts in submap discovery for O(1) cache access; deferred full-node query in DN detail
+- Frontend `apiRequest()` now uses `AbortController` with 15s timeout
+- Discovery polling interval changed from 30s to 300s (SSE is primary)
+
+### Files touched
+- `app/db.py` — pool configuration
+- `app/main.py` — thread pool, staggered poller starts
+- `app/poller_state.py` — circuit breaker fields
+- `app/pollers/seeker.py` — circuit breaker logic, reduced timeout, jitter
+- `app/pollers/charts.py` — jitter
+- `app/pollers/dn_seeker.py` — jitter
+- `app/pollers/services.py` — jitter
+- `app/pollers/dashboard.py` — jitter
+- `app/routes/dashboard.py` — removed read-only commits
+- `app/routes/topology.py` — removed read-only commits
+- `app/routes/nodes.py` — removed read-only commit
+- `app/routes/discovery.py` — batched cache lookups, deferred query
+- `static/js/app.js` — fetch timeouts, discovery interval
+- `alembic/versions/20260410_0018_add_chart_samples_composite_index.py` (new)
+- `CHANGELOG.md`, `docs/AGENT_HANDOFF.md`, `docs/CODE_DOCUMENTATION.md`
+
+### Verification
+- `python -m compileall -f app tests alembic` — all pass
+- `python -m unittest discover -s tests` — same pre-existing failures (7 import errors + 1 topology test), no new failures
+
+### Assumptions / gaps
+- DB session release pattern (Fix 2) was already correct in all pollers — sessions close after node queries, before API calls
+- Circuit breaker state is in-memory only — resets on process restart (acceptable for this use case)
+- Pre-existing test failures: topology sort bug (`int('agg-cloud')`), missing `DATABASE_URL` for tests that import `app.db` directly
+
+### Next steps
+- Verify pool stats under load via `db:pool` diag command
+- Confirm circuit breaker behavior with known-unreachable nodes
+- Apply migration `20260410_0018` on production DB (`alembic upgrade head`)
+- Consider adding data retention policy for `chart_samples` table
+
+---
+
 ## 2026-04-08 — Session: Diagnostic Console + Link Bug Fixes
 
 ### Branch / commit
@@ -1077,80 +1187,4 @@ These patterns caused severe production problems and must not be reintroduced:
   - Anchor nodes use a separate ping/status pipeline and were not changed in this slice.
   - Existing unrelated local edits remain in the sandbox worktree; do not revert them blindly.
 - Next recommended step:
-  - Fix discovered-node provenance rendering in `/nodes/dashboard` so surfaced-by context is always visible and consistent with the backend relationship data.
-
-## 2026-03-29 10:30 ET - Operational Maps / Sandbox-to-Real Sync
-- Scope: Reconciled the sandbox worktree to the latest real-repo baseline, then layered the first authored operational-map slice on top.
-- Branch/worktree: `C:\Users\rick4\.codex\worktrees\601a\smp`
-- Latest validated commit: `d792da9` pushed to `origin/main`
-- Files touched:
-  [app/main.py](C:\Users\rick4\.codex\worktrees\601a\smp\app\main.py)
-  [app/models.py](C:\Users\rick4\.codex\worktrees\601a\smp\app\models.py)
-  [app/schemas.py](C:\Users\rick4\.codex\worktrees\601a\smp\app\schemas.py)
-  [app/topology.py](C:\Users\rick4\.codex\worktrees\601a\smp\app\topology.py)
-  [app/node_dashboard_backend.py](C:\Users\rick4\.codex\worktrees\601a\smp\app\node_dashboard_backend.py)
-  [app/node_discovery_service.py](C:\Users\rick4\.codex\worktrees\601a\smp\app\node_discovery_service.py)
-  [app/operational_map_service.py](C:\Users\rick4\.codex\worktrees\601a\smp\app\operational_map_service.py)
-  [static/js/app.js](C:\Users\rick4\.codex\worktrees\601a\smp\static\js\app.js)
-  [static/js/operational_maps.js](C:\Users\rick4\.codex\worktrees\601a\smp\static\js\operational_maps.js)
-  [static/css/style.css](C:\Users\rick4\.codex\worktrees\601a\smp\static\css\style.css)
-  [templates/topology.html](C:\Users\rick4\.codex\worktrees\601a\smp\templates\topology.html)
-  [templates/operational_maps.html](C:\Users\rick4\.codex\worktrees\601a\smp\templates\operational_maps.html)
-  [alembic/versions/20260327_0007_add_node_topology_columns.py](C:\Users\rick4\.codex\worktrees\601a\smp\alembic\versions\20260327_0007_add_node_topology_columns.py)
-  [alembic/versions/20260327_0008_add_node_relationships_table.py](C:\Users\rick4\.codex\worktrees\601a\smp\alembic\versions\20260327_0008_add_node_relationships_table.py)
-  [alembic/versions/20260329_0009_add_operational_map_tables.py](C:\Users\rick4\.codex\worktrees\601a\smp\alembic\versions\20260329_0009_add_operational_map_tables.py)
-  [tests/test_node_dashboard_backend.py](C:\Users\rick4\.codex\worktrees\601a\smp\tests\test_node_dashboard_backend.py)
-  [tests/test_topology.py](C:\Users\rick4\.codex\worktrees\601a\smp\tests\test_topology.py)
-  [tests/test_operational_map_schemas.py](C:\Users\rick4\.codex\worktrees\601a\smp\tests\test_operational_map_schemas.py)
-  [tests/test_operational_map_service.py](C:\Users\rick4\.codex\worktrees\601a\smp\tests\test_operational_map_service.py)
-- Verification run:
-  - `.\scripts\test.ps1`
-  - `.\.venv\Scripts\python.exe -m compileall app tests alembic`
-  - Real repo runtime smoke on port `8012` against local Postgres
-- Assumptions:
-  - Sandbox worktree is the build source.
-  - Real repo is updated only with validated sandbox commits.
-  - Node objects in operational maps must resolve to an anchor `node_id` or discovered `site_id`.
-- Open risks / blockers:
-  - Real Postgres schema had drifted from Alembic history. DB was stamped to `20260329_0009` because the tables already existed.
-  - The authored-map UI is only the first slice: create/select maps, place objects, drag/save, basic inspector.
-- Next recommended step:
-- Add link authoring and binding UI on `/operational-maps`.
-
-## 2026-03-29 13:05 ET - Operational Maps Reframed Back Into Topology
-
-- Decision:
-  - removed the standalone `/operational-maps` page from the sandbox app
-  - retained the SNMPc-style ideas as reference material instead of continuing a separate user-facing feature
-- Current direction:
-  - build on `/topology`
-  - keep discovery truth first-class
-  - fold authored-layout and binding ideas into topology incrementally
-- New references:
-  - [CURRENTP_TO_SNMPc_MAP_REFERENCE.md](C:\Users\rick4\.codex\worktrees\601a\smp\CURRENTP_TO_SNMPc_MAP_REFERENCE.md)
-  - [TOPOLOGY_EVOLUTION_PLAN.md](C:\Users\rick4\.codex\worktrees\601a\smp\TOPOLOGY_EVOLUTION_PLAN.md)
-
-## 2026-03-30 11:05 ET - Topology / Node Dashboard refresh-source alignment
-- Scope:
-  - aligned `/api/topology` and `/api/topology/discovery` to the same cached Node Dashboard payload and selected `window_seconds` used by the Node Dashboard UI
-  - collapsed topology onto the shared dashboard refresh cadence so map and Services cloud update passively without a hard refresh
-  - broadened topology status normalization so dashboard-style values (`healthy`, `degraded`, `offline`, `failed`, `unknown`) map cleanly into topology health
-- Branch/worktree:
-  - `C:\Users\rick4\.codex\worktrees\601a\smp`
-- Latest validated commit:
-  - `a053fd6` plus local uncommitted sandbox changes
-- Files touched:
-  - [app/main.py](C:\Users\rick4\.codex\worktrees\601a\smp\app\main.py)
-  - [app/topology.py](C:\Users\rick4\.codex\worktrees\601a\smp\app\topology.py)
-  - [static/js/app.js](C:\Users\rick4\.codex\worktrees\601a\smp\static\js\app.js)
-  - [templates/topology.html](C:\Users\rick4\.codex\worktrees\601a\smp\templates\topology.html)
-- Verification run:
-  - `.\.venv\Scripts\python.exe -m compileall app tests alembic`
-- Assumptions:
-  - topology health should follow the same Node Dashboard cache rows the operator sees, not independently recompute anchor status
-  - the selected dashboard refresh window should be shared by topology API requests so status interpretation stays aligned
-- Open risks / blockers:
-  - existing unrelated local edits remain in the worktree
-  - no live browser/runtime verification was run in this slice, so confirmation still depends on the app instance the user is viewing
-- Next recommended step:
-  - verify on the running `/topology` and `/nodes/dashboard` views that an anchor state transition appears on both surfaces within the same passive refresh window, then tune around edit-mode refresh interruptions if needed
+  - Fix discovered-node provenance rendering in `/nodes/dashboard` so surfaced-by context is always visible and consistent w

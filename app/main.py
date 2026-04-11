@@ -8,6 +8,7 @@ Non-route business logic lives in app/pollers/ and app/services/.
 """
 
 import asyncio
+import concurrent.futures
 from contextlib import asynccontextmanager
 import logging
 
@@ -19,6 +20,7 @@ logging.basicConfig(
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.db import Base, async_engine
 from app.node_dashboard_backend import NodeDashboardBackend
@@ -219,16 +221,35 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
     await get_redis()
 
+    # Dedicated thread pool for blocking I/O (ping, TCP checks, nslookup)
+    _blocking_io_pool = concurrent.futures.ThreadPoolExecutor(
+        max_workers=40, thread_name_prefix="smp-blocking-io"
+    )
+    loop = asyncio.get_running_loop()
+    loop.set_default_executor(_blocking_io_pool)
+
     # Warm caches from Redis so the dashboard has data immediately on restart
     await _warm_caches_from_redis()
 
-    _ps.ping_monitor_task = asyncio.create_task(ping_monitor_loop(_ps))
-    _ps.seeker_poll_task = asyncio.create_task(seeker_polling_loop(_ps))
-    _ps.site_name_resolution_task = asyncio.create_task(site_name_resolution_loop(_ps))
-    _ps.dn_seeker_poll_task = asyncio.create_task(dn_seeker_polling_loop(_ps))
-    _ps.service_poll_task = asyncio.create_task(service_polling_loop(_ps))
-    _ps.node_dashboard_poll_task = asyncio.create_task(node_dashboard_polling_loop(_ps))
-    _ps.charts_poll_task = asyncio.create_task(charts_polling_loop(_ps))
+    async def _start_after(delay_s: float, coro):
+        """Start a polling coroutine after an initial delay to stagger load."""
+        await asyncio.sleep(delay_s)
+        await coro
+
+    # Stagger starts to avoid thundering herd
+    _ps.ping_monitor_task = asyncio.create_task(ping_monitor_loop(_ps))           # immediate — lightweight
+    _ps.node_dashboard_poll_task = asyncio.create_task(
+        _start_after(0.5, node_dashboard_polling_loop(_ps)))
+    _ps.seeker_poll_task = asyncio.create_task(
+        _start_after(1.0, seeker_polling_loop(_ps)))
+    _ps.dn_seeker_poll_task = asyncio.create_task(
+        _start_after(2.0, dn_seeker_polling_loop(_ps)))
+    _ps.site_name_resolution_task = asyncio.create_task(
+        _start_after(3.0, site_name_resolution_loop(_ps)))
+    _ps.service_poll_task = asyncio.create_task(
+        _start_after(4.0, service_polling_loop(_ps)))
+    _ps.charts_poll_task = asyncio.create_task(
+        _start_after(5.0, charts_polling_loop(_ps)))
 
     yield
 
@@ -240,13 +261,39 @@ async def lifespan(app: FastAPI):
     await _cancel_task(_ps.node_dashboard_poll_task)
     await _cancel_task(_ps.charts_poll_task)
     await close_redis()
+    _blocking_io_pool.shutdown(wait=False)
 
 
 # ---------------------------------------------------------------------------
 # App creation + router mounting
 # ---------------------------------------------------------------------------
 
+
+class StaticCacheMiddleware:
+    """Add Cache-Control headers to /static/ responses.
+
+    Templates use cache-busting query strings (?v=...) so a 24-hour cache
+    is safe — browsers fetch fresh assets after each deploy.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope["path"].startswith("/static/"):
+            async def send_with_cache(message):
+                if message["type"] == "http.response.start":
+                    headers = list(message.get("headers", []))
+                    headers.append((b"cache-control", b"public, max-age=86400"))
+                    message["headers"] = headers
+                await send(message)
+            await self.app(scope, receive, send_with_cache)
+        else:
+            await self.app(scope, receive, send)
+
+
 app = FastAPI(title="Seeker Management Platform", version="0.1.0", lifespan=lifespan)
+app.add_middleware(StaticCacheMiddleware)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 from app.routes.pages import router as pages_router

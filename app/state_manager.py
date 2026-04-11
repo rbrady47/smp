@@ -340,7 +340,16 @@ async def subscribe_channels(
 
     If channels is None, subscribes to ALL_CHANNELS.
     Each yielded dict includes the decoded JSON payload from the channel.
+
+    Uses ``get_message(timeout=1.0)`` in a loop instead of the blocking
+    ``async for message in pubsub.listen()`` iterator.  This ensures the
+    generator yields control back to the event loop every ~1 s so that
+    Starlette can cancel it promptly when the SSE client disconnects.
+    Without this, a quiet pub/sub channel keeps the generator (and the
+    underlying HTTP/1.1 connection) blocked indefinitely.
     """
+    import asyncio
+
     r = await get_redis()
     if r is None:
         raise RuntimeError("Redis unavailable for pub/sub subscription")
@@ -348,7 +357,15 @@ async def subscribe_channels(
     pubsub = r.pubsub()
     try:
         await pubsub.subscribe(*target_channels)
-        async for message in pubsub.listen():
+        while True:
+            # Poll with a short timeout so CancelledError propagates
+            message = await pubsub.get_message(
+                ignore_subscribe_messages=True, timeout=1.0,
+            )
+            if message is None:
+                # No message within timeout — yield control, check cancel
+                await asyncio.sleep(0)
+                continue
             if message["type"] != "message":
                 continue
             try:

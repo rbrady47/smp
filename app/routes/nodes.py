@@ -171,7 +171,6 @@ async def node_detail(
     detail = seeker_detail_cache.get(node.id)
     if not detail:
         detail = await refresh_seeker_detail_for_node(node)
-    await db.commit()
     detail_dict = dict(detail)
     detail_site_id = (
         detail_dict.get("config_summary", {}).get("site_id")
@@ -315,3 +314,4 @@ async def delete_node(node_id: int, db: AsyncSession = Depends(get_db)) -> Respo
     await node_dashboard_backend.refresh_cache(db, remaining_nodes)
     await state_manager.publish_topology_change("node_deleted", id=deleted_node_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+                       

@@ -99,4 +99,4 @@ This repo is under **active, frequent development** using Claude Code as the pri
 - The platform serves **network operators** who need fast navigation, dense but readable data displays, clear status indicators, and reliable real-time state.
 - **DDIL environments** (Denied, Degraded, Intermittent, Limited connectivity) are a core operational concern — designs should account for unreliable network conditions.
 - The platform supports **topology visualization** with grouping, filtering, progressive exploration, and real-time state updates via SSE (replacing legacy polling).
-- **Redis** is scoped strictly to real-time state externalization and pub/sub — it is not a general-purpose cache or session store in this architecture.
+- **Redis** is scoped strictly to real-time state exte

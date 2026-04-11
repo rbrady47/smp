@@ -132,7 +132,7 @@ class NodeDashboardBackendTest(unittest.IsolatedAsyncioTestCase):
                 1: {
                     "config_summary": {"site_id": "1001", "site_name": "Anchor A"},
                     "tunnels": [
-                        {"mate_site_id": "4001", "mate_ip": "10.10.10.10"},
+                        {"mate_site_id": "4001", "mate_ip": "10.10.10.10", "ping": "up", "tunnel_up_bitmap": "1"},
                     ],
                 }
             },
@@ -387,7 +387,7 @@ class NodeDashboardBackendTest(unittest.IsolatedAsyncioTestCase):
                 1: {
                     "config_summary": {"site_id": "1001", "site_name": "Anchor A"},
                     "tunnels": [
-                        {"mate_site_id": "4001", "mate_ip": "10.10.10.10"},
+                        {"mate_site_id": "4001", "mate_ip": "10.10.10.10", "ping": "up", "tunnel_up_bitmap": "1"},
                     ],
                 }
             },
@@ -514,7 +514,7 @@ class NodeDashboardBackendTest(unittest.IsolatedAsyncioTestCase):
                 1: {
                     "config_summary": {"site_id": "1001", "site_name": "Anchor A"},
                     "tunnels": [
-                        {"mate_site_id": "4001", "mate_ip": "10.10.10.10"},
+                        {"mate_site_id": "4001", "mate_ip": "10.10.10.10", "ping": "up", "tunnel_up_bitmap": "1"},
                     ],
                 }
             },
@@ -567,13 +567,8 @@ class NodeDashboardBackendTest(unittest.IsolatedAsyncioTestCase):
 
         await backend.refresh_discovered_inventory(self.session, [anchor])
 
-        row = backend.discovered_node_cache["4001"]
-        self.assertEqual(row["ping"], "Down")
-        self.assertFalse(row["web_ok"])
-        self.assertFalse(row["ssh_ok"])
-        self.assertIsNone(row["latency_ms"])
-        self.assertEqual(row["tx_display"], "--")
-        self.assertEqual(row["rx_display"], "--")
+        # When ping fails, the DN is pruned (not kept as "Down")
+        self.assertNotIn("4001", backend.discovered_node_cache)
 
     async def test_refresh_discovered_inventory_forces_stale_persisted_rows_down_when_not_refreshed(self) -> None:
         anchor = Node(
@@ -673,14 +668,10 @@ class NodeDashboardBackendTest(unittest.IsolatedAsyncioTestCase):
 
         await backend.refresh_discovered_inventory(self.session, [anchor])
 
-        row = await backend.ensure_discovered_node_cached(self.session, "4001")
-        self.assertIsNotNone(row)
-        self.assertEqual(row["ping"], "Down")
-        self.assertFalse(row["web_ok"])
-        self.assertFalse(row["ssh_ok"])
-        self.assertIsNone(row["latency_ms"])
-        self.assertEqual(row["tx_display"], "--")
-        self.assertEqual(row["rx_display"], "--")
+        # Stale persisted rows with no active tunnel are pruned from cache and DB
+        self.assertNotIn("4001", backend.discovered_node_cache)
+        record = await self.session.get(DiscoveredNode, "4001")
+        self.assertIsNone(record)
 
     async def test_discovered_version_persists_when_refresh_only_has_placeholder(self) -> None:
         backend = self._build_backend()
@@ -821,3 +812,4 @@ class NodeDashboardBackendTest(unittest.IsolatedAsyncioTestCase):
         payload = await backend.build_projection(self.session, [anchor])
 
         self.assertEqual(payload["anchors"][0]["version"], "v1.15.2")
+                                                                                                                                                                                                                                   
