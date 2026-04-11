@@ -3021,8 +3021,15 @@ function connectNodeStateStream() {
         es.close();
         nodeStateEventSource = null;
 
-        // Exponential backoff: 2s, 4s, 8s, cap at 30s
-        const delay = Math.min(2000 * Math.pow(2, _sseReconnectAttempts), 30000);
+        // Visibility-aware reconnect: fast when user is looking (3s),
+        // slow when tab is hidden (30s) to avoid wasting resources.
+        // visibilitychange handler will reconnect immediately on tab focus.
+        if (document.hidden) {
+            // Tab is backgrounded — don't bother reconnecting, the
+            // visibilitychange handler will do it when the tab returns.
+            return;
+        }
+        const delay = Math.min(3000 * Math.pow(2, _sseReconnectAttempts), 30000);
         _sseReconnectAttempts++;
         setTimeout(() => connectNodeStateStream(), delay);
     };
@@ -3033,6 +3040,45 @@ function connectNodeStateStream() {
     };
 
     nodeStateEventSource = es;
+}
+
+/**
+ * Called when the tab becomes visible after being backgrounded.
+ * SSE reconnection is handled separately — this function refreshes
+ * stale page data and restarts any timers that Chrome may have frozen.
+ */
+function handleVisibilityRecovery() {
+    // Topology page — re-fetch structure + restart timers
+    if (document.getElementById("topology-root")) {
+        _topologyFetchGeneration++;
+        refreshTopologyPage(_topologyFetchGeneration);
+        startTopologyTimers();
+        return;
+    }
+
+    // Node dashboard (anchor + discovered lists)
+    if (document.getElementById("anchor-node-list")) {
+        loadNodeDashboard();
+        return;
+    }
+
+    // Main dashboard (watchlist)
+    if (document.getElementById("mainNodeGrid")) {
+        loadMainDashboard();
+        return;
+    }
+
+    // Node detail page
+    if (document.getElementById("node-detail-root")) {
+        loadNodeDetailPage();
+        return;
+    }
+
+    // Dashboard grid (simple card view)
+    if (document.getElementById("nodeGrid")) {
+        loadNodeDashboard();
+        return;
+    }
 }
 
 function applyFullSnapshot(data) {
@@ -10969,12 +11015,14 @@ window.addEventListener("DOMContentLoaded", () => {
     // Chrome throttles background tabs — the server-side generator keeps
     // emitting keep-alive frames the client can't consume, filling TCP
     // buffers and stalling the next navigation.
+    // On return: reconnect SSE and refresh stale page data.
     document.addEventListener("visibilitychange", () => {
         if (document.hidden) {
             disconnectNodeStateStream();
             disconnectNodeDashboardStream();
         } else {
             connectNodeStateStream();
+            handleVisibilityRecovery();
         }
     });
 

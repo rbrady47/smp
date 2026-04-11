@@ -8,6 +8,8 @@ The format is intentionally simple so diffs stay readable in version control.
 
 ### Fixed
 
+- **Tab visibility recovery:** Added `handleVisibilityRecovery()` that detects the active page and re-fetches stale data when the user returns to a backgrounded tab. Topology page restarts timers and re-fetches structure; dashboard pages re-fetch their payloads; node detail re-loads. Complements the existing SSE reconnect.
+- **SSE reconnect visibility-aware:** When SSE errors while the tab is hidden, reconnect is skipped entirely — the `visibilitychange` handler reconnects immediately when the tab returns. When visible, backoff starts at 3s (was 2s) to give the server a moment after the tab was just restored.
 - **HTTP/1.1 head-of-line blocking:** Added Nginx HTTP/2 reverse proxy to Docker Compose dev stack. The SSE EventSource connection occupying an HTTP/1.1 keep-alive slot caused 30-50s page-load stalls on subsequent navigation. HTTP/2 stream multiplexing eliminates this entirely. Nginx terminates TLS (self-signed cert, auto-generated on first boot) on port 8443 and proxies to uvicorn internally. No application code changes.
 - **SSE idle stall:** Browser tab backgrounding caused TCP buffer congestion from 1Hz keep-alive frames, stalling subsequent navigations by 10-20s. Added `visibilitychange` listener to disconnect SSE when tab is hidden and reconnect immediately when visible. Added `beforeunload` handler for clean teardown on page navigation.
 - **SSE reconnect delay:** Replaced hard-coded 10s reconnect delay with exponential backoff (2s, 4s, 8s, cap 30s). First reconnect after a transient error now happens in ~2s instead of 10s.

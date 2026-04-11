@@ -8,6 +8,31 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-11 — Session: Tab Visibility Recovery
+
+### Branch / commit
+- Branch: `claude/fix-page-load-performance-jOU30`
+
+### What was built
+
+- **`handleVisibilityRecovery()`** in `app.js` (~line 3038): detects which page is active (topology, node dashboard, main dashboard, node detail, or simple grid) and re-invokes the appropriate load/refresh function when the tab becomes visible after being backgrounded.
+- **Updated `visibilitychange` listener** (DOMContentLoaded block): now calls `handleVisibilityRecovery()` alongside the existing `connectNodeStateStream()` on tab return.
+- **Visibility-aware SSE `onerror`**: when the tab is hidden, reconnect is skipped entirely (the `visibilitychange` handler will do it). When visible, backoff starts at 3s (was 2s base).
+
+### Files touched
+- `static/js/app.js` — `handleVisibilityRecovery()`, updated `visibilitychange` listener, updated `onerror` handler
+- `CHANGELOG.md`, `docs/AGENT_HANDOFF.md`
+
+### Verification
+- `python -m compileall -f app tests alembic` — all pass
+- `python -m unittest discover -s tests` — 45/45 pass
+
+### Notes
+- The prior session (2026-04-10 "SSE Idle Stall") already added the `visibilitychange` listener for SSE disconnect/reconnect. This session extends it with page data recovery.
+- `VISIBILITY_RECOVERY_HANDOFF.md` referenced in the task prompt does not exist in the repo; implementation derived from the prompt description and codebase analysis.
+
+---
+
 ## 2026-04-10 — Session: Nginx HTTP/2 Reverse Proxy
 
 ### Branch / commit
