@@ -7730,8 +7730,10 @@ function initDnPromotion() {
 }
 
 async function apiRequest(url, options = {}) {
+    const timeoutMs = options.timeout ?? 15000;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000); // 15s timeout
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
     try {
         const response = await fetch(url, {
             headers: {
@@ -7739,9 +7741,8 @@ async function apiRequest(url, options = {}) {
                 ...(options.headers ?? {}),
             },
             ...options,
-            signal: options.signal || controller.signal,
+            signal: options.signal ?? controller.signal,
         });
-        clearTimeout(timeout);
 
         if (!response.ok) {
             let detail = "Request failed";
@@ -7761,13 +7762,8 @@ async function apiRequest(url, options = {}) {
         }
 
         return response.json();
-    } catch (err) {
-        clearTimeout(timeout);
-        if (err.name === "AbortError") {
-            console.warn(`Request to ${url} timed out after 15s`);
-            return null;
-        }
-        throw err;
+    } finally {
+        clearTimeout(timeoutId);
     }
 }
 
@@ -9036,7 +9032,14 @@ function discoveryTick() {
     const links = discoveryState.links;
     const stage = document.getElementById("discovery-stage");
     if (!stage || !nodes.length) {
-        discoveryState.animFrameId = requestAnimationFrame(discoveryTick);
+        if (stage) {
+            // Stage exists but no nodes — keep polling for nodes to appear
+            discoveryState.animFrameId = requestAnimationFrame(discoveryTick);
+        } else {
+            // Stage gone — user navigated away, stop the loop
+            discoveryState.running = false;
+            discoveryState.animFrameId = null;
+        }
         return;
     }
     const stageW = stage.clientWidth;
@@ -9159,7 +9162,13 @@ function discoveryTick() {
     // 7. Render
     discoveryRender();
 
-    discoveryState.animFrameId = requestAnimationFrame(discoveryTick);
+    // Only continue the animation loop if still on the discovery page
+    if (discoveryState.running && document.getElementById("discovery-stage")) {
+        discoveryState.animFrameId = requestAnimationFrame(discoveryTick);
+    } else {
+        discoveryState.running = false;
+        discoveryState.animFrameId = null;
+    }
 }
 
 function discoveryRender() {
@@ -9577,6 +9586,18 @@ async function discoveryFetchAndInit() {
         }, DISCOVERY_REFRESH_MS);
     } catch (err) {
         console.error("Discovery crawl failed:", err);
+    }
+}
+
+function discoveryCleanup() {
+    discoveryState.running = false;
+    if (discoveryState.animFrameId) {
+        cancelAnimationFrame(discoveryState.animFrameId);
+        discoveryState.animFrameId = null;
+    }
+    if (discoveryState.refreshTimer) {
+        clearInterval(discoveryState.refreshTimer);
+        discoveryState.refreshTimer = null;
     }
 }
 
@@ -11201,21 +11222,45 @@ window.addEventListener("DOMContentLoaded", () => {
         startTopologyTimers();
     }
 
-    // Recover from Chrome background-tab throttling: disconnect SSE
-    // when hidden (prevents TCP buffer congestion), reconnect and
-    // refresh stale page data when the user returns.
     document.addEventListener("visibilitychange", () => {
         if (document.hidden) {
+            // Pause all recurring work when tab is backgrounded
             disconnectNodeStateStream();
             disconnectNodeDashboardStream();
+            // Pause discovery RAF if running
+            if (discoveryState.running) {
+                discoveryState.running = false;
+                if (discoveryState.animFrameId) {
+                    cancelAnimationFrame(discoveryState.animFrameId);
+                    discoveryState.animFrameId = null;
+                }
+            }
+            // Pause topology refresh timer
+            if (typeof dashboardRefreshTimer !== "undefined" && dashboardRefreshTimer) {
+                clearInterval(dashboardRefreshTimer);
+                dashboardRefreshTimer = null;
+            }
         } else {
-            // Small delay to avoid reconnect thrash on rapid tab switching
+            // Tab returned — reconnect with a small debounce to avoid thrash
             setTimeout(() => {
-                handleVisibilityRecovery();
-                // Re-trigger dashboard polling if on a dashboard page
+                connectNodeStateStream();
+                // Restart topology timers if on topology page
+                if (document.getElementById("topology-root")) {
+                    startTopologyTimers();
+                }
+                // Restart discovery if on discovery page with active roots
+                if (document.getElementById("discovery-stage") && discoveryState.rootNodeIds.length) {
+                    if (!discoveryState.running) {
+                        discoveryState.running = true;
+                        discoveryState.animFrameId = requestAnimationFrame(discoveryTick);
+                    }
+                }
+                // Re-trigger dashboard refresh if on a dashboard page
                 if (document.getElementById("nodeGrid") || document.getElementById("mainNodeGrid")) {
                     applyDashboardRefreshInterval();
                 }
+                // Refresh stale page data
+                handleVisibilityRecovery();
             }, 500);
         }
     });
@@ -11223,6 +11268,7 @@ window.addEventListener("DOMContentLoaded", () => {
     window.addEventListener("beforeunload", () => {
         disconnectNodeDashboardStream();
         disconnectNodeStateStream();
+        discoveryCleanup();
     });
 });
 
