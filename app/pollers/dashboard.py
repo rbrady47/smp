@@ -251,11 +251,17 @@ def get_serialized_node_dashboard_cache(ps: PollerState, window_seconds: int | N
 
 _DASHBOARD_SSE_PUBLISH_INTERVAL = 10.0  # Publish SSE snapshot every 10s (matches seeker poll)
 _last_sse_publish_at: float = 0.0
+_dashboard_poll_running = False
 
 
 async def node_dashboard_polling_loop(ps: PollerState) -> None:
-    global _last_sse_publish_at
+    global _last_sse_publish_at, _dashboard_poll_running
     while True:
+        if _dashboard_poll_running:
+            logger.warning("Previous dashboard poll cycle still running, skipping")
+            await asyncio.sleep(NODE_DASHBOARD_FAST_REFRESH_SECONDS)
+            continue
+        _dashboard_poll_running = True
         try:
             await refresh_node_dashboard_cache_once(ps)
             # Publish SSE snapshot at a fixed interval, not every cycle
@@ -266,4 +272,6 @@ async def node_dashboard_polling_loop(ps: PollerState) -> None:
         except Exception:
             logger.exception("Node dashboard cache refresh failed")
             ps.dashboard_backend.mark_cache_refresh_failed()
+        finally:
+            _dashboard_poll_running = False
         await asyncio.sleep(NODE_DASHBOARD_FAST_REFRESH_SECONDS + random.uniform(0, 0.2))

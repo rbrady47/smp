@@ -44,6 +44,8 @@ logger = logging.getLogger(__name__)
 SEEKER_POLL_INTERVAL_SECONDS = 10.0
 SITE_NAME_RESOLUTION_INTERVAL_SECONDS = 30.0
 SEEKER_POLL_CONCURRENCY = 20  # max simultaneous Seeker API sessions
+_seeker_poll_running = False
+_site_name_poll_running = False
 
 
 async def compute_node_status(ps: PollerState, node: Node) -> dict[str, object]:
@@ -217,11 +219,17 @@ async def refresh_seeker_detail_for_node(ps: PollerState, node: Node) -> dict[st
 
 async def seeker_polling_loop(ps: PollerState) -> None:
     """Fast-path poller: config + stats every cycle.  No remote site-name probes."""
+    global _seeker_poll_running
     logger.info(
         "Seeker poller started: interval=%.0fs, concurrency=%d",
         SEEKER_POLL_INTERVAL_SECONDS, SEEKER_POLL_CONCURRENCY,
     )
     while True:
+        if _seeker_poll_running:
+            logger.warning("Previous seeker poll cycle still running, skipping")
+            await asyncio.sleep(SEEKER_POLL_INTERVAL_SECONDS)
+            continue
+        _seeker_poll_running = True
         t0 = time.monotonic()
         try:
             async with AsyncSessionLocal() as db:
@@ -322,6 +330,8 @@ async def seeker_polling_loop(ps: PollerState) -> None:
             logger.info("Seeker poll cycle completed in %.1fs for %d nodes", elapsed, len(enabled_nodes))
         except Exception:
             logger.exception("Seeker polling loop iteration failed")
+        finally:
+            _seeker_poll_running = False
 
         await asyncio.sleep(SEEKER_POLL_INTERVAL_SECONDS + random.uniform(0, 1.0))
 
@@ -344,7 +354,13 @@ async def site_name_resolution_loop(ps: PollerState) -> None:
     # Give the fast poller a chance to populate the cache first
     await asyncio.sleep(10.0)
 
+    global _site_name_poll_running
     while True:
+        if _site_name_poll_running:
+            logger.warning("Previous site name resolution cycle still running, skipping")
+            await asyncio.sleep(SITE_NAME_RESOLUTION_INTERVAL_SECONDS)
+            continue
+        _site_name_poll_running = True
         t0 = time.monotonic()
         resolved_count = 0
         try:
@@ -417,5 +433,7 @@ async def site_name_resolution_loop(ps: PollerState) -> None:
                 logger.debug("Site name resolution completed in %.1fs — nothing new", elapsed)
         except Exception:
             logger.exception("Site name resolution loop iteration failed")
+        finally:
+            _site_name_poll_running = False
 
         await asyncio.sleep(SITE_NAME_RESOLUTION_INTERVAL_SECONDS + random.uniform(0, 1.0))

@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DN_SEEKER_POLL_INTERVAL_SECONDS = 5.0
+_dn_seeker_poll_running = False
 
 
 async def dn_seeker_polling_loop(ps: PollerState) -> None:
@@ -29,8 +30,14 @@ async def dn_seeker_polling_loop(ps: PollerState) -> None:
     """
     from app.pollers.dashboard import probe_discovered_node_detail
 
+    global _dn_seeker_poll_running
     await asyncio.sleep(10.0)  # initial delay to let AN polling populate first
     while True:
+        if _dn_seeker_poll_running:
+            logger.warning("Previous DN seeker poll cycle still running, skipping")
+            await asyncio.sleep(DN_SEEKER_POLL_INTERVAL_SECONDS)
+            continue
+        _dn_seeker_poll_running = True
         try:
             async with AsyncSessionLocal() as db:
                 dns = (await db.scalars(
@@ -111,5 +118,7 @@ async def dn_seeker_polling_loop(ps: PollerState) -> None:
                 await asyncio.gather(*tasks, return_exceptions=True)
         except Exception:
             logger.exception("DN Seeker polling loop iteration failed")
+        finally:
+            _dn_seeker_poll_running = False
 
         await asyncio.sleep(DN_SEEKER_POLL_INTERVAL_SECONDS + random.uniform(0, 1.0))
