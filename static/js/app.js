@@ -5371,6 +5371,12 @@ function renderTopologyStage() {
     // --- Differential DOM update ---
     const visibleIds = new Set(visibleEntities.map((e) => e.id));
 
+    // If the cache is empty (first render or after a structural clear),
+    // remove all existing entity buttons from the layer to prevent duplication.
+    if (_topologyDomCache.size === 0 && layer.children.length > 0) {
+        layer.querySelectorAll("[data-topology-id]").forEach(function(el) { el.remove(); });
+    }
+
     // Remove cached nodes no longer visible
     for (const [id, cachedButton] of _topologyDomCache) {
         if (!visibleIds.has(id)) {
@@ -5382,7 +5388,7 @@ function renderTopologyStage() {
     // Update existing nodes in-place, create new ones
     for (const entity of visibleEntities) {
         let button = _topologyDomCache.get(entity.id);
-        if (button) {
+        if (button && button.isConnected) {
             // Existing — rebuild HTML and replace (preserves listeners)
             const temp = document.createElement("div");
             temp.innerHTML = _buildEntityHTML(entity, discoveryCounts, clusterStatusCounts, fadedEntityIds);
@@ -5401,7 +5407,8 @@ function renderTopologyStage() {
                 button.innerHTML = newButton.innerHTML;
             }
         } else {
-            // New node — create from HTML, attach listeners ONCE, cache it
+            // New node OR stale cached reference — create fresh
+            if (button) _topologyDomCache.delete(entity.id);
             const temp = document.createElement("div");
             temp.innerHTML = _buildEntityHTML(entity, discoveryCounts, clusterStatusCounts, fadedEntityIds);
             button = temp.firstElementChild;
