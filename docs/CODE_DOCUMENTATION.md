@@ -438,6 +438,11 @@ Single monolithic JS file. No build system, no modules, vanilla JS.
 - `_throttledLinkTooltipRefresh()` — setTimeout(5000) gate; only fires when a tooltip is actually pinned, prevents rapid HTTP requests during SSE bursts
 - Link stats cache key normalized to String, TTL reduced from 10s to 4s
 
+**DOM cache consistency:**
+- `_topologyDomCache` (Map) and `_topologyLinkDomCache` (Map) must stay in sync with the live DOM at all times
+- The `loadTopologyPage()` error handler clears both caches whenever it wipes `layer.innerHTML`, preventing detached-reference stalls
+- `renderTopologyStage()` includes a defensive `isConnected` sweep: if every cached button is detached (`btn.isConnected === false`), both caches are cleared and the layer is wiped, forcing a full rebuild on the next render pass. The `for...of` loop breaks on the first connected node, making the check O(1) in the common healthy case
+
 **Discovery link visibility system (~lines 5500-5600):**
 
 Links are SVG `<line>` elements rebuilt every render cycle. Visibility is managed via CSS classes:

@@ -5377,6 +5377,21 @@ function renderTopologyStage() {
         layer.querySelectorAll("[data-topology-id]").forEach(function(el) { el.remove(); });
     }
 
+    // Defensive: if all cached nodes are detached (e.g. layer was rebuilt
+    // externally), treat as a cold start — clear the stale cache so the
+    // create-new branch below rebuilds every entity.
+    if (_topologyDomCache.size > 0) {
+        let anyConnected = false;
+        for (const [, btn] of _topologyDomCache) {
+            if (btn.isConnected) { anyConnected = true; break; }
+        }
+        if (!anyConnected) {
+            _topologyDomCache.clear();
+            _topologyLinkDomCache.clear();
+            layer.querySelectorAll("[data-topology-id]").forEach(function(el) { el.remove(); });
+        }
+    }
+
     // Remove cached nodes no longer visible
     for (const [id, cachedButton] of _topologyDomCache) {
         if (!visibleIds.has(id)) {
@@ -6032,27 +6047,6 @@ function highlightTopologySnapTarget(target) {
     const bubble = document.querySelector(`[data-topology-id="${CSS.escape(target.entityId)}"]`);
     if (bubble instanceof HTMLElement) {
         bubble.classList.add("is-link-snap-target");
-    }
-}
-
-async function refreshTopologyData() {
-    const root = document.getElementById("topology-root");
-    if (root?.getAttribute("data-map-view-id")) {
-        // Submap: bump generation so background fetches don't overwrite
-        const gen = ++_topologyFetchGeneration;
-        await refreshTopologyPage(gen);
-        return;
-    }
-    const gen = ++_topologyFetchGeneration;
-    try {
-        const result = await apiRequest(buildNodeDashboardRequestUrl("/api/topology"));
-        if (result && gen === _topologyFetchGeneration) {
-            topologyPayload = result;
-            _topologyDomCache.clear();
-            _topologyLinkDomCache.clear();
-        }
-    } catch (error) {
-        console.error("Failed to refresh topology data:", error);
     }
 }
 
@@ -7548,6 +7542,8 @@ async function loadTopologyPage() {
         if (layer) {
             layer.innerHTML = "";
         }
+        _topologyDomCache.clear();
+        _topologyLinkDomCache.clear();
         if (drawer) {
             drawer.innerHTML = `<p class="status-error">${escapeHtml(error.message || "Unable to load topology")}</p>`;
         }

@@ -8,6 +8,7 @@ The format is intentionally simple so diffs stay readable in version control.
 
 ### Fixed
 
+- **Topology nodes vanish after refresh:** The `loadTopologyPage()` error handler cleared `layer.innerHTML` but left `_topologyDomCache` holding detached DOM references, causing all topology entities to disappear with no recovery path. Now clears both caches in the error handler. Added a defensive `isConnected` sweep in `renderTopologyStage()` that detects fully-detached cache state and resets to clean. Removed dead `refreshTopologyData()` function.
 - **SSE listener leak:** Refactored SSE connection to use named handler references (`sseHandlers` dict) with explicit `removeEventListener` cleanup on disconnect. Reconnect uses exponential backoff (2s base, 60s cap, reset on success). Visibility handler adds 500ms debounce to prevent thrash on rapid tab switching.
 - **Tab visibility recovery:** Added `handleVisibilityRecovery()` that reconnects dead SSE, resets the "updated ago" baseline, and re-fetches stale page data via `safeStart()` when the user returns to a backgrounded tab. Covers all page contexts (dashboard, topology, services, charts, health, node detail).
 - **SSE keepalive (Redis path):** `subscribe_channels()` now yields a `__keepalive__` sentinel every ~30s of pub/sub silence. SSE generators emit `": keep-alive\n\n"` comments so nginx and browsers don't silently drop idle connections.

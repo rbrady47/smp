@@ -8,6 +8,34 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-12 — Session: Fix Topology Nodes Vanish After Refresh
+
+### Branch / commit
+- Branch: `claude/fix-topology-nodes-refresh-nuPrV`
+
+### What was built
+
+- **Error handler cache clear** (`loadTopologyPage()` catch block): added `_topologyDomCache.clear()` and `_topologyLinkDomCache.clear()` after `layer.innerHTML = ""` so the DOM cache stays in sync when the error path wipes the stage.
+- **Defensive isConnected sweep** (`renderTopologyStage()`): inserted after the existing cache-empty guard. If all cached buttons are detached (`btn.isConnected === false`), both caches are cleared and remaining orphan DOM nodes are removed, forcing a full rebuild. Early-break loop is O(1) in the healthy case.
+- **Dead code removal**: deleted `refreshTopologyData()` — had zero call sites and would have caused the same vanish bug if ever wired up (cleared caches without calling `renderTopologyStage()`).
+
+### Root cause
+`handleVisibilityRecovery()` → `loadTopologyPage()` → any of 5 concurrent API requests fails → catch block runs `layer.innerHTML = ""` but does NOT clear `_topologyDomCache`. Cache holds 24 detached references. No subsequent `renderTopologyStage()` fires. Stage stays empty.
+
+### Files touched
+- `static/js/app.js` — error handler fix, defensive sweep, dead code removal
+- `CHANGELOG.md`, `docs/AGENT_HANDOFF.md`, `docs/CODE_DOCUMENTATION.md`, `docs/USER_GUIDE.md`
+
+### Verification
+- `python -m compileall app tests alembic` — zero errors
+- `python -m unittest discover -s tests` — 44/45 pass (1 pre-existing redis import failure)
+- `app.js` brace/paren balance: `{}` 2961/2961, `()` 6461/6461
+
+### Assumptions
+- The 1 failing test (`test_node_dashboard_summary`) is a pre-existing environment issue (missing `redis` package), not related to this change.
+
+---
+
 ## 2026-04-11 — Session: SSE Listener Leak Fix + Keepalive Hardening
 
 ### Branch / commit

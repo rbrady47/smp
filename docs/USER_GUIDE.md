@@ -176,6 +176,7 @@ Current behavior:
   - yellow when the pinned set is mixed or degraded
   - red with a pulse when all pinned services are down, unknown, or disabled
 - Includes a demo-mode selector in edit mode for previewing all-up, all-down, or mixed topology states, and remembers that choice in the saved topology editor state
+- Topology recovery: if the page encounters an error during background refresh (e.g., after returning from a backgrounded tab), the stage clears gracefully and recovers automatically on the next successful data fetch. No manual reload required.
 - Real-time updates via Server-Sent Events (SSE) on all pages: node status, RTT, bandwidth, service check results, and discovery events update automatically without manual page refresh. The node dashboard, services dashboard, main dashboard, node detail page, and topology all receive live updates. If Redis is running, updates are push-based; otherwise the system falls back to polling. A "reconnecting..." indicator appears in the header if the connection drops. Manual refresh buttons remain available as a force-reload fallback.
 
 #### Submaps
