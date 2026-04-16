@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.models import (
+    ChartSample,
     DiscoveredNode,
     DiscoveredNodeObservation,
     Node,
@@ -17,6 +18,7 @@ from app.models import (
     OperationalMapObject,
     OperationalMapView,
     TopologyEditorState,
+    TopologyLink,
 )
 from app.bwvstats_ingest import collect_bwvstats_phase1, get_raw_bwvstats_snapshots
 from app.schemas import NodeCreate, NodeUpdate
@@ -359,6 +361,28 @@ async def delete_node(node_id: int, db: AsyncSession = Depends(get_db)) -> Respo
     )
     node = await get_node_or_404(node_id, db)
     deleted_node_id = node.id
+
+    # Clean up related records before deleting the node (FK constraints)
+    await db.execute(delete(ChartSample).where(ChartSample.node_id == deleted_node_id))
+
+    map_objects = (await db.scalars(
+        select(OperationalMapObject).where(
+            OperationalMapObject.binding_key == f"anchor:{deleted_node_id}",
+        )
+    )).all()
+    for obj in map_objects:
+        await db.delete(obj)
+
+    topo_links = (await db.scalars(
+        select(TopologyLink).where(
+            (TopologyLink.source_entity_id == f"node-{deleted_node_id}")
+            | (TopologyLink.target_entity_id == f"node-{deleted_node_id}")
+            | (TopologyLink.status_node_id == deleted_node_id)
+        )
+    )).all()
+    for link in topo_links:
+        await db.delete(link)
+
     await db.delete(node)
     await db.commit()
     seeker_detail_cache.pop(deleted_node_id, None)

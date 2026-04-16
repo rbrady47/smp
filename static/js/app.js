@@ -8864,10 +8864,16 @@ async function handleNodeFormSubmit(event) {
     event.preventDefault();
 
     const formError = document.getElementById("node-form-error");
+    const submitButton = document.getElementById("node-submit-button");
+    const saveAddAnotherButton = document.getElementById("node-save-add-another-button");
+    if (submitButton?.disabled) return;
     const nodeId = document.getElementById("node-id").value;
     const payload = collectNodeFormPayload();
     const method = nodeId ? "PUT" : "POST";
     const url = nodeId ? `/api/nodes/${nodeId}` : "/api/nodes";
+
+    if (submitButton) submitButton.disabled = true;
+    if (saveAddAnotherButton) saveAddAnotherButton.disabled = true;
 
     try {
         const savedNode = await apiRequest(url, {
@@ -8900,6 +8906,9 @@ async function handleNodeFormSubmit(event) {
     } catch (error) {
         formError.textContent = error.message || "Unable to save node";
         formError.hidden = false;
+    } finally {
+        if (submitButton) submitButton.disabled = false;
+        if (saveAddAnotherButton) saveAddAnotherButton.disabled = false;
     }
 }
 

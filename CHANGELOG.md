@@ -24,6 +24,8 @@ The format is intentionally simple so diffs stay readable in version control.
 - Fix DN layout override race on submap page load; DNs now render on first visit to new submaps, and positions persist across refreshes
 - Show anchor node tooltip on submap canvases (previously suppressed — restored for the map-assignment model where an AN only appears on one map)
 - Double-click a discovered node on a submap now opens its management web page (`https://{host}:443`); single-click is deferred so dblclick can preempt it
+- `DELETE /api/nodes/{id}` now cleans up related `ChartSample`, `OperationalMapObject`, and `TopologyLink` records so the deletion doesn't fail silently on FK constraints
+- Debounce Save button on node form to prevent duplicate node creation on multi-click
 
 ### refactor
 - Remove `include_in_topology`, `topology_level`, `topology_unit` columns

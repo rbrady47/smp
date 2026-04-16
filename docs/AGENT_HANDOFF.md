@@ -33,6 +33,8 @@ This file is the shared handoff log for agents working on SMP.
 - Fix submap DN invisibility race: `refreshSubmapDiscovery()` and the submap AN layout setup now run AFTER the editor state restore (which replaces `layoutOverrides` wholesale), so the DN overrides created during discovery aren't wiped. `queueTopologyEditorStateSave()` is fired after the refresh to persist DN positions for future visits.
 - AN tooltips on submaps: removed the `isInsideSubmap ? "" : ...` suppression at line 5046 — tooltips now render on both main map and submaps.
 - DN double-click opens management web page: single-click action (pin tooltip/links + renderTopologyStage) is now deferred 260ms via `_topologyPendingClick` so `dblclick` can cancel it. Without this, `renderTopologyStage()` rebuilt the DOM before dblclick fired.
+- `DELETE /api/nodes/{id}` previously failed silently on FK constraints (ChartSample.node_id has no ON DELETE CASCADE). Now cleans up ChartSample, OperationalMapObject (`anchor:{id}` bindings), and TopologyLink rows that reference the node before deleting it.
+- `handleNodeFormSubmit` disables Save / Save & Add buttons while the request is in flight and re-enables in `finally`, preventing duplicate node creation from rapid clicks.
 
 ### Files touched
 - app/models.py, app/schemas.py, app/topology.py, app/routes/topology.py
