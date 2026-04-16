@@ -175,11 +175,10 @@ def build_topology_discovery_payload(
             "site_name": str(row.get("site_name") or row.get("name") or ""),
             "location": normalize_topology_location(str(row.get("site") or "").strip() or None),
             "unit": str(row.get("unit") or "").strip() or None,
-            "topology_level": int(row.get("topology_level")) if row.get("topology_level") is not None else None,
+            "topology_map_id": row.get("topology_map_id"),
             "status": str(row.get("status") or "unknown"),
             "rtt_state": str(row.get("rtt_state") or "").strip() or None,
             "latency_ms": row.get("latency_ms"),
-            "include_in_topology": bool(row.get("include_in_topology")),
         }
         anchors.append(anchor)
         if anchor["site_id"] and anchor["unit"]:

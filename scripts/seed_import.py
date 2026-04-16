@@ -31,7 +31,7 @@ with open(seeds_path) as f:
 
 IMPORT_FIELDS = [
     "name", "node_id", "host", "web_port", "ssh_port", "location",
-    "include_in_topology", "topology_level", "topology_unit",
+    "topology_map_id",
     "enabled", "notes", "api_username", "api_password", "api_use_https",
     "ping_enabled", "ping_interval_seconds",
 ]

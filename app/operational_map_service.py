@@ -317,7 +317,7 @@ async def _list_available_nodes(db: AsyncSession) -> list[dict[str, object]]:
                     "display_name": anchor.name,
                     "binding_key": f"anchor:{anchor.id}",
                     "location": anchor.location,
-                    "unit": anchor.topology_unit,
+                    "unit": None,
                     "status": "unknown",
                     "discovered_level": None,
                 }

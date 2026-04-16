@@ -13,7 +13,6 @@ from app.models import Node
 from app.pollers.ping import get_ping_snapshot
 from app.pollers.seeker import compute_node_status, refresh_seeker_detail_for_node
 from app.seeker_api import get_bwv_stats, normalize_bwv_stats
-from app.topology import normalize_topology_location
 
 if TYPE_CHECKING:
     from app.poller_state import PollerState
@@ -42,10 +41,7 @@ def serialize_node(ps: PollerState, node: Node, health: dict[str, object]) -> di
         "web_port": node.web_port,
         "ssh_port": node.ssh_port,
         "location": node.location,
-        "include_in_topology": node.include_in_topology,
-        "topology_level": node.topology_level,
-        "topology_unit": node.topology_unit,
-        "topology_location": normalize_topology_location(node.location),
+        "topology_map_id": node.topology_map_id,
         "enabled": node.enabled,
         "notes": node.notes,
         "api_username": node.api_username,

@@ -3,10 +3,6 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
-TopologyLevel = Literal[0, 1]
-TopologyUnit = Literal["AGG", "DIV HQ", "1BCT", "2BCT", "3BCT", "CAB/DIVARTY", "Sustainment"]
-
-
 class NodeBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     node_id: str | None = Field(default=None, max_length=64)
@@ -14,9 +10,7 @@ class NodeBase(BaseModel):
     web_port: int = Field(default=443, ge=1, le=65535)
     ssh_port: int = Field(default=22, ge=1, le=65535)
     location: str = Field(..., min_length=1, max_length=255)
-    include_in_topology: bool = False
-    topology_level: TopologyLevel | None = 0
-    topology_unit: TopologyUnit | None = "AGG"
+    topology_map_id: int | None = None
     enabled: bool = True
     notes: str | None = None
     api_username: str | None = Field(default=None, max_length=255)
@@ -47,9 +41,7 @@ class DnPromoteRequest(BaseModel):
     api_username: str = Field(..., min_length=1, max_length=255)
     api_password: str = Field(..., min_length=1, max_length=255)
     api_use_https: bool = False
-    include_in_topology: bool = True
-    topology_level: TopologyLevel | None = 0
-    topology_unit: TopologyUnit | None = None
+    topology_map_id: int | None = 0
     ping_enabled: bool = True
     ping_interval_seconds: int = Field(default=15, ge=1, le=300)
     charts_enabled: bool = True
@@ -123,8 +115,7 @@ class NodeDashboardAnchorRow(BaseModel):
     discovered_parent_site_id: str | None = None
     discovered_parent_name: str | None = None
     discovered_level: int = 1
-    include_in_topology: bool = False
-    topology_level: int | None = None
+    topology_map_id: int | None = None
     tx_display: str = "--"
     rx_display: str = "--"
 
@@ -186,9 +177,8 @@ class TopologyDiscoveryAnchor(BaseModel):
     site_name: str
     location: str | None = None
     unit: str | None = None
-    topology_level: int | None = None
+    topology_map_id: int | None = None
     status: str
-    include_in_topology: bool = False
     latency_ms: int | None = None
     rtt_state: str | None = None
 
