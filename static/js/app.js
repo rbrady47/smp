@@ -4886,6 +4886,7 @@ function getTopologyEntities() {
         buildTopologyServiceCloudEntity(),
         ...((topologyPayload.entities ?? []).map(mergeDashboardAnchorState)),
         ...(topologyPayload.submaps ?? []),
+        ...(topologyPayload._discovery_entities ?? []),
     ];
 
     // Auto-place nodes assigned to this map that have no saved layout
@@ -5439,7 +5440,8 @@ function renderTopologyStage() {
 
     drawTopologyLinks(entityMap);
     // Re-reveal discovery links after SVG rebuild
-    if (topologyState.editMode) {
+    const isInsideSubmap = Boolean(document.getElementById("topology-root")?.getAttribute("data-map-view-id"));
+    if (topologyState.editMode || isInsideSubmap) {
         revealAllDiscoveryLinks();
     } else if (topologyState.pinnedLinkNodeId) {
         revealDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);

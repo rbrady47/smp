@@ -17,6 +17,7 @@ The format is intentionally simple so diffs stay readable in version control.
 - Show resolved submap name on node detail page instead of "Submap N"
 - Auto-create OperationalMapObject when a node is assigned to a submap via `topology_map_id`; clean up on reassignment
 - Submap icon double-click drill-in now works (added `pointer-events: none` on child elements; allowed dblclick during edit mode)
+- Discovered nodes now render on submap canvases: include `_discovery_entities` in `getTopologyEntities()` and auto-reveal discovery links inside submap views
 
 ### refactor
 - Remove `include_in_topology`, `topology_level`, `topology_unit` columns
