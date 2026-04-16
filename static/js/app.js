@@ -3754,7 +3754,8 @@ function resetNodeForm() {
     formError.hidden = true;
     formError.textContent = "Unable to save node";
     keepNodeModalOpenAfterSave = false;
-    syncTopologyFormFields();
+    const mapSelect = document.getElementById("node-topology-map-id");
+    if (mapSelect) mapSelect.value = "";
 }
 
 function getNodeModalShell() {
@@ -3842,41 +3843,22 @@ function closeTopologyDetail() {
     }
 }
 
-function syncTopologyFormFields() {
-    const includeCheckbox = document.getElementById("node-include-in-topology");
-    const levelField = document.getElementById("node-topology-level");
-    const unitField = document.getElementById("node-topology-unit");
-
-    if (!(includeCheckbox instanceof HTMLInputElement)) {
-        return;
+async function populateMapAssignmentDropdown(currentMapId) {
+    const select = document.getElementById("node-topology-map-id");
+    if (!select) return;
+    while (select.options.length > 2) {
+        select.remove(2);
     }
-
-    if (
-        !(
-            levelField instanceof HTMLSelectElement ||
-            levelField instanceof HTMLInputElement
-        ) ||
-        !(
-            unitField instanceof HTMLSelectElement ||
-            unitField instanceof HTMLInputElement
-        )
-    ) {
-        return;
-    }
-
-    const enabled = includeCheckbox.checked;
-    levelField.disabled = !enabled;
-    unitField.disabled = !enabled;
-
-    if (!enabled) {
-        return;
-    }
-
-    if (levelField.value === "0") {
-        unitField.value = "AGG";
-    } else if (unitField.value === "AGG") {
-        unitField.value = "DIV HQ";
-    }
+    try {
+        const maps = await apiRequest("/api/topology/maps");
+        for (const map of maps) {
+            const option = document.createElement("option");
+            option.value = String(map.id);
+            option.textContent = map.name;
+            select.appendChild(option);
+        }
+    } catch (err) { /* non-fatal */ }
+    select.value = currentMapId != null ? String(currentMapId) : "";
 }
 
 function populateNodeForm(nodeId) {
@@ -3895,22 +3877,10 @@ function populateNodeForm(nodeId) {
     document.getElementById("node-ssh-port").value = String(node.ssh_port);
     document.getElementById("node-location").value = node.location;
     const nodeIdField = document.getElementById("node-node-id");
-    const includeInTopologyField = document.getElementById("node-include-in-topology");
-    const topologyLevelField = document.getElementById("node-topology-level");
-    const topologyUnitField = document.getElementById("node-topology-unit");
     const enabledField = document.getElementById("node-enabled");
 
     if (nodeIdField instanceof HTMLInputElement) {
         nodeIdField.value = node.node_id ?? "";
-    }
-    if (includeInTopologyField instanceof HTMLInputElement) {
-        includeInTopologyField.checked = Boolean(node.include_in_topology);
-    }
-    if (topologyLevelField instanceof HTMLSelectElement || topologyLevelField instanceof HTMLInputElement) {
-        topologyLevelField.value = String(node.topology_level ?? 0);
-    }
-    if (topologyUnitField instanceof HTMLSelectElement || topologyUnitField instanceof HTMLInputElement) {
-        topologyUnitField.value = node.topology_unit ?? "AGG";
     }
     if (enabledField instanceof HTMLInputElement) {
         enabledField.checked = node.enabled;
@@ -3936,7 +3906,7 @@ function populateNodeForm(nodeId) {
     }
     document.getElementById("node-form-error").hidden = true;
     currentEditNodeId = node.id;
-    syncTopologyFormFields();
+    populateMapAssignmentDropdown(node.topology_map_id);
     renderNodesTable(currentNodes);
     openNodeModal({ reset: false });
 }
@@ -7001,9 +6971,12 @@ function renderTopologyNodeEditorMarkup(entity, node) {
                 <span>Location</span>
                 <input type="text" id="topology-node-location" value="${escapeHtml(node?.location || entity.location || "Cloud")}" required>
             </label>
-            <label class="checkbox-field">
-                <input type="checkbox" id="topology-node-include" ${(node?.include_in_topology ?? entity.include_in_topology) ? "checked" : ""}>
-                <span>Include in Topology</span>
+            <label>
+                <span>Map Assignment</span>
+                <select id="topology-node-map-id">
+                    <option value="">None</option>
+                    <option value="0" ${(node?.topology_map_id ?? entity.topology_map_id) === 0 ? "selected" : ""}>Main Map</option>
+                </select>
             </label>
             <label class="full-width">
                 <span>Notes</span>
@@ -7071,9 +7044,7 @@ function wireTopologyNodeEditor(entity, node) {
                 web_port: Number(document.getElementById("topology-node-web-port").value),
                 ssh_port: Number(document.getElementById("topology-node-ssh-port").value),
                 location: document.getElementById("topology-node-location").value.trim(),
-                include_in_topology: document.getElementById("topology-node-include").checked,
-                topology_level: Number(entity.level || 0),
-                topology_unit: String(entity.unit || (entity.level === 0 ? "AGG" : "DIV HQ")),
+                topology_map_id: (() => { const v = document.getElementById("topology-node-map-id")?.value; return v === "" ? null : parseInt(v); })(),
                 enabled: node?.enabled ?? true,
                 notes: document.getElementById("topology-node-notes").value.trim() || null,
                 api_username: document.getElementById("topology-node-api-username").value.trim() || null,
@@ -7747,7 +7718,6 @@ function initDnPromotion() {
         submitBtn.disabled = true;
         submitBtn.textContent = "Promoting...";
 
-        const topologyUnit = document.getElementById("promote-topology-unit").value;
         const payload = {
             name: document.getElementById("promote-name").value.trim() || null,
             host: document.getElementById("promote-host").value.trim() || null,
@@ -7757,9 +7727,7 @@ function initDnPromotion() {
             api_username: document.getElementById("promote-api-username").value.trim(),
             api_password: document.getElementById("promote-api-password").value,
             api_use_https: document.getElementById("promote-api-use-https").checked,
-            topology_level: parseInt(document.getElementById("promote-topology-level").value) || 0,
-            topology_unit: topologyUnit || null,
-            include_in_topology: document.getElementById("promote-include-topology").checked,
+            topology_map_id: (() => { const v = document.getElementById("promote-topology-map-id")?.value; return v === "" ? null : parseInt(v); })(),
             ping_enabled: document.getElementById("promote-ping-enabled").checked,
             charts_enabled: document.getElementById("promote-charts-enabled").checked,
             notes: document.getElementById("promote-notes").value.trim() || null,
@@ -8821,16 +8789,10 @@ async function handleDashboardServiceTableClick(event) {
 }
 
 function collectNodeFormPayload() {
-    const topologyRoot = document.getElementById("topology-root");
     const nodeIdField = document.getElementById("node-node-id");
-    const includeInTopologyField = document.getElementById("node-include-in-topology");
-    const topologyLevelField = document.getElementById("node-topology-level");
-    const topologyUnitField = document.getElementById("node-topology-unit");
+    const mapIdField = document.getElementById("node-topology-map-id");
     const enabledField = document.getElementById("node-enabled");
-    const inferredTopologyLevel = topologyRoot && topologyState.focusUnit ? 1 : 0;
-    const inferredTopologyUnit = topologyRoot
-        ? (topologyState.focusUnit || (inferredTopologyLevel === 0 ? "AGG" : "DIV HQ"))
-        : "AGG";
+    const mapIdValue = mapIdField instanceof HTMLSelectElement ? mapIdField.value : "";
 
     return {
         name: document.getElementById("node-name").value.trim(),
@@ -8839,15 +8801,7 @@ function collectNodeFormPayload() {
         web_port: Number(document.getElementById("node-web-port").value),
         ssh_port: Number(document.getElementById("node-ssh-port").value),
         location: document.getElementById("node-location").value.trim(),
-        include_in_topology: includeInTopologyField instanceof HTMLInputElement ? includeInTopologyField.checked : Boolean(topologyRoot),
-        topology_level:
-            topologyLevelField instanceof HTMLSelectElement || topologyLevelField instanceof HTMLInputElement
-                ? Number(topologyLevelField.value)
-                : inferredTopologyLevel,
-        topology_unit:
-            topologyUnitField instanceof HTMLSelectElement || topologyUnitField instanceof HTMLInputElement
-                ? topologyUnitField.value
-                : inferredTopologyUnit,
+        topology_map_id: mapIdValue === "" ? null : parseInt(mapIdValue),
         enabled: enabledField instanceof HTMLInputElement ? enabledField.checked : true,
         notes: document.getElementById("node-notes").value.trim() || null,
         api_username: document.getElementById("node-api-username").value.trim() || null,
@@ -11069,19 +11023,6 @@ window.addEventListener("DOMContentLoaded", () => {
     if (nodeForm) {
         nodeForm.addEventListener("submit", handleNodeFormSubmit);
         resetNodeForm();
-    }
-
-    const topologyInclude = document.getElementById("node-include-in-topology");
-    const topologyLevel = document.getElementById("node-topology-level");
-    const topologyUnit = document.getElementById("node-topology-unit");
-    if (topologyInclude) {
-        topologyInclude.addEventListener("change", syncTopologyFormFields);
-    }
-    if (topologyLevel) {
-        topologyLevel.addEventListener("change", syncTopologyFormFields);
-    }
-    if (topologyUnit) {
-        topologyUnit.addEventListener("change", syncTopologyFormFields);
     }
 
     if (serviceForm) {
