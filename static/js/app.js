@@ -5043,7 +5043,7 @@ function _buildEntityHTML(entity, discoveryCounts, clusterStatusCounts, fadedEnt
                 }
             </span>
         `
-        : isAnchorNode ? (isInsideSubmap ? "" : getTopologyAnchorTooltipMarkup(entity))
+        : isAnchorNode ? getTopologyAnchorTooltipMarkup(entity)
         : isDiscovered ? getTopologyDiscoveredTooltipMarkup(entity)
         : "";
     const bubbleStyle = `left:${layout.x}px; top:${layout.y}px; --topology-bubble-size:${layout.size}px;`;
@@ -5099,6 +5099,8 @@ function _attachSubmapDnTooltip(submapBtn, icon) {
     });
 }
 
+let _topologyPendingClick = null;
+
 function _attachTopologyEntityListeners(button, entityMap) {
     button.addEventListener("click", (event) => {
         if (topologyState.editMode) {
@@ -5139,23 +5141,31 @@ function _attachTopologyEntityListeners(button, entityMap) {
             return;
         }
         if (isAnchorNode || nextEntity?.kind === "discovered") {
-            topologyState.pinnedTooltipId = topologyState.pinnedTooltipId === nextId ? null : nextId;
-            if (topologyState.pinnedLinkNodeId === nextId) {
-                topologyState.pinnedLinkNodeId = null;
-                hideAllDiscoveryLinks();
-                clearTopologyHoverFocus();
-            } else {
-                if (topologyState.pinnedLinkNodeId) {
-                    hideDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
-                }
-                topologyState.pinnedLinkNodeId = nextId;
-                revealDiscoveryLinksForEntity(nextId);
-                const root = document.getElementById("topology-root");
-                if (root?.getAttribute("data-map-view-id")) {
-                    applyTopologyHoverFocus(nextId);
-                }
+            // Defer single-click so dblclick can preempt (open web page on dblclick)
+            if (_topologyPendingClick) {
+                clearTimeout(_topologyPendingClick);
+                _topologyPendingClick = null;
             }
-            renderTopologyStage(); // TODO: Phase1-patch — state-only (tooltip/discovery pin)
+            _topologyPendingClick = setTimeout(() => {
+                _topologyPendingClick = null;
+                topologyState.pinnedTooltipId = topologyState.pinnedTooltipId === nextId ? null : nextId;
+                if (topologyState.pinnedLinkNodeId === nextId) {
+                    topologyState.pinnedLinkNodeId = null;
+                    hideAllDiscoveryLinks();
+                    clearTopologyHoverFocus();
+                } else {
+                    if (topologyState.pinnedLinkNodeId) {
+                        hideDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
+                    }
+                    topologyState.pinnedLinkNodeId = nextId;
+                    revealDiscoveryLinksForEntity(nextId);
+                    const root = document.getElementById("topology-root");
+                    if (root?.getAttribute("data-map-view-id")) {
+                        applyTopologyHoverFocus(nextId);
+                    }
+                }
+                renderTopologyStage();
+            }, 260);
             return;
         }
         topologyState.pinnedTooltipId = null;
@@ -5222,6 +5232,10 @@ function _attachTopologyEntityListeners(button, entityMap) {
     });
 
     button.addEventListener("dblclick", (event) => {
+        if (_topologyPendingClick) {
+            clearTimeout(_topologyPendingClick);
+            _topologyPendingClick = null;
+        }
         const nextId = button.getAttribute("data-topology-id");
         const nextEntity = entityMap.get(nextId || "");
         if (nextEntity?.kind === "submap" && nextEntity?.map_view_id) {
