@@ -5838,21 +5838,9 @@ function getTopologySubmapIconMarkup(entity, dnUp, dnDown, dnUpNames, dnDownName
         ...(dnDownNames || []).map((n) => `down:${n}`),
     ];
 
-    // Glow sized to the cluster — grows and shrinks with the mesh
-    const glowR = Math.max(clusterW, clusterH) * 0.6;
-    const cx = vw / 2, cy = vh / 2;
-
     return `
         <span class="topology-node-icon topology-node-icon-submap" data-submap-dn-all="${escapeHtml(allNames.join(','))}" aria-hidden="true">
             <svg viewBox="0 0 ${vw} ${vh}" focusable="false" preserveAspectRatio="xMidYMid meet">
-                <defs>
-                    <radialGradient id="submap-glow-${entity.map_view_id}">
-                        <stop offset="0%" stop-color="rgba(60, 210, 255, 0.22)"></stop>
-                        <stop offset="50%" stop-color="rgba(60, 210, 255, 0.10)"></stop>
-                        <stop offset="100%" stop-color="rgba(60, 210, 255, 0)"></stop>
-                    </radialGradient>
-                </defs>
-                <circle cx="${cx}" cy="${cy}" r="${glowR}" fill="url(#submap-glow-${entity.map_view_id})"></circle>
                 ${linesSvg.join("")}
                 ${dotsSvg}
             </svg>

@@ -31,6 +31,7 @@ The format is intentionally simple so diffs stay readable in version control.
 - Resolve link status from global node dashboard data so cross-map status nodes (e.g., links on Main Map monitoring an AN assigned to a submap) render the correct health color
 - Restore Services Cloud visibility on Main Map (was gated on a now-empty `activeLocations` set after filter UI removal)
 - Submap icons now fully transparent: override inherited `.topology-entity` `backdrop-filter` so no pill/oval backdrop renders behind the dot mesh
+- Remove SVG radial glow circle from submap icon so links behind submaps render cleanly without a cyan halo blocking them
 
 ### refactor
 - Remove `include_in_topology`, `topology_level`, `topology_unit` columns
