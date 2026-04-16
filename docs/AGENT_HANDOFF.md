@@ -37,6 +37,7 @@ This file is the shared handoff log for agents working on SMP.
 - `handleNodeFormSubmit` disables Save / Save & Add buttons while the request is in flight and re-enables in `finally`, preventing duplicate node creation from rapid clicks.
 - Link Config Status Node dropdown: for submap endpoints, lists all inventory nodes assigned to that submap in an `<optgroup>` so operators can pick which node determines link health. `createTopologyLink()` now auto-sets `status_node_id` to the target AN (or source AN if target is a submap), so new links immediately reflect health status.
 - `getTopologyStatusNodeEntity()` falls back to `topologyNodeDashboardPayload.anchors` when the status node isn't on the current canvas. Previously only searched `getTopologyEntities()`, which is filtered to the current map — so a link on Main Map monitoring a submap-assigned AN returned null and the link rendered neutral forever.
+- Services Cloud on Main Map: removed `activeLocations.has("Cloud")` check in `isTopologyEntityVisible()` (line 4972). The location filter UI was removed in the redesign, but this gate was left behind so the set stayed empty and the services cloud was always hidden.
 
 ### Files touched
 - app/models.py, app/schemas.py, app/topology.py, app/routes/topology.py

@@ -29,6 +29,7 @@ The format is intentionally simple so diffs stay readable in version control.
 - Link Config Status Node dropdown now shows submap member nodes in optgroups for links connected to submaps
 - New links auto-select status node (target AN or source AN) so link health colors appear immediately
 - Resolve link status from global node dashboard data so cross-map status nodes (e.g., links on Main Map monitoring an AN assigned to a submap) render the correct health color
+- Restore Services Cloud visibility on Main Map (was gated on a now-empty `activeLocations` set after filter UI removal)
 
 ### refactor
 - Remove `include_in_topology`, `topology_level`, `topology_unit` columns
