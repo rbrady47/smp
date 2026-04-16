@@ -5439,9 +5439,7 @@ function renderTopologyStage() {
     };
 
     drawTopologyLinks(entityMap);
-    // Re-reveal discovery links after SVG rebuild
-    const isInsideSubmap = Boolean(document.getElementById("topology-root")?.getAttribute("data-map-view-id"));
-    if (topologyState.editMode || isInsideSubmap) {
+    if (topologyState.editMode) {
         revealAllDiscoveryLinks();
     } else if (topologyState.pinnedLinkNodeId) {
         revealDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);

@@ -26,7 +26,8 @@ This file is the shared handoff log for agents working on SMP.
 - Detail page: shows resolved submap name instead of "Submap N"
 - Map object sync: `sync_node_map_object()` in `app/routes/nodes.py` creates/removes `OperationalMapObject` rows when a node's `topology_map_id` changes (wired into create_node, update_node, and DN promotion) — critical fix so submap-assigned nodes actually render on the submap canvas
 - Submap drill-in: added `pointer-events: none` on `.topology-submap *` so double-click hits the button; allowed submap dblclick in edit mode
-- Submap DNs now render: `getTopologyEntities()` now includes `topologyPayload._discovery_entities`, and discovery links are auto-revealed inside submap views (previously DN entities were orphaned in `_discovery_entities` and never made it into the render pipeline)
+- Submap DNs now render: `getTopologyEntities()` now includes `topologyPayload._discovery_entities` (previously DN entities were orphaned and never entered the render pipeline)
+- Submap discovery links use hover-reveal (hover over a node to see its links, non-connected nodes fade). Removed `isInsideSubmap` override that force-revealed all discovery links on every render cycle, which caused flashing and persistent links.
 
 ### Files touched
 - app/models.py, app/schemas.py, app/topology.py, app/routes/topology.py
