@@ -55,15 +55,13 @@ const topologyEditModeStorageKey = "smp-topology-edit-mode";
 const topologyLayoutStorageKey = "smp-topology-layout-overrides";
 const topologyStateLogLayoutStorageKey = "smp-topology-state-log-layout";
 const topologyLinkAnchorStorageKey = "smp-topology-link-anchors";
-const TOPOLOGY_LOCATIONS = ["HSMC", "Cloud", "Episodic"];
-const TOPOLOGY_UNITS = ["DIV HQ", "1BCT", "2BCT", "3BCT", "CAB/DIVARTY", "Sustainment"];
-const TOPOLOGY_LOCATION_ALIASES = {
-    hsmc: "HSMC",
-    cloud: "Cloud",
-    azure: "Cloud",
-    episodic: "Episodic",
-    epis: "Episodic",
-};
+function topologyStatusFromNodeStatus(status) {
+    const s = (status || "").toLowerCase();
+    if (["online", "healthy", "up"].includes(s)) return "healthy";
+    if (s === "degraded") return "degraded";
+    if (["offline", "disabled", "down", "failed"].includes(s)) return "down";
+    return "neutral";
+}
 let topologyPayload = null;
 let topologySubmapDetail = null;
 // Generation counter: user-initiated refreshes increment this.
@@ -122,8 +120,8 @@ const _submapDnCountCache = (() => {
     };
 })();
 const topologyState = {
-    activeLocations: new Set(TOPOLOGY_LOCATIONS),
-    activeUnits: new Set(TOPOLOGY_UNITS),
+    activeLocations: new Set(),
+    activeUnits: new Set(),
     view: "backbone+l2",
     selectedKind: null,
     selectedId: null,
@@ -172,7 +170,7 @@ function normalizeTopologyLocation(location) {
     }
 
     const normalized = String(location).trim();
-    return TOPOLOGY_LOCATION_ALIASES[normalized.toLowerCase()] || normalized;
+    return normalized;
 }
 
 function normalizeTopologyUnit(unit) {
@@ -181,7 +179,7 @@ function normalizeTopologyUnit(unit) {
     }
 
     const normalized = String(unit).trim();
-    return TOPOLOGY_UNITS.includes(normalized) ? normalized : null;
+    return normalized || null;
 }
 
 function getTopologyDiscoveryCounts() {
@@ -2189,7 +2187,7 @@ function setTopologyUnitFocus(unit) {
     if (normalizedUnit) {
         topologyState.activeUnits = new Set([normalizedUnit]);
     } else {
-        topologyState.activeUnits = new Set(TOPOLOGY_UNITS);
+        topologyState.activeUnits = new Set();
     }
 }
 
@@ -3346,8 +3344,7 @@ async function _refreshNodeDetailTables(nodeId) {
 function _applyAnchorStateToPayloads(nodeId, state) {
     // Update state in all cached topology payload lists
     const allLists = [
-        topologyPayload?.lvl0_nodes,
-        topologyPayload?.lvl1_nodes,
+        topologyPayload?.entities,
     ];
     if (Array.isArray(topologyNodeDashboardPayload?.anchors)) {
         allLists.push(topologyNodeDashboardPayload.anchors);
@@ -3418,6 +3415,14 @@ function _updateTopologyEntityDOM(entityId, state) {
     if (badge && state.status) {
         badge.className = `topology-status-badge ${state.status}`;
         badge.textContent = state.status;
+    }
+
+    // Update button CSS status class
+    if (state.status) {
+        const statusClasses = ["topology-status-healthy", "topology-status-degraded", "topology-status-down", "topology-status-neutral"];
+        el.classList.remove(...statusClasses);
+        const newStatus = topologyStatusFromNodeStatus(state.status);
+        el.classList.add(`topology-status-${newStatus || "neutral"}`);
     }
 
     // Update WAN TX/RX
@@ -4759,30 +4764,6 @@ function getTopologyNodePosition(entity) {
 
     const width = Math.max(stage.clientWidth, 2140);
     const height = Math.max(stage.clientHeight, 940);
-    const isFullscreenLayout = topologyState.isFullscreen;
-    const lvl1NodeWidth = 92;
-    const lvl1TouchGap = 0;
-    const aggXs = {
-        Cloud: width * 0.18,
-        HSMC: width * 0.5,
-        Episodic: width * 0.82,
-    };
-    const groupXs = TOPOLOGY_UNITS.reduce((accumulator, unit, index) => {
-        accumulator[unit] = width * (0.04 + ((index + 0.5) / TOPOLOGY_UNITS.length) * 0.92);
-        return accumulator;
-    }, {});
-    const locationOffsets = {
-        Cloud: -(lvl1NodeWidth + lvl1TouchGap),
-        HSMC: 0,
-        Episodic: lvl1NodeWidth + lvl1TouchGap,
-    };
-    const aggYs = {
-        Cloud: Math.round(height * (isFullscreenLayout ? 0.21 : 0.19)),
-        HSMC: Math.round(height * (isFullscreenLayout ? 0.14 : 0.12)),
-        Episodic: Math.round(height * (isFullscreenLayout ? 0.21 : 0.19)),
-    };
-    const lvl1Y = Math.round(height * (isFullscreenLayout ? 0.5 : 0.44));
-    const lvl2Y = Math.round(height * (isFullscreenLayout ? 0.9 : 0.81));
 
     if (entity.kind === "services-cloud") {
         return {
@@ -4791,35 +4772,20 @@ function getTopologyNodePosition(entity) {
         };
     }
 
-    if (entity.level === 0) {
-        const baseX = aggXs[entity.location] ?? width / 2;
-        const baseY = aggYs[entity.location] ?? Math.round(height * 0.15);
-        // Offset multiple level-0 nodes at the same location so they don't stack
-        const lvl0AtLocation = (topologyPayload?.lvl0_nodes ?? []).filter(
-            (n) => n.level === 0 && n.location === entity.location
-        );
-        if (lvl0AtLocation.length > 1) {
-            const idx = lvl0AtLocation.findIndex((n) => n.id === entity.id);
-            const spacing = 140;
-            const totalWidth = (lvl0AtLocation.length - 1) * spacing;
-            return {
-                x: baseX - totalWidth / 2 + (idx >= 0 ? idx : 0) * spacing,
-                y: baseY,
-            };
-        }
-        return { x: baseX, y: baseY };
-    }
-
-    if (entity.level === 1) {
-        return {
-            x: (groupXs[entity.unit] ?? width / 2) + (locationOffsets[entity.location] ?? 0),
-            y: lvl1Y,
-        };
-    }
+    // Grid-place entities in rows of up to 6, centered horizontally
+    const allEntities = (topologyPayload?.entities ?? []).filter(e => e.topology_map_id != null);
+    const idx = allEntities.findIndex(e => e.id === entity.id);
+    const cols = Math.min(allEntities.length, 6);
+    const row = Math.floor((idx >= 0 ? idx : 0) / cols);
+    const col = (idx >= 0 ? idx : 0) % cols;
+    const spacingX = 200;
+    const spacingY = 180;
+    const startX = Math.round((width - (cols - 1) * spacingX) / 2);
+    const startY = Math.round(height * 0.15);
 
     return {
-        x: groupXs[entity.unit] ?? width / 2,
-        y: lvl2Y,
+        x: startX + col * spacingX,
+        y: startY + row * spacingY,
     };
 }
 
@@ -4903,19 +4869,17 @@ function getTopologyEntities() {
 
     const authoredEntities = [
         buildTopologyServiceCloudEntity(),
-        ...((topologyPayload.lvl0_nodes ?? []).map(mergeDashboardAnchorState)),
-        ...((topologyPayload.lvl1_nodes ?? []).map(mergeDashboardAnchorState)),
-        ...(topologyPayload.lvl2_clusters ?? []),
+        ...((topologyPayload.entities ?? []).map(mergeDashboardAnchorState)),
         ...(topologyPayload.submaps ?? []),
     ];
 
-    // Auto-place AN nodes that have include_in_topology but no saved layout
+    // Auto-place nodes assigned to this map that have no saved layout
     const isMainMap = !document.getElementById("topology-root")?.getAttribute("data-map-view-id");
     if (isMainMap) {
         let didAutoPlace = false;
         for (const entity of authoredEntities) {
             if (entity.kind === "services-cloud" || entity.kind === "submap") continue;
-            if (entity.include_in_topology && !topologyState.layoutOverrides?.[entity.id]) {
+            if (entity.topology_map_id != null && !topologyState.layoutOverrides?.[entity.id]) {
                 const pos = getTopologyNodePosition(entity);
                 setTopologyEntityLayout(entity.id, { x: pos.x, y: pos.y, size: getTopologyBubbleSize(entity, 0) }, { persist: false });
                 didAutoPlace = true;
@@ -6055,7 +6019,7 @@ function renderSubmapAddNodeList() {
     }
     const availableNodes = topologySubmapDetail?.available_nodes ?? [];
     const placedSiteIds = new Set(
-        (topologyPayload?.lvl0_nodes ?? []).map((e) => e.site_id).filter(Boolean)
+        (topologyPayload?.entities ?? []).map((e) => e.site_id).filter(Boolean)
     );
     const unplaced = availableNodes.filter((n) => !placedSiteIds.has(n.site_id));
     if (unplaced.length === 0) {
@@ -6109,10 +6073,10 @@ async function placeSubmapNode(siteId, displayName, bindingKey) {
         }
         const created = await response.json();
         const entity = buildSubmapEntityFromMapObject(created);
-        if (!topologyPayload.lvl0_nodes) {
-            topologyPayload.lvl0_nodes = [];
+        if (!topologyPayload.entities) {
+            topologyPayload.entities = [];
         }
-        topologyPayload.lvl0_nodes.push(entity);
+        topologyPayload.entities.push(entity);
         setTopologyEntityLayout(entity.id, { x: entity.x, y: entity.y, size: 96 });
         renderSubmapAddNodeList();
         renderTopologyStage();
@@ -6130,7 +6094,7 @@ async function refreshSubmapDiscovery(submapViewId) {
         const result = await apiRequest(`/api/topology/maps/${encodeURIComponent(submapViewId)}/discovery`);
         const peers = result?.discovered_peers ?? [];
         const placedSiteIds = new Set(
-            (topologyPayload.lvl0_nodes ?? []).map((e) => e.site_id).filter(Boolean)
+            (topologyPayload.entities ?? []).map((e) => e.site_id).filter(Boolean)
         );
         const discoveredEntities = peers
             .filter((p) => !placedSiteIds.has(p.site_id))
@@ -6154,7 +6118,7 @@ async function refreshSubmapDiscovery(submapViewId) {
                     rx_display: peer.rx_rate,
                 };
             });
-        topologyPayload.lvl1_nodes = discoveredEntities;
+        topologyPayload._discovery_entities = discoveredEntities;
 
         // Apply saved positions from DB first, then cluster-place truly new DNs near their source AN
         const savedPositions = result?.saved_positions ?? {};
@@ -6177,7 +6141,7 @@ async function refreshSubmapDiscovery(submapViewId) {
 
         // Collect occupied rectangles from all existing layout overrides
         const occupied = [];
-        const allEntities = [...(topologyPayload.lvl0_nodes ?? []), ...discoveredEntities];
+        const allEntities = [...(topologyPayload.entities ?? []), ...discoveredEntities];
         allEntities.forEach((e) => {
             const lo = topologyState.layoutOverrides?.[e.id];
             if (lo) {
@@ -6196,7 +6160,7 @@ async function refreshSubmapDiscovery(submapViewId) {
 
             // Build AN exclusion zones from layout overrides
             const anZones = [];
-            (topologyPayload.lvl0_nodes ?? []).forEach((e) => {
+            (topologyPayload.entities ?? []).forEach((e) => {
                 const lo = topologyState.layoutOverrides?.[e.id];
                 if (lo) {
                     anZones.push({
@@ -6263,7 +6227,7 @@ async function refreshSubmapDiscovery(submapViewId) {
             });
         }
         // Build discovery links (AN↔DN and DN↔DN tunnel connections)
-        const placedEntities = topologyPayload.lvl0_nodes ?? [];
+        const placedEntities = topologyPayload.entities ?? [];
         const rawLinks = result?.discovery_links ?? [];
         const anchorEntityMap = new Map();
         placedEntities.forEach((e) => {
@@ -6376,8 +6340,8 @@ async function deleteSubmapObject(mapObjectId, entityId) {
             console.error("Failed to delete submap object:", response.status);
             return;
         }
-        if (topologyPayload?.lvl0_nodes) {
-            topologyPayload.lvl0_nodes = topologyPayload.lvl0_nodes.filter((e) => e.id !== entityId);
+        if (topologyPayload?.entities) {
+            topologyPayload.entities = topologyPayload.entities.filter((e) => e.id !== entityId);
         }
         removeTopologyEntityLayout(entityId);
         topologyState.selectedKind = null;
@@ -7160,8 +7124,7 @@ function wireTopologyControls() {
 }
 
 function renderTopologyControls() {
-    renderTopologyFilterButtons("topology-location-filters", TOPOLOGY_LOCATIONS, topologyState.activeLocations, "location");
-    renderTopologyFilterButtons("topology-unit-filters", TOPOLOGY_UNITS, topologyState.activeUnits, "unit");
+    // Location/unit filter buttons removed — map assignment model replaces skeleton filters
     renderTopologyViewButtons();
     wireTopologyControls();
     updateTopologyEditStatus();
@@ -7457,7 +7420,7 @@ async function loadTopologyPage() {
                     setTopologyEntityLayout(entity.id, { x: entity.x, y: entity.y, size: 96 });
                 }
             });
-            topologyPayload = { lvl0_nodes: submapEntities, lvl1_nodes: [], lvl2_clusters: [], submaps: [], links: [] };
+            topologyPayload = { entities: submapEntities, submaps: [], links: [] };
             _topologyDomCache.clear();
             _topologyLinkDomCache.clear();
             await refreshSubmapDiscovery(submapViewId);
@@ -7476,10 +7439,10 @@ async function loadTopologyPage() {
         topologyDashboardServicesPayload = dashboardServicesResult.status === "fulfilled"
             ? dashboardServicesResult.value
             : { summary: {}, services: [] };
-        topologyState.activeLocations = new Set(TOPOLOGY_LOCATIONS);
+        topologyState.activeLocations = new Set();
         setTopologyUnitFocus(requestedUnit);
         if (!topologyState.focusUnit) {
-            topologyState.activeUnits = new Set(TOPOLOGY_UNITS);
+            topologyState.activeUnits = new Set();
         }
         const hasLocalEditorState = hasLocalTopologyEditorState();
         topologyState.layoutOverrides = getSavedTopologyLayoutOverrides();
@@ -7534,7 +7497,7 @@ async function loadTopologyPage() {
             const requestedUnit = normalizeTopologyUnit(new URL(window.location.href).searchParams.get("unit"));
             setTopologyUnitFocus(requestedUnit);
             if (!topologyState.focusUnit) {
-                topologyState.activeUnits = new Set(TOPOLOGY_UNITS);
+                topologyState.activeUnits = new Set();
             }
             renderTopologyControls();
             renderTopologyStage();
@@ -7590,7 +7553,7 @@ async function loadNodeDetailPage() {
             ["Mate Count", config.n_mates ?? 0],
             ["Enclave", config.enclave_id ?? "--"],
             ["Platform", config.platform ?? "--"],
-            ["Topology Unit", node.topology_unit ?? "--"],
+            ["Map Assignment", node.topology_map_id === 0 ? "Main Map" : node.topology_map_id != null ? `Submap ${node.topology_map_id}` : "None"],
         ]);
 
         renderDetailTableBody(
@@ -8040,8 +8003,7 @@ async function refreshTopologyPingStatus() {
         // Update ping data in ALL cached payloads so renderTopologyStage picks it up
         let changed = false;
         const allLists = [
-            topologyPayload?.lvl0_nodes,
-            topologyPayload?.lvl1_nodes,
+            topologyPayload?.entities,
         ];
         // Also update the node-dashboard anchors (these take priority in mergeDashboardAnchorState)
         if (Array.isArray(topologyNodeDashboardPayload?.anchors)) {
