@@ -1914,6 +1914,7 @@ a {
     border-radius: 16px;
     border: 1.5px solid transparent !important;
     background: transparent !important;
+    backdrop-filter: none !important;
     box-shadow: none !important;
     cursor: pointer;
     transition: filter 300ms ease, transform 160ms ease;
@@ -1929,6 +1930,7 @@ a {
 .topology-submap:hover {
     border-color: transparent !important;
     background: transparent !important;
+    backdrop-filter: none !important;
     box-shadow: none !important;
 }
 
