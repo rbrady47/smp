@@ -21,6 +21,7 @@ The format is intentionally simple so diffs stay readable in version control.
 - Submap discovery links use hover-reveal instead of always-visible; no longer flash on render cycles
 - Prevent duplicate submap entries in Map Assignment dropdown when two populate calls overlap (per-element cancellation token)
 - Add "Show Links" / "Hide Links" toggle button on submap toolbar — reveals all discovery links without entering edit mode
+- Fix DN layout override race on submap page load; DNs now render on first visit to new submaps, and positions persist across refreshes
 
 ### refactor
 - Remove `include_in_topology`, `topology_level`, `topology_unit` columns

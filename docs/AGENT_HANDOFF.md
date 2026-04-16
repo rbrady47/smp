@@ -30,6 +30,7 @@ This file is the shared handoff log for agents working on SMP.
 - Submap discovery links use hover-reveal (hover over a node to see its links, non-connected nodes fade). Removed `isInsideSubmap` override that force-revealed all discovery links on every render cycle, which caused flashing and persistent links.
 - `populateMapDropdown()` now uses a per-select cancellation token to prevent duplicate submap entries when two overlapping calls race (e.g. `resetNodeForm()` followed by `populateNodeForm()`). The clear-and-append block is atomic after the fetch completes.
 - "Show Links" toggle button on submap toolbar: `topologyState.showAllLinks` persists through render cycles; suppresses hover reveal/fade when active; integrates with edit mode (both can coexist)
+- Fix submap DN invisibility race: `refreshSubmapDiscovery()` and the submap AN layout setup now run AFTER the editor state restore (which replaces `layoutOverrides` wholesale), so the DN overrides created during discovery aren't wiped. `queueTopologyEditorStateSave()` is fired after the refresh to persist DN positions for future visits.
 
 ### Files touched
 - app/models.py, app/schemas.py, app/topology.py, app/routes/topology.py

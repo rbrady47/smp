@@ -7471,16 +7471,11 @@ async function loadTopologyPage() {
             const submapEntities = (submapResult?.objects ?? [])
                 .filter((obj) => obj.object_type === "node")
                 .map(buildSubmapEntityFromMapObject);
-            submapEntities.forEach((entity) => {
-                if (!topologyState.layoutOverrides?.[entity.id]) {
-                    setTopologyEntityLayout(entity.id, { x: entity.x, y: entity.y, size: 96 });
-                }
-            });
             topologyPayload = { entities: submapEntities, submaps: [], links: [] };
             _topologyDomCache.clear();
             _topologyLinkDomCache.clear();
-            await refreshSubmapDiscovery(submapViewId);
-            renderSubmapAddNodeList();
+            // NOTE: AN layouts and refreshSubmapDiscovery() moved below the
+            // editor-state restore so they don't get wiped out.
         } else {
             topologyPayload = topologyResult.value;
             _topologyDomCache.clear();
@@ -7521,6 +7516,22 @@ async function loadTopologyPage() {
         if (editorStateResult.status === "fulfilled" && !editorStateResult.value?.exists && hasLocalEditorState) {
             queueTopologyEditorStateSave();
         }
+
+        // Restore submap AN layouts and fetch DN data AFTER editor state restore
+        // so layout overrides created here survive instead of being wiped.
+        if (submapViewId) {
+            const submapEntities = topologyPayload.entities ?? [];
+            submapEntities.forEach((entity) => {
+                if (!topologyState.layoutOverrides?.[entity.id]) {
+                    setTopologyEntityLayout(entity.id, { x: entity.x, y: entity.y, size: 96 });
+                }
+            });
+            await refreshSubmapDiscovery(submapViewId);
+            renderSubmapAddNodeList();
+            // Persist DN layout overrides so next visit doesn't re-race
+            queueTopologyEditorStateSave();
+        }
+
         renderTopologyControls();
         wireTopologyLayoutControls();
         setTopologyEditMode(getSavedTopologyEditMode());
