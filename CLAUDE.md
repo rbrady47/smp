@@ -190,6 +190,10 @@ Every change must be fully documented for follow-on development and end users. T
 | Discovery Topology | Auto-discovered network graph |
 | TopologyUnit | Military org unit (AGG, DIV HQ, 1BCT, 2BCT, 3BCT, etc.) |
 
+## External Libraries
+
+- When working with code that uses external libraries, use context7 to fetch current documentation before generating code.
+
 ## What NOT to Do
 
 - Do not add pytest, ruff, or other tooling without explicit instruction
