@@ -127,6 +127,7 @@ const topologyState = {
     selectedId: null,
     focusUnit: null,
     editMode: false,
+    showAllLinks: false,
     layoutOverrides: {},
     dragging: null,
     selectedEntityIds: new Set(),
@@ -1234,7 +1235,7 @@ function setTopologyEditMode(editMode) {
         }
     }
     // Show all discovery links in edit mode; hide when leaving (unless pinned)
-    if (topologyState.editMode) {
+    if (topologyState.editMode || topologyState.showAllLinks) {
         revealAllDiscoveryLinks();
     } else {
         hideAllDiscoveryLinks();
@@ -5251,7 +5252,7 @@ function _attachTopologyEntityListeners(button, entityMap) {
 
     button.addEventListener("mouseenter", () => {
         const entityId = button.getAttribute("data-topology-id");
-        if (!entityId || topologyState.editMode) return;
+        if (!entityId || topologyState.editMode || topologyState.showAllLinks) return;
         if (topologyState.pinnedLinkNodeId && topologyState.pinnedLinkNodeId !== entityId) return;
         revealDiscoveryLinksForEntity(entityId);
         const root = document.getElementById("topology-root");
@@ -5262,7 +5263,7 @@ function _attachTopologyEntityListeners(button, entityMap) {
 
     button.addEventListener("mouseleave", () => {
         const entityId = button.getAttribute("data-topology-id");
-        if (!entityId || topologyState.editMode) return;
+        if (!entityId || topologyState.editMode || topologyState.showAllLinks) return;
         if (topologyState.pinnedLinkNodeId === entityId) return;
         hideDiscoveryLinksForEntity(entityId);
         clearTopologyHoverFocus();
@@ -5459,7 +5460,7 @@ function renderTopologyStage() {
     };
 
     drawTopologyLinks(entityMap);
-    if (topologyState.editMode) {
+    if (topologyState.editMode || topologyState.showAllLinks) {
         revealAllDiscoveryLinks();
     } else if (topologyState.pinnedLinkNodeId) {
         revealDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
@@ -7372,6 +7373,24 @@ function wireTopologyLayoutControls() {
             syncTopologyFullscreenState();
             if (topologyPayload && document.getElementById("topology-root")) {
                 renderTopologyStage();
+            }
+        });
+    }
+
+    const showLinksToggle = document.getElementById("submap-show-links-toggle");
+    if (showLinksToggle && showLinksToggle.dataset.bound !== "true") {
+        showLinksToggle.dataset.bound = "true";
+        showLinksToggle.addEventListener("click", () => {
+            topologyState.showAllLinks = !topologyState.showAllLinks;
+            showLinksToggle.textContent = topologyState.showAllLinks ? "Hide Links" : "Show Links";
+            showLinksToggle.setAttribute("aria-pressed", topologyState.showAllLinks ? "true" : "false");
+            if (topologyState.showAllLinks) {
+                revealAllDiscoveryLinks();
+            } else {
+                hideAllDiscoveryLinks();
+                if (topologyState.pinnedLinkNodeId) {
+                    revealDiscoveryLinksForEntity(topologyState.pinnedLinkNodeId);
+                }
             }
         });
     }

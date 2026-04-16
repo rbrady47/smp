@@ -200,7 +200,8 @@ Submaps appear as portal-style cards on the main topology map. Each submap repre
 **Inside a submap:**
 - Discovered nodes are auto-placed starting from the center of the screen, spiraling outward. They stay clear of anchor nodes (120px clearance) and never overlap each other.
 - Discovery links from anchor nodes (AN→DN) always connect south (AN) to north (DN). Links between discovered nodes (DN→DN) use the closest side anchor (E/SE/S/SW/W) based on geometry.
-- Hovering or click-pinning a node fades all unconnected nodes to near-invisible, highlighting only the hovered node and its direct connections. Click again or click empty space to clear.
+- Discovery links are hidden by default. Hovering a node reveals its connected links and fades unconnected nodes. Click-pinning a node locks this view until you click again or click empty space.
+- Use the **Show Links** button in the submap toolbar to reveal all discovery links at once without entering edit mode. Click again (**Hide Links**) to return to hover-only mode. This toggle persists through refresh cycles and coexists with edit mode.
 - Anchor node tooltips are hidden inside submaps — only discovered node tooltips are shown.
 - Saved positions (from dragging in edit mode) are preserved across page refreshes.
 
