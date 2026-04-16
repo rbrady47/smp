@@ -14,7 +14,7 @@ from app.models import (
     TopologyLink,
 )
 from app.schemas import TopologyEditorStateUpdate, TopologyLinkCreate, TopologyLinkUpdate
-from app.topology import build_mock_topology_payload, build_topology_discovery_payload
+from app.topology import build_topology_payload_for_map, build_topology_discovery_payload
 from app.topology_editor_state_service import get_topology_editor_state_payload, upsert_topology_editor_state
 from app import state_manager
 
@@ -135,6 +135,7 @@ async def delete_topology_link(
 @router.get("/topology")
 async def topology_payload(
     window_seconds: int = Query(default=60),
+    map_id: int | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     from app.main import dn_ping_snapshots, node_dashboard_backend, normalize_node_dashboard_window
@@ -154,6 +155,7 @@ async def topology_payload(
                 "name": node.name,
                 "host": node.host,
                 "location": anchor.get("site") or node.location,
+                "node_id": node.node_id,
                 "status": anchor.get("status"),
                 "topology_map_id": node.topology_map_id,
                 "site_id": anchor.get("site_id") or node.node_id,
@@ -169,6 +171,9 @@ async def topology_payload(
                 "web_scheme": anchor.get("web_scheme") or ("https" if node.api_use_https else "http"),
             }
         )
+
+    result = build_topology_payload_for_map(inventory_nodes, map_id=map_id)
+
     db_links = (await db.scalars(select(TopologyLink).order_by(TopologyLink.id))).all()
     authored_links = [
         {
@@ -185,6 +190,7 @@ async def topology_payload(
         }
         for link in db_links
     ]
+
     submap_views = (await db.scalars(
         select(OperationalMapView).where(OperationalMapView.parent_map_id.is_(None)).order_by(OperationalMapView.name)
     )).all()
@@ -240,7 +246,7 @@ async def topology_payload(
             "dn_up_names": counts["up_names"],
             "dn_down_names": counts["down_names"],
         })
-    result = build_mock_topology_payload(inventory_nodes)
+
     result["links"] = authored_links
     result["submaps"] = submaps
     return result

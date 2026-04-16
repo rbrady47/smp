@@ -1,21 +1,10 @@
 from __future__ import annotations
 
-from itertools import combinations
 from typing import Any
 
 from app.schemas import TopologyDiscoveryPayload
 
 
-TOPOLOGY_LOCATIONS = ["HSMC", "Cloud", "Episodic"]
-TOPOLOGY_UNITS = ["DIV HQ", "1BCT", "2BCT", "3BCT", "CAB/DIVARTY", "Sustainment"]
-TOPOLOGY_LVL2_COUNTS = {
-    "DIV HQ": 63,
-    "1BCT": 58,
-    "2BCT": 54,
-    "3BCT": 49,
-    "CAB/DIVARTY": 44,
-    "Sustainment": 38,
-}
 LOCATION_ALIASES = {
     "hsmc": "HSMC",
     "cloud": "Cloud",
@@ -62,15 +51,51 @@ def topology_status_from_inventory(inventory: dict[str, Any] | None) -> str:
     return topology_status_from_node_status(inventory.get("status"))
 
 
-def _merge_topology_statuses(*statuses: str | None) -> str:
-    normalized = [str(status or "neutral").strip().lower() for status in statuses]
-    if any(status == "down" for status in normalized):
-        return "down"
-    if any(status == "degraded" for status in normalized):
-        return "degraded"
-    if normalized and all(status == "healthy" for status in normalized):
-        return "healthy"
-    return "neutral"
+def build_topology_payload_for_map(
+    inventory_nodes: list[dict[str, Any]],
+    map_id: int | None = None,
+) -> dict[str, Any]:
+    """Build topology payload containing only nodes assigned to the given map.
+
+    map_id=None -> main map (nodes with topology_map_id == 0)
+    map_id=<int> -> submap (nodes with topology_map_id == <int>)
+    """
+    target_map_id = 0 if map_id is None else map_id
+
+    assigned_nodes = [
+        node for node in inventory_nodes
+        if node.get("topology_map_id") == target_map_id
+    ]
+
+    entities: list[dict[str, Any]] = []
+    for node in assigned_nodes:
+        entity_id = f"node-{node.get('id') or 0}"
+        entities.append({
+            "id": entity_id,
+            "name": str(node.get("name") or f"Node {node.get('id')}"),
+            "location": str(node.get("location") or "--"),
+            "status": topology_status_from_inventory(node) if node else "neutral",
+            "inventory_node_id": node.get("id"),
+            "node_id": node.get("node_id"),
+            "site_id": node.get("site_id"),
+            "latency_ms": node.get("latency_ms"),
+            "rtt_state": node.get("rtt_state"),
+            "tx_bps": node.get("tx_bps"),
+            "rx_bps": node.get("rx_bps"),
+            "tx_display": node.get("tx_display"),
+            "rx_display": node.get("rx_display"),
+            "cpu_avg": node.get("cpu_avg"),
+            "version": node.get("version"),
+            "web_port": node.get("web_port"),
+            "web_scheme": node.get("web_scheme"),
+            "metrics_text": node.get("host") or "--",
+            "topology_map_id": node.get("topology_map_id"),
+        })
+
+    return {
+        "entities": entities,
+        "links": [],
+    }
 
 
 def _resolve_discovered_unit(
@@ -282,117 +307,4 @@ def build_topology_discovery_payload(
 
 
 
-def _make_entity(node: dict[str, Any] | None, *, entity_id: str, name: str, location: str, level: int, unit: str) -> dict[str, Any]:
-    """Build a topology entity dict, overlaying inventory data when available."""
-    return {
-        "id": entity_id,
-        "name": str(node.get("name") or name) if node else name,
-        "location": location,
-        "level": level,
-        "unit": unit,
-        "status": topology_status_from_inventory(node) if node else "neutral",
-        "include_in_topology": True,
-        "inventory_node_id": node.get("id") if node else None,
-        "inventory_name": node.get("name") if node else None,
-        "node_id": node.get("node_id") if node else None,
-        "site_id": node.get("site_id") if node else None,
-        "latency_ms": node.get("latency_ms") if node else None,
-        "rtt_state": node.get("rtt_state") if node else None,
-        "tx_bps": node.get("tx_bps") if node else None,
-        "rx_bps": node.get("rx_bps") if node else None,
-        "tx_display": node.get("tx_display") if node else None,
-        "rx_display": node.get("rx_display") if node else None,
-        "cpu_avg": node.get("cpu_avg") if node else None,
-        "version": node.get("version") if node else None,
-        "web_port": node.get("web_port") if node else None,
-        "web_scheme": node.get("web_scheme") if node else None,
-        "metrics_text": (node.get("host") or "Awaiting first Seeker pull") if node else "Awaiting first Seeker pull",
-    }
-
-
-def build_mock_topology_payload(inventory_nodes: list[dict[str, Any]]) -> dict[str, Any]:
-    authored_nodes = [
-        node
-        for node in inventory_nodes
-        if node.get("include_in_topology", True)
-    ]
-
-    # Index inventory nodes by topology position for binding
-    inv_by_loc_lvl0: dict[str, dict[str, Any]] = {}
-    inv_by_loc_unit_lvl1: dict[tuple[str, str], dict[str, Any]] = {}
-
-    for node in authored_nodes:
-        location = normalize_topology_location(node.get("location")) or "Cloud"
-        if location not in TOPOLOGY_LOCATIONS:
-            location = "Cloud"
-        level = int(node.get("topology_level") or 0)
-        unit = str(node.get("topology_unit") or ("AGG" if level == 0 else "DIV HQ")).strip() or ("AGG" if level == 0 else "DIV HQ")
-        if level == 0:
-            inv_by_loc_lvl0.setdefault(location, node)
-        else:
-            inv_by_loc_unit_lvl1.setdefault((location, unit), node)
-
-    # Generate skeleton lvl0 nodes (one per location), overlay inventory data
-    lvl0_nodes: list[dict[str, Any]] = []
-    for location in TOPOLOGY_LOCATIONS:
-        inv = inv_by_loc_lvl0.get(location)
-        entity = _make_entity(
-            inv,
-            entity_id=f"node-{inv.get('id') or 0}" if inv else f"agg-{location.lower()}",
-            name=f"{location} Aggregate",
-            location=location,
-            level=0,
-            unit="AGG",
-        )
-        lvl0_nodes.append(entity)
-
-    # Generate skeleton lvl1 nodes (one per location x unit)
-    lvl1_nodes: list[dict[str, Any]] = []
-    for location in TOPOLOGY_LOCATIONS:
-        for unit in TOPOLOGY_UNITS:
-            inv = inv_by_loc_unit_lvl1.get((location, unit))
-            entity = _make_entity(
-                inv,
-                entity_id=f"node-{inv.get('id') or 0}" if inv else f"lvl1-{location.lower()}-{unit.lower().replace(' ', '-').replace('/', '-')}",
-                name=f"{location} {unit}",
-                location=location,
-                level=1,
-                unit=unit,
-            )
-            lvl1_nodes.append(entity)
-
-    # Generate lvl2 cluster entries (one per unit)
-    lvl2_clusters: list[dict[str, Any]] = [
-        {
-            "id": f"cluster-{unit.lower().replace(' ', '-').replace('/', '-')}",
-            "name": f"{unit} Edge Nodes",
-            "unit": unit,
-            "count": TOPOLOGY_LVL2_COUNTS.get(unit, 0),
-            "level": 2,
-            "status": "neutral",
-        }
-        for unit in TOPOLOGY_UNITS
-    ]
-
-    # Generate backbone links between all lvl0 node pairs
-    links: list[dict[str, Any]] = []
-    for a, b in combinations(lvl0_nodes, 2):
-        link_status = _merge_topology_statuses(a["status"], b["status"])
-        links.append({
-            "id": f"backbone-{a['id']}-{b['id']}",
-            "from": a["id"],
-            "to": b["id"],
-            "kind": "backbone",
-            "status": link_status,
-        })
-
-    return {
-        "locations": TOPOLOGY_LOCATIONS,
-        "units": TOPOLOGY_UNITS,
-        "lvl0_nodes": lvl0_nodes,
-        "lvl1_nodes": lvl1_nodes,
-        "lvl2_clusters": lvl2_clusters,
-        "links": links,
-        "inventory_nodes": inventory_nodes,
-    }
 
