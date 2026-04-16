@@ -35,6 +35,7 @@ This file is the shared handoff log for agents working on SMP.
 - DN double-click opens management web page: single-click action (pin tooltip/links + renderTopologyStage) is now deferred 260ms via `_topologyPendingClick` so `dblclick` can cancel it. Without this, `renderTopologyStage()` rebuilt the DOM before dblclick fired.
 - `DELETE /api/nodes/{id}` previously failed silently on FK constraints (ChartSample.node_id has no ON DELETE CASCADE). Now cleans up ChartSample, OperationalMapObject (`anchor:{id}` bindings), and TopologyLink rows that reference the node before deleting it.
 - `handleNodeFormSubmit` disables Save / Save & Add buttons while the request is in flight and re-enables in `finally`, preventing duplicate node creation from rapid clicks.
+- Link Config Status Node dropdown: for submap endpoints, lists all inventory nodes assigned to that submap in an `<optgroup>` so operators can pick which node determines link health. `createTopologyLink()` now auto-sets `status_node_id` to the target AN (or source AN if target is a submap), so new links immediately reflect health status.
 
 ### Files touched
 - app/models.py, app/schemas.py, app/topology.py, app/routes/topology.py

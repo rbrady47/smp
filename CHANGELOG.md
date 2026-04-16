@@ -26,6 +26,8 @@ The format is intentionally simple so diffs stay readable in version control.
 - Double-click a discovered node on a submap now opens its management web page (`https://{host}:443`); single-click is deferred so dblclick can preempt it
 - `DELETE /api/nodes/{id}` now cleans up related `ChartSample`, `OperationalMapObject`, and `TopologyLink` records so the deletion doesn't fail silently on FK constraints
 - Debounce Save button on node form to prevent duplicate node creation on multi-click
+- Link Config Status Node dropdown now shows submap member nodes in optgroups for links connected to submaps
+- New links auto-select status node (target AN or source AN) so link health colors appear immediately
 
 ### refactor
 - Remove `include_in_topology`, `topology_level`, `topology_unit` columns

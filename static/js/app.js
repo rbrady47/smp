@@ -6436,6 +6436,15 @@ async function renameTopologySubmap(entity) {
 
 async function createTopologyLink(sourceEntityId, sourceAnchor, targetEntityId, targetAnchor) {
     try {
+        const entities = getTopologyEntities();
+        const targetEntity = entities.find((e) => e.id === targetEntityId);
+        const sourceEntity = entities.find((e) => e.id === sourceEntityId);
+        let autoStatusNodeId = null;
+        if (targetEntity?.inventory_node_id) {
+            autoStatusNodeId = targetEntity.inventory_node_id;
+        } else if (sourceEntity?.inventory_node_id) {
+            autoStatusNodeId = sourceEntity.inventory_node_id;
+        }
         const response = await fetch("/api/topology/links", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -6445,6 +6454,7 @@ async function createTopologyLink(sourceEntityId, sourceAnchor, targetEntityId, 
                 source_anchor: sourceAnchor,
                 target_anchor: targetAnchor,
                 link_type: "solid",
+                status_node_id: autoStatusNodeId,
             }),
         });
         if (!response.ok) {
@@ -6806,17 +6816,38 @@ function openTopologyLinkContextMenu(link, clientX, clientY) {
     const fromEntity = entities.find((e) => e.id === link.from);
     const toEntity = entities.find((e) => e.id === link.to);
     statusNodeSelect.innerHTML = '<option value="">None</option>';
-    [fromEntity, toEntity].filter(Boolean).forEach((entity) => {
-        const invId = entity.inventory_node_id;
-        if (!invId) {
-            return;
+    const endpoints = [
+        { entity: fromEntity, role: "Source" },
+        { entity: toEntity, role: "Target" },
+    ];
+    for (const { entity } of endpoints) {
+        if (!entity) continue;
+        if (entity.inventory_node_id) {
+            const opt = document.createElement("option");
+            opt.value = String(entity.inventory_node_id);
+            opt.textContent = entity.name || entity.id;
+            statusNodeSelect.appendChild(opt);
+        } else if (entity.kind === "submap" && entity.map_view_id) {
+            const submapNodes = (Array.isArray(currentNodes) ? currentNodes : []).filter(
+                (n) => n.topology_map_id === entity.map_view_id
+            );
+            if (submapNodes.length > 0) {
+                const group = document.createElement("optgroup");
+                group.label = `${entity.name || "Submap"} nodes`;
+                for (const node of submapNodes) {
+                    const opt = document.createElement("option");
+                    opt.value = String(node.id);
+                    opt.textContent = node.name;
+                    group.appendChild(opt);
+                }
+                statusNodeSelect.appendChild(group);
+            }
         }
-        const opt = document.createElement("option");
-        opt.value = String(invId);
-        opt.textContent = entity.name || entity.id;
-        statusNodeSelect.appendChild(opt);
-    });
+    }
     statusNodeSelect.value = link.status_node_id ? String(link.status_node_id) : "";
+    if (!link.status_node_id && statusNodeSelect.options.length > 1) {
+        statusNodeSelect.selectedIndex = 1;
+    }
 
     menu.hidden = false;
     menu.style.left = `${Math.min(clientX, window.innerWidth - 260)}px`;
