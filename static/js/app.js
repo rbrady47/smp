@@ -773,8 +773,33 @@ function getEffectiveTopologyLinkStatus(link, index) {
 }
 
 function getTopologyStatusNodeEntity(inventoryNodeId) {
+    const idStr = String(inventoryNodeId);
+
     const entities = getTopologyEntities();
-    return entities.find((e) => e.inventory_node_id === inventoryNodeId || e.inventory_node_id === String(inventoryNodeId)) || null;
+    const localMatch = entities.find(
+        (e) => String(e.inventory_node_id) === idStr
+    );
+    if (localMatch) return localMatch;
+
+    const anchors = Array.isArray(topologyNodeDashboardPayload?.anchors)
+        ? topologyNodeDashboardPayload.anchors
+        : [];
+    const dashboardMatch = anchors.find(
+        (a) => String(a.id) === idStr || String(a.node_id) === idStr
+    );
+    if (dashboardMatch) {
+        return {
+            inventory_node_id: dashboardMatch.id,
+            name: dashboardMatch.name,
+            ping_state: dashboardMatch.ping_state,
+            ping_ok: dashboardMatch.ping_ok,
+            latency_ms: dashboardMatch.latency_ms,
+            avg_latency_ms: dashboardMatch.avg_latency_ms,
+            status: dashboardMatch.status,
+        };
+    }
+
+    return null;
 }
 
 function computeTopologyLinkStatusFromNode(entity) {

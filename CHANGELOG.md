@@ -28,6 +28,7 @@ The format is intentionally simple so diffs stay readable in version control.
 - Debounce Save button on node form to prevent duplicate node creation on multi-click
 - Link Config Status Node dropdown now shows submap member nodes in optgroups for links connected to submaps
 - New links auto-select status node (target AN or source AN) so link health colors appear immediately
+- Resolve link status from global node dashboard data so cross-map status nodes (e.g., links on Main Map monitoring an AN assigned to a submap) render the correct health color
 
 ### refactor
 - Remove `include_in_topology`, `topology_level`, `topology_unit` columns
