@@ -12,6 +12,10 @@ The format is intentionally simple so diffs stay readable in version control.
 - ANs assigned to submaps are automatic discovery roots
 - Orphan nodes on submap deletion
 
+### fix
+- Populate Map Assignment dropdown with submaps in all node forms (add node, edit node, topology editor, DN promote)
+- Show resolved submap name on node detail page instead of "Submap N"
+
 ### refactor
 - Remove `include_in_topology`, `topology_level`, `topology_unit` columns
 - Remove `build_mock_topology_payload()` skeleton generator and `TOPOLOGY_LOCATIONS/UNITS` constants

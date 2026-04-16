@@ -22,6 +22,8 @@ This file is the shared handoff log for agents working on SMP.
 - SSE fix: _updateTopologyEntityDOM() now updates button CSS status class
 - Discovery: ANs assigned to submaps via topology_map_id are automatic discovery roots
 - Submap delete: orphans any nodes assigned to the deleted submap
+- Map dropdown fix: all node forms (add, edit, topology editor, DN promote) now populate submap options via `/api/topology/maps`
+- Detail page: shows resolved submap name instead of "Submap N"
 
 ### Files touched
 - app/models.py, app/schemas.py, app/topology.py, app/routes/topology.py

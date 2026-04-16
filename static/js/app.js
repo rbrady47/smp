@@ -3759,8 +3759,7 @@ function resetNodeForm() {
     formError.hidden = true;
     formError.textContent = "Unable to save node";
     keepNodeModalOpenAfterSave = false;
-    const mapSelect = document.getElementById("node-topology-map-id");
-    if (mapSelect) mapSelect.value = "";
+    populateMapDropdown("node-topology-map-id", null);
 }
 
 function getNodeModalShell() {
@@ -3848,21 +3847,37 @@ function closeTopologyDetail() {
     }
 }
 
-async function populateMapAssignmentDropdown(currentMapId) {
-    const select = document.getElementById("node-topology-map-id");
+let _cachedMapsList = null;
+
+async function fetchMapsList() {
+    try {
+        _cachedMapsList = await apiRequest("/api/topology/maps");
+    } catch (err) {
+        _cachedMapsList = [];
+    }
+    return _cachedMapsList;
+}
+
+function getMapNameById(mapId) {
+    if (mapId === null || mapId === undefined) return "None";
+    if (mapId === 0) return "Main Map";
+    const map = (_cachedMapsList || []).find(m => m.id === mapId);
+    return map ? map.name : `Submap ${mapId}`;
+}
+
+async function populateMapDropdown(selectElementId, currentMapId) {
+    const select = document.getElementById(selectElementId);
     if (!select) return;
     while (select.options.length > 2) {
         select.remove(2);
     }
-    try {
-        const maps = await apiRequest("/api/topology/maps");
-        for (const map of maps) {
-            const option = document.createElement("option");
-            option.value = String(map.id);
-            option.textContent = map.name;
-            select.appendChild(option);
-        }
-    } catch (err) { /* non-fatal */ }
+    const maps = await fetchMapsList();
+    for (const map of maps) {
+        const option = document.createElement("option");
+        option.value = String(map.id);
+        option.textContent = map.name;
+        select.appendChild(option);
+    }
     select.value = currentMapId != null ? String(currentMapId) : "";
 }
 
@@ -3911,7 +3926,7 @@ function populateNodeForm(nodeId) {
     }
     document.getElementById("node-form-error").hidden = true;
     currentEditNodeId = node.id;
-    populateMapAssignmentDropdown(node.topology_map_id);
+    populateMapDropdown("node-topology-map-id", node.topology_map_id);
     renderNodesTable(currentNodes);
     openNodeModal({ reset: false });
 }
@@ -6967,7 +6982,9 @@ function renderTopologyNodeEditorMarkup(entity, node) {
     `;
 }
 
-function wireTopologyNodeEditor(entity, node) {
+async function wireTopologyNodeEditor(entity, node) {
+    await populateMapDropdown("topology-node-map-id", node?.topology_map_id ?? entity.topology_map_id);
+
     const labelInput = document.getElementById("topology-label-input");
     const labelSaveButton = document.getElementById("topology-label-save");
     const labelResetButton = document.getElementById("topology-label-reset");
@@ -7519,7 +7536,10 @@ async function loadNodeDetailPage() {
     }
 
     try {
-        const detail = await apiRequest(buildNodeDashboardRequestUrl(detailEndpoint));
+        const [detail] = await Promise.all([
+            apiRequest(buildNodeDashboardRequestUrl(detailEndpoint)),
+            fetchMapsList(),
+        ]);
         const node = detail.node ?? {};
         const summary = detail.node_summary ?? {};
         const config = detail.config_summary ?? {};
@@ -7553,7 +7573,7 @@ async function loadNodeDetailPage() {
             ["Mate Count", config.n_mates ?? 0],
             ["Enclave", config.enclave_id ?? "--"],
             ["Platform", config.platform ?? "--"],
-            ["Map Assignment", node.topology_map_id === 0 ? "Main Map" : node.topology_map_id != null ? `Submap ${node.topology_map_id}` : "None"],
+            ["Map Assignment", getMapNameById(node.topology_map_id)],
         ]);
 
         renderDetailTableBody(
@@ -7660,6 +7680,7 @@ function initDnPromotion() {
         }
         modal.hidden = false;
         errorEl.hidden = true;
+        populateMapDropdown("promote-topology-map-id", 0);
     }
 
     function closeModal() {
