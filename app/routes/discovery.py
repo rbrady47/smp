@@ -147,6 +147,10 @@ async def promote_discovered_node(
     # Delete the DN and related records
     await node_dashboard_backend.delete_discovered_node(db, site_id)
 
+    # Auto-create map object if assigned to a submap
+    from app.routes.nodes import sync_node_map_object
+    await sync_node_map_object(node, None, node.topology_map_id, db)
+
     # Commit the new AN (DN deletion already committed inside delete_discovered_node)
     await db.commit()
     await db.refresh(node)

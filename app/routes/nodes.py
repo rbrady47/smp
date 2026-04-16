@@ -14,11 +14,60 @@ from app.models import (
     DiscoveredNodeObservation,
     Node,
     NodeRelationship,
+    OperationalMapObject,
+    OperationalMapView,
     TopologyEditorState,
 )
 from app.bwvstats_ingest import collect_bwvstats_phase1, get_raw_bwvstats_snapshots
 from app.schemas import NodeCreate, NodeUpdate
 from app import state_manager
+
+
+async def sync_node_map_object(
+    node: Node,
+    old_map_id: int | None,
+    new_map_id: int | None,
+    db: AsyncSession,
+) -> None:
+    """Create or remove OperationalMapObject rows when a node's map assignment changes."""
+    if old_map_id == new_map_id:
+        return
+
+    if old_map_id is not None and old_map_id > 0:
+        old_objects = (await db.scalars(
+            select(OperationalMapObject).where(
+                OperationalMapObject.map_view_id == old_map_id,
+                OperationalMapObject.object_type == "node",
+                OperationalMapObject.binding_key == f"anchor:{node.id}",
+            )
+        )).all()
+        for obj in old_objects:
+            await db.delete(obj)
+
+    if new_map_id is not None and new_map_id > 0:
+        target_map = await db.get(OperationalMapView, new_map_id)
+        if target_map is not None:
+            existing = (await db.scalars(
+                select(OperationalMapObject).where(
+                    OperationalMapObject.map_view_id == new_map_id,
+                    OperationalMapObject.object_type == "node",
+                    OperationalMapObject.binding_key == f"anchor:{node.id}",
+                )
+            )).first()
+            if existing is None:
+                map_object = OperationalMapObject(
+                    map_view_id=new_map_id,
+                    object_type="node",
+                    label=node.name,
+                    x=200,
+                    y=200,
+                    width=160,
+                    height=96,
+                    z_index=0,
+                    node_site_id=node.node_id,
+                    binding_key=f"anchor:{node.id}",
+                )
+                db.add(map_object)
 
 router = APIRouter(prefix="/api")
 
@@ -247,6 +296,8 @@ async def create_node(node_data: NodeCreate, db: AsyncSession = Depends(get_db))
     db.add(node)
     await db.commit()
     await db.refresh(node)
+    await sync_node_map_object(node, None, node.topology_map_id, db)
+    await db.commit()
     pending_health = {
         "status": "unknown",
         "latency_ms": None,
@@ -271,8 +322,11 @@ async def update_node(
     from app.main import get_node_or_404, node_dashboard_backend, serialize_node
     node = await get_node_or_404(node_id, db)
 
+    old_map_id = node.topology_map_id
     for field, value in node_data.model_dump().items():
         setattr(node, field, value)
+    new_map_id = node.topology_map_id
+    await sync_node_map_object(node, old_map_id, new_map_id, db)
 
     await db.commit()
     await db.refresh(node)
