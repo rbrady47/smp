@@ -5200,7 +5200,6 @@ function _attachTopologyEntityListeners(button, entityMap) {
     });
 
     button.addEventListener("dblclick", (event) => {
-        if (topologyState.editMode) return;
         const nextId = button.getAttribute("data-topology-id");
         const nextEntity = entityMap.get(nextId || "");
         if (nextEntity?.kind === "submap" && nextEntity?.map_view_id) {
@@ -5209,6 +5208,7 @@ function _attachTopologyEntityListeners(button, entityMap) {
             event.stopPropagation();
             return;
         }
+        if (topologyState.editMode) return;
         if (nextEntity?.kind === "discovered" && nextEntity?.host) {
             topologyState.selectedKind = null;
             topologyState.selectedId = null;

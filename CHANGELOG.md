@@ -15,6 +15,8 @@ The format is intentionally simple so diffs stay readable in version control.
 ### fix
 - Populate Map Assignment dropdown with submaps in all node forms (add node, edit node, topology editor, DN promote)
 - Show resolved submap name on node detail page instead of "Submap N"
+- Auto-create OperationalMapObject when a node is assigned to a submap via `topology_map_id`; clean up on reassignment
+- Submap icon double-click drill-in now works (added `pointer-events: none` on child elements; allowed dblclick during edit mode)
 
 ### refactor
 - Remove `include_in_topology`, `topology_level`, `topology_unit` columns

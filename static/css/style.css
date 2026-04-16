@@ -1921,6 +1921,11 @@ a {
     align-items: center;
 }
 
+/* Let dblclick/click events pass through submap child elements to the button */
+.topology-submap * {
+    pointer-events: none;
+}
+
 .topology-submap:hover {
     border-color: transparent !important;
     background: transparent !important;

@@ -24,6 +24,8 @@ This file is the shared handoff log for agents working on SMP.
 - Submap delete: orphans any nodes assigned to the deleted submap
 - Map dropdown fix: all node forms (add, edit, topology editor, DN promote) now populate submap options via `/api/topology/maps`
 - Detail page: shows resolved submap name instead of "Submap N"
+- Map object sync: `sync_node_map_object()` in `app/routes/nodes.py` creates/removes `OperationalMapObject` rows when a node's `topology_map_id` changes (wired into create_node, update_node, and DN promotion) — critical fix so submap-assigned nodes actually render on the submap canvas
+- Submap drill-in: added `pointer-events: none` on `.topology-submap *` so double-click hits the button; allowed submap dblclick in edit mode
 
 ### Files touched
 - app/models.py, app/schemas.py, app/topology.py, app/routes/topology.py
