@@ -8,6 +8,48 @@ This file is the shared handoff log for agents working on SMP.
 - Record only what another agent needs to continue safely.
 - Do not delete older entries unless they are clearly obsolete and superseded.
 
+## 2026-04-16 — Session: Topology Map Assignment Redesign
+
+### Branch / commit
+- Branch: `claude/redesign-topology-map-QMi3m`
+
+### What was built
+- Complete replacement of skeleton topology (include_in_topology/topology_level/topology_unit) with map assignment model (topology_map_id column)
+- Migration 0019: adds topology_map_id, migrates existing data, drops old columns
+- New build_topology_payload_for_map() replaces build_mock_topology_payload()
+- Node edit form: single Map Assignment dropdown (None/Main Map/<submaps>) replaces checkbox + level + unit
+- Frontend: flat entities array replaces lvl0_nodes/lvl1_nodes/lvl2_clusters
+- SSE fix: _updateTopologyEntityDOM() now updates button CSS status class
+- Discovery: ANs assigned to submaps via topology_map_id are automatic discovery roots
+- Submap delete: orphans any nodes assigned to the deleted submap
+
+### Files touched
+- app/models.py, app/schemas.py, app/topology.py, app/routes/topology.py
+- app/routes/discovery.py, app/services/node_health.py, app/node_projection_service.py
+- app/node_dashboard_backend.py, app/operational_map_service.py
+- app/seeker_api.py, app/node_discovery_service.py
+- alembic/versions/20260416_0019_topology_map_assignment.py
+- templates/topology.html, templates/dashboard.html, templates/nodes.html, templates/node_detail.html
+- static/js/app.js
+- scripts/seed_import.py, scripts/seed_export.py
+- tests/test_topology.py, tests/test_dn_promotion.py, tests/test_node_dashboard_backend.py, tests/test_operational_map_service.py
+
+### Verification
+- python -m compileall app tests alembic — zero errors
+- python -m unittest discover -s tests — 31/34 pass (3 pre-existing import failures: httpx, fastapi)
+- app.js JS syntax check — passes
+
+### Assumptions
+- The 3 failing tests are pre-existing environment issues (missing httpx, fastapi modules)
+- Existing editor state positions for node-{id} entities carry over to new model
+
+### Next steps
+- Apply migration 0019 on production DB
+- Verify topology rendering in browser after deployment
+- Consider adding delete submap button in UI (API exists)
+
+---
+
 ## 2026-04-12 — Session: Fix Topology Nodes Vanish After Refresh
 
 ### Branch / commit

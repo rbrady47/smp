@@ -233,7 +233,7 @@ Route modules split by domain. Each creates an `APIRouter` and is included in `m
 | `/api/nodes/{id}` | GET/PUT/DELETE | Node CRUD |
 | `/api/nodes/ping-status` | GET | Lightweight ping cache read |
 | `/api/node-dashboard` | GET | Dashboard payload (anchors + discovered) |
-| `/api/topology` | GET | Main topology payload |
+| `/api/topology` | GET | Topology payload (accepts `?map_id=` param; default 0 = Main Map). Returns flat `{entities, links, submaps}` structure. |
 | `/api/topology/discovery` | GET | Main map discovery (uses Pydantic `TopologyDiscoveryPayload`) |
 | `/api/topology/maps/{id}` | GET | Submap detail |
 | `/api/topology/maps/{id}/discovery` | GET | **Submap discovery** — the core endpoint for DN discovery and link building |
@@ -322,14 +322,21 @@ Key functions:
 
 ---
 
-### `app/topology.py` (~351 lines)
+### `app/topology.py`
 
 Topology data construction and status normalization.
 
 Key functions:
-- `normalize_topology_location(location)` — maps aliases to canonical location names
+- `build_topology_payload_for_map(db, map_id, ...)` — builds the flat `{entities, links, submaps}` topology payload for a given map. Replaces the former `build_mock_topology_payload()` skeleton generator. `map_id=0` returns Main Map; `map_id>0` returns a submap view.
 - `topology_status_from_rtt_state(rtt_state)` — maps RTT states to topology health
 - `build_topology_discovery_payload(...)` — builds `TopologyDiscoveryPayload` for main map (NOT submaps — those return plain dicts from `get_submap_discovery`)
+
+**Map assignment model:** Nodes use `topology_map_id` (nullable integer on `nodes` table) to determine map placement:
+- `NULL` — orphan, not on any map
+- `0` — Main Map (root topology)
+- `>0` — FK to `operational_map_views.id` (submap)
+
+Submap deletion orphans any nodes assigned to the deleted submap (sets `topology_map_id = NULL`).
 
 ---
 
@@ -395,7 +402,7 @@ SQLAlchemy ORM models using `Mapped[]` type annotations.
 Key tables:
 | Model | Table | Primary Key | Purpose |
 |-------|-------|-------------|---------|
-| `Node` | `nodes` | `id` (auto-int) | Registered anchor nodes |
+| `Node` | `nodes` | `id` (auto-int) | Registered anchor nodes. `topology_map_id`: NULL=orphan, 0=Main Map, >0=submap FK |
 | `DiscoveredNode` | `discovered_nodes` | `site_id` (string) | Auto-discovered nodes |
 | `DiscoveredNodeObservation` | `discovered_node_observations` | `site_id` (FK) | DN telemetry snapshots |
 | `NodeRelationship` | `node_relationships` | `id` | Discovery topology edges |

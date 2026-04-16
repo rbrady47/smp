@@ -35,10 +35,10 @@ What operators can do here:
 - Search both lists
 - Add anchor nodes from the dashboard
 - Drill into detailed node views
-- Track basic topology metadata such as:
-  - `include_in_topology`
-  - `topology_level`
-  - `topology_unit`
+- Assign nodes to topology maps via the **Map Assignment** dropdown:
+  - **None** — orphan node, does not appear on any map
+  - **Main Map** — appears on the root topology view
+  - **<submap name>** — appears on that submap
 
 Anchor nodes are the SMP-managed inventory records. Discovered nodes represent nodes learned from the environment and surfaced through the backend discovery pipeline.
 
@@ -84,7 +84,7 @@ Typical uses:
 - Add nodes
 - Edit node connection details
 - Remove nodes
-- Set whether a node should participate in topology views
+- Assign nodes to topology maps (None, Main Map, or a specific submap)
 
 ### Managed Services
 
@@ -166,10 +166,9 @@ The current Topology page is still the earlier fixed-layout operational topology
 
 Current behavior:
 
-- Shows a structured Division C2 Information Network layout
-- Uses real node metadata where available
-- Supports filtering by location and unit
-- Provides a detail drawer for selected nodes, links, and clusters
+- Shows nodes assigned to the current map via the Map Assignment model
+- Nodes with Map Assignment = Main Map appear on the root topology; nodes assigned to a submap appear inside that submap
+- Provides a detail drawer for selected nodes, links, and submaps
 - Includes a discovery relationship panel for attribution signals
 - Includes a moveable, resizable `Services` cloud object whose status is driven by the services pinned to the main dashboard watchlist:
   - green when all pinned services are healthy

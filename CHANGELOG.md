@@ -4,6 +4,23 @@ All notable SMP changes should be documented here in markdown.
 
 The format is intentionally simple so diffs stay readable in version control.
 
+## 2026-04-16 — Topology Map Assignment Redesign
+
+### feat
+- Replace skeleton topology with map assignment model (`topology_map_id`)
+- Node edit form now uses single Map Assignment dropdown (None/Main Map/<submaps>)
+- ANs assigned to submaps are automatic discovery roots
+- Orphan nodes on submap deletion
+
+### refactor
+- Remove `include_in_topology`, `topology_level`, `topology_unit` columns
+- Remove `build_mock_topology_payload()` skeleton generator and `TOPOLOGY_LOCATIONS/UNITS` constants
+- Rewrite topology payload to flat `{entities, links, submaps}` structure
+- Remove location/unit filter buttons from frontend
+
+### fix
+- Fix SSE `_updateTopologyEntityDOM()` to update button CSS status class
+
 ## Unreleased
 
 ### Fixed
