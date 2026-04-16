@@ -387,6 +387,13 @@ async def delete_map_view(map_view_id: int, db: AsyncSession) -> None:
     if (await db.scalars(child_map_stmt)).first() is not None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Operational map has child submaps")
 
+    # Orphan any nodes assigned to this submap
+    orphan_nodes = (await db.scalars(
+        select(Node).where(Node.topology_map_id == map_view_id)
+    )).all()
+    for node in orphan_nodes:
+        node.topology_map_id = None
+
     object_stmt = select(OperationalMapObject).where(OperationalMapObject.map_view_id == map_view_id)
     objects = (await db.scalars(object_stmt)).all()
     object_ids = [map_object.id for map_object in objects]
