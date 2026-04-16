@@ -87,9 +87,7 @@ class NodeDashboardBackendTest(unittest.IsolatedAsyncioTestCase):
             web_port=443,
             ssh_port=22,
             location="Cloud",
-            include_in_topology=True,
-            topology_level=1,
-            topology_unit="DIV HQ",
+            topology_map_id=0,
             enabled=True,
             notes=None,
             api_username=None,
@@ -163,11 +161,11 @@ class NodeDashboardBackendTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(observation)
         self.assertIsNotNone(relationship)
         self.assertEqual(record.host, "10.10.10.10")
-        self.assertEqual(record.unit, "DIV HQ")
+        self.assertEqual(record.unit, "--")
         self.assertEqual(record.discovered_parent_site_id, "1001")
         self.assertEqual(observation.ping, "Up")
         self.assertEqual(observation.latency_ms, 15)
-        self.assertEqual(relationship.target_unit, "DIV HQ")
+        self.assertEqual(relationship.target_unit, "--")
 
     async def test_build_projection_uses_persisted_and_cached_state_without_discovery_side_effects(self) -> None:
         anchor = Node(
@@ -178,9 +176,7 @@ class NodeDashboardBackendTest(unittest.IsolatedAsyncioTestCase):
             web_port=443,
             ssh_port=22,
             location="Cloud",
-            include_in_topology=True,
-            topology_level=1,
-            topology_unit="DIV HQ",
+            topology_map_id=0,
             enabled=True,
             notes=None,
             api_username=None,
@@ -297,8 +293,7 @@ class NodeDashboardBackendTest(unittest.IsolatedAsyncioTestCase):
                 "discovered_parent_site_id": None,
                 "discovered_parent_name": None,
                 "discovered_level": 1,
-                "include_in_topology": True,
-                "topology_level": 1,
+                "topology_map_id": 0,
                 "tx_display": "1.0 Kbps",
                 "rx_display": "2.0 Kbps",
             }],
@@ -341,9 +336,7 @@ class NodeDashboardBackendTest(unittest.IsolatedAsyncioTestCase):
             web_port=443,
             ssh_port=22,
             location="Cloud",
-            include_in_topology=True,
-            topology_level=1,
-            topology_unit="DIV HQ",
+            topology_map_id=0,
             enabled=True,
             notes=None,
             api_username=None,
@@ -469,9 +462,7 @@ class NodeDashboardBackendTest(unittest.IsolatedAsyncioTestCase):
             web_port=443,
             ssh_port=22,
             location="Cloud",
-            include_in_topology=True,
-            topology_level=1,
-            topology_unit="DIV HQ",
+            topology_map_id=0,
             enabled=True,
             notes=None,
             api_username=None,
@@ -579,9 +570,7 @@ class NodeDashboardBackendTest(unittest.IsolatedAsyncioTestCase):
             web_port=443,
             ssh_port=22,
             location="Cloud",
-            include_in_topology=True,
-            topology_level=1,
-            topology_unit="DIV HQ",
+            topology_map_id=0,
             enabled=True,
             notes=None,
             api_username=None,
@@ -718,9 +707,7 @@ class NodeDashboardBackendTest(unittest.IsolatedAsyncioTestCase):
             web_port=443,
             ssh_port=22,
             location="Cloud",
-            include_in_topology=True,
-            topology_level=1,
-            topology_unit="DIV HQ",
+            topology_map_id=0,
             enabled=True,
             notes=None,
             api_username=None,
@@ -803,8 +790,7 @@ class NodeDashboardBackendTest(unittest.IsolatedAsyncioTestCase):
             "discovered_parent_site_id": None,
             "discovered_parent_name": None,
             "discovered_level": 1,
-            "include_in_topology": True,
-            "topology_level": 1,
+            "topology_map_id": 0,
             "tx_display": "1.0 Kbps",
             "rx_display": "2.0 Kbps",
         }]

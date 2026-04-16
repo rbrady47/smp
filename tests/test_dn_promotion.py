@@ -18,7 +18,7 @@ class TestDnPromoteRequest(unittest.TestCase):
         self.assertEqual(req.ssh_port, 22)
         self.assertTrue(req.ping_enabled)
         self.assertTrue(req.charts_enabled)
-        self.assertTrue(req.include_in_topology)
+        self.assertEqual(req.topology_map_id, 0)
         self.assertFalse(req.api_use_https)
         self.assertIsNone(req.name)
         self.assertIsNone(req.host)
@@ -34,9 +34,7 @@ class TestDnPromoteRequest(unittest.TestCase):
             api_username="operator",
             api_password="p@ssw0rd",
             api_use_https=True,
-            include_in_topology=False,
-            topology_level=0,
-            topology_unit="1BCT",
+            topology_map_id=None,
             ping_enabled=False,
             ping_interval_seconds=30,
             charts_enabled=False,
@@ -45,7 +43,7 @@ class TestDnPromoteRequest(unittest.TestCase):
         self.assertEqual(req.name, "Site Alpha")
         self.assertEqual(req.host, "10.0.0.5")
         self.assertEqual(req.web_port, 8443)
-        self.assertEqual(req.topology_unit, "1BCT")
+        self.assertIsNone(req.topology_map_id)
         self.assertFalse(req.charts_enabled)
         self.assertEqual(req.ping_interval_seconds, 30)
 
@@ -67,14 +65,6 @@ class TestDnPromoteRequest(unittest.TestCase):
                 api_username="admin",
                 api_password="secret",
                 bogus_field="nope",
-            )
-
-    def test_invalid_topology_unit_rejected(self):
-        with self.assertRaises(ValidationError):
-            DnPromoteRequest(
-                api_username="admin",
-                api_password="secret",
-                topology_unit="INVALID",
             )
 
     def test_port_range_validation(self):

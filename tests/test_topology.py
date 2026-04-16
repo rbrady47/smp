@@ -1,10 +1,7 @@
 import unittest
 
 from app.topology import (
-    TOPOLOGY_LOCATIONS,
-    TOPOLOGY_UNITS,
-    _merge_topology_statuses,
-    build_mock_topology_payload,
+    build_topology_payload_for_map,
     build_topology_discovery_payload,
     normalize_topology_location,
     topology_status_from_node_status,
@@ -25,109 +22,75 @@ class TopologyHelpersTest(unittest.TestCase):
         self.assertEqual(topology_status_from_node_status("disabled"), "down")
         self.assertEqual(topology_status_from_node_status("unknown"), "neutral")
 
-    def test_merge_topology_statuses_prefers_down_then_degraded(self) -> None:
-        self.assertEqual(_merge_topology_statuses("healthy", "healthy"), "healthy")
-        self.assertEqual(_merge_topology_statuses("healthy", "degraded"), "degraded")
-        self.assertEqual(_merge_topology_statuses("neutral", "degraded"), "degraded")
-        self.assertEqual(_merge_topology_statuses("healthy", "down"), "down")
-        self.assertEqual(_merge_topology_statuses("neutral", "neutral"), "neutral")
-
-    def test_build_mock_topology_payload_filters_and_binds_inventory_nodes(self) -> None:
-        payload = build_mock_topology_payload(
+    def test_build_topology_payload_for_map_returns_only_assigned_nodes(self) -> None:
+        payload = build_topology_payload_for_map(
             [
                 {
-                    "id": "agg-cloud",
-                    "name": "Cloud Aggregate",
-                    "host": "cloud-agg.example",
-                    "location": "cloud",
-                    "status": "online",
-                    "include_in_topology": True,
-                    "topology_level": 0,
-                    "topology_unit": "AGG",
-                },
-                {
-                    "id": "lvl1-cloud-divhq",
-                    "name": "DIV HQ Cloud",
-                    "host": "divhq-cloud.example",
+                    "id": 1,
+                    "name": "Node A",
+                    "host": "10.0.0.1",
                     "location": "Cloud",
-                    "status": "degraded",
-                    "include_in_topology": True,
-                    "topology_level": 1,
-                    "topology_unit": "DIV HQ",
-                },
-                {
-                    "id": "ignored-node",
-                    "name": "Ignored",
-                    "host": "ignored.example",
-                    "location": "Nowhere",
                     "status": "online",
-                    "include_in_topology": True,
-                    "topology_level": 1,
-                    "topology_unit": "DIV HQ",
+                    "topology_map_id": 0,
+                    "rtt_state": "good",
                 },
-            ]
+                {
+                    "id": 2,
+                    "name": "Node B",
+                    "host": "10.0.0.2",
+                    "location": "HSMC",
+                    "status": "degraded",
+                    "topology_map_id": 0,
+                    "rtt_state": None,
+                },
+                {
+                    "id": 3,
+                    "name": "Orphan",
+                    "host": "10.0.0.3",
+                    "location": "Cloud",
+                    "status": "online",
+                    "topology_map_id": None,
+                },
+                {
+                    "id": 4,
+                    "name": "Submap Node",
+                    "host": "10.0.0.4",
+                    "location": "Cloud",
+                    "status": "online",
+                    "topology_map_id": 5,
+                },
+            ],
+            map_id=None,
         )
 
-        self.assertEqual(payload["locations"], TOPOLOGY_LOCATIONS)
-        self.assertEqual(payload["units"], TOPOLOGY_UNITS)
-        self.assertEqual(len(payload["lvl0_nodes"]), 3)
-        self.assertEqual(len(payload["lvl1_nodes"]), len(TOPOLOGY_LOCATIONS) * len(TOPOLOGY_UNITS))
-        self.assertEqual(len(payload["lvl2_clusters"]), len(TOPOLOGY_UNITS))
-        self.assertTrue(all(node["name"].endswith("Edge Nodes") for node in payload["lvl2_clusters"]))
+        self.assertEqual(len(payload["entities"]), 2)
+        self.assertEqual(payload["entities"][0]["id"], "node-1")
+        self.assertEqual(payload["entities"][0]["name"], "Node A")
+        self.assertEqual(payload["entities"][0]["status"], "healthy")
+        self.assertEqual(payload["entities"][1]["id"], "node-2")
+        self.assertEqual(payload["entities"][1]["status"], "degraded")
+        self.assertEqual(payload["links"], [])
 
-        cloud_anchor = next(node for node in payload["lvl0_nodes"] if node["location"] == "Cloud")
-        self.assertEqual(cloud_anchor["inventory_node_id"], "agg-cloud")
-        self.assertEqual(cloud_anchor["inventory_name"], "Cloud Aggregate")
-        self.assertEqual(cloud_anchor["status"], "healthy")
-
-        div_hq_cloud = next(
-            node for node in payload["lvl1_nodes"] if node["location"] == "Cloud" and node["unit"] == "DIV HQ"
-        )
-        self.assertEqual(div_hq_cloud["inventory_node_id"], "lvl1-cloud-divhq")
-        self.assertEqual(div_hq_cloud["status"], "degraded")
-
-        self.assertTrue(all(node["inventory_node_id"] != "ignored-node" for node in payload["lvl0_nodes"]))
-        self.assertTrue(all(node["inventory_node_id"] != "ignored-node" for node in payload["lvl1_nodes"]))
-
-    def test_build_mock_topology_payload_keeps_backbone_links_down_when_anchors_are_down(self) -> None:
-        payload = build_mock_topology_payload(
+    def test_build_topology_payload_for_submap(self) -> None:
+        payload = build_topology_payload_for_map(
             [
-                {
-                    "id": "agg-cloud",
-                    "name": "Cloud Aggregate",
-                    "host": "cloud-agg.example",
-                    "location": "cloud",
-                    "status": "offline",
-                    "include_in_topology": True,
-                    "topology_level": 0,
-                    "topology_unit": "AGG",
-                },
-                {
-                    "id": "agg-hsmc",
-                    "name": "HSMC Aggregate",
-                    "host": "hsmc-agg.example",
-                    "location": "hsmc",
-                    "status": "offline",
-                    "include_in_topology": True,
-                    "topology_level": 0,
-                    "topology_unit": "AGG",
-                },
-                {
-                    "id": "agg-episodic",
-                    "name": "Episodic Aggregate",
-                    "host": "episodic-agg.example",
-                    "location": "episodic",
-                    "status": "offline",
-                    "include_in_topology": True,
-                    "topology_level": 0,
-                    "topology_unit": "AGG",
-                },
-            ]
+                {"id": 1, "name": "Main Node", "topology_map_id": 0, "status": "online", "rtt_state": None},
+                {"id": 2, "name": "Submap Node", "topology_map_id": 5, "status": "online", "rtt_state": None},
+            ],
+            map_id=5,
         )
 
-        mesh_links = [link for link in payload["links"] if link["kind"] == "backbone"]
-        self.assertTrue(mesh_links)
-        self.assertTrue(all(link["status"] == "down" for link in mesh_links))
+        self.assertEqual(len(payload["entities"]), 1)
+        self.assertEqual(payload["entities"][0]["inventory_node_id"], 2)
+
+    def test_build_topology_payload_orphans_excluded(self) -> None:
+        payload = build_topology_payload_for_map(
+            [
+                {"id": 1, "name": "Orphan", "topology_map_id": None, "status": "online", "rtt_state": None},
+            ],
+            map_id=None,
+        )
+        self.assertEqual(len(payload["entities"]), 0)
 
     def test_build_topology_discovery_payload_projects_dashboard_rows(self) -> None:
         payload = build_topology_discovery_payload(
@@ -140,8 +103,7 @@ class TopologyHelpersTest(unittest.TestCase):
                         "site": "cloud",
                         "unit": "DIV HQ",
                         "status": "healthy",
-                        "include_in_topology": True,
-                        "topology_level": 1,
+                        "topology_map_id": 0,
                     }
                 ],
                 "discovered": [
