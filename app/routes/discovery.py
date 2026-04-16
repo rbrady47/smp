@@ -265,6 +265,13 @@ async def get_submap_discovery(
             except (ValueError, IndexError):
                 pass
 
+    # Also include ANs assigned to this submap via topology_map_id
+    map_assigned_nodes = (await db.scalars(
+        select(Node).where(Node.topology_map_id == map_view_id)
+    )).all()
+    for node in map_assigned_nodes:
+        placed_anchor_ids.add(node.id)
+
     anchor_nodes = (await db.scalars(
         select(Node).where(Node.id.in_(placed_anchor_ids))
     )).all() if placed_anchor_ids else []
