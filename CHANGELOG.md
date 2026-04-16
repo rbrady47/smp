@@ -19,6 +19,7 @@ The format is intentionally simple so diffs stay readable in version control.
 - Submap icon double-click drill-in now works (added `pointer-events: none` on child elements; allowed dblclick during edit mode)
 - Discovered nodes now render on submap canvases: include `_discovery_entities` in `getTopologyEntities()`
 - Submap discovery links use hover-reveal instead of always-visible; no longer flash on render cycles
+- Prevent duplicate submap entries in Map Assignment dropdown when two populate calls overlap (per-element cancellation token)
 
 ### refactor
 - Remove `include_in_topology`, `topology_level`, `topology_unit` columns

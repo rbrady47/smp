@@ -3865,13 +3865,29 @@ function getMapNameById(mapId) {
     return map ? map.name : `Submap ${mapId}`;
 }
 
+const _populateMapDropdownInFlight = new Map();
+
 async function populateMapDropdown(selectElementId, currentMapId) {
+    const existing = _populateMapDropdownInFlight.get(selectElementId);
+    if (existing) {
+        existing.cancelled = true;
+    }
+    const token = { cancelled: false };
+    _populateMapDropdownInFlight.set(selectElementId, token);
+
     const select = document.getElementById(selectElementId);
-    if (!select) return;
+    if (!select) {
+        _populateMapDropdownInFlight.delete(selectElementId);
+        return;
+    }
+
+    const maps = await fetchMapsList();
+
+    if (token.cancelled) return;
+
     while (select.options.length > 2) {
         select.remove(2);
     }
-    const maps = await fetchMapsList();
     for (const map of maps) {
         const option = document.createElement("option");
         option.value = String(map.id);
@@ -3879,6 +3895,10 @@ async function populateMapDropdown(selectElementId, currentMapId) {
         select.appendChild(option);
     }
     select.value = currentMapId != null ? String(currentMapId) : "";
+
+    if (_populateMapDropdownInFlight.get(selectElementId) === token) {
+        _populateMapDropdownInFlight.delete(selectElementId);
+    }
 }
 
 function populateNodeForm(nodeId) {
