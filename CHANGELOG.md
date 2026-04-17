@@ -35,6 +35,7 @@ The format is intentionally simple so diffs stay readable in version control.
 
 ### Added
 
+- **Playwright MCP server:** Added `.mcp.json` registering the `@playwright/mcp` server so Claude Code sessions in this repo can drive a browser for UI smoke-testing the SMP frontend (dashboard, topology, charts) as required by project conventions for UI changes. Launches via `npx -y @playwright/mcp@latest`; no application code or runtime dependencies added.
 - **Diagnostic Console:** New diag code system on the Diag page (`/health`). Operators type codes like `poller:status`, `cache:stats`, `db:pool` into a console input to query runtime diagnostics. Results display as formatted JSON. History chips allow quick re-runs. 9 starter codes covering pollers, caches, DB pool, Redis, system info, and per-node detail. Catalog in `docs/DIAG_CODES.md`.
 
 ### Fixed
